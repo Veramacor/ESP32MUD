@@ -37,10 +37,14 @@ if (-not $status) {
     exit 0
 }
 
-# Generate commit message if not provided
+# Generate commit message if not provided or empty
 if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $CommitMessage = "v1.1.0: Update $(Get-Date -Format 'MMdd-HHmm')"
+}
+
+# Double-check message is not empty
+if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
+    $CommitMessage = "v1.1.0: Automated update $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 }
 
 Write-Info "`n[GIT] Changes detected:"
@@ -55,9 +59,10 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "[GIT] Changes staged"
 
 Write-Info "`n[GIT] Committing with message: '$CommitMessage'"
-git commit -m "$CommitMessage"
+git commit -m "$CommitMessage" 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "[ERROR] Failed to commit"
+    Write-Error "[ERROR] Failed to commit - LastExitCode: $LASTEXITCODE"
+    Write-Error "[ERROR] Message was: '$CommitMessage'"
     exit 1
 }
 Write-Success "[GIT] Commit successful"

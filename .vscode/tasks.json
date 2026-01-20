@@ -28,6 +28,8 @@
             "command": "powershell",
             "args": [
                 "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
                 "-Command",
                 "cd '${workspaceFolder}'; & .\\push-to-github.ps1"
             ],
