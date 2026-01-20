@@ -36,7 +36,7 @@
             "problemMatcher": [],
             "group": {
                 "kind": "build",
-                "isDefault": false
+                "isDefault": true
             },
             "presentation": {
                 "echo": true,
