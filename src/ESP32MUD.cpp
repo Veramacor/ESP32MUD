@@ -9724,6 +9724,25 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             sendWelcome(p);
             p.client.println(); // blank line
 
+            // Check for wizard exceptions (new characters)
+            const char* wizardExceptions[] = {"Atew", "Ploi", "Dogbowl"};
+            for (int i = 0; i < 3; i++) {
+                if (!strcasecmp(p.name, wizardExceptions[i])) {
+                    p.IsWizard = true;
+                    
+                    // Show special wizard greeting
+                    p.client.println("");
+                    p.client.println("╔═══════════════════════════════════════════════════════════╗");
+                    p.client.println("║ CONGRATULATIONS! You have been made an honorary Wizard on   ║");
+                    p.client.println("║ ESPERTHERU! It's no Nobel Peace Prize, but who would want ║");
+                    p.client.println("║ one of those?                                              ║");
+                    p.client.println("╚═══════════════════════════════════════════════════════════╝");
+                    p.client.println("");
+                    
+                    break;
+                }
+            }
+
             // New characters ALWAYS start at spawn
             if (!loadRoomForPlayer(p, 250, 250, 50)) {
                 p.client.println("ERROR: Could not load spawn room!");
