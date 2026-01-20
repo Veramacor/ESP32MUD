@@ -63,7 +63,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "[GIT] Commit successful"
 
 Write-Info "`n[GIT] Pushing to GitHub..."
-git push origin main
+git push -u origin main --force
 if ($LASTEXITCODE -ne 0) {
     Write-Error "[ERROR] Failed to push to GitHub"
     Write-Error "[ERROR] Check your remote: git remote -v"
