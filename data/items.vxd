@@ -1,0 +1,38 @@
+# Item Definitions File
+# Format: itemId|type|name=ItemName|type=type|desc=description|attributes...
+#
+# Complete attribute set:
+#   name=              - display name
+#   type=              - weapon, armor, etc
+#   desc=              - description shown on examine
+#   can_contain=       - 0 or 1
+#   capacity=          - container size
+#   mobile=            - 0 or 1
+#   invisible=         - 0 or 1
+#   heal=              - health restoration
+#   value=             - gold value
+#   weight=            - item weight
+#   light=             - 0 or 1
+#   damage=            - weapon damage
+#   armor=             - armor protection
+#   slot=              - equipment slot
+#   quest_item=        - 0 or 1
+#   opens=             - true/false
+
+# ========================================
+# WEAPONS (for blacksmith)
+# ========================================
+
+dagger|weapon|name=Dagger|type=weapon|desc=A short, sharp blade useful for close combat and light work.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=25|weight=2|light=0|damage=3|armor=0|slot=0|quest_item=0|opens=false
+knife|weapon|name=Knife|type=weapon|desc=A well-crafted steel knife, reliable and deadly in the right hands.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=15|weight=1|light=0|damage=2|armor=0|slot=0|quest_item=0|opens=false
+sword|weapon|name=Sword|type=weapon|desc=A finely-forged longsword, well-balanced and fearsome in combat.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=150|weight=5|light=0|damage=8|armor=0|slot=0|quest_item=0|opens=false
+mace|weapon|name=Mace|type=weapon|desc=A heavy iron mace, crushing through armor and bone with brutal force.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=175|weight=6|light=0|damage=9|armor=0|slot=0|quest_item=0|opens=false
+
+# ========================================
+# ARMOR (for blacksmith)
+# ========================================
+
+studded_leather|armor|name=Studded Leather|type=armor|desc=Studded leather armor, providing good protection without excessive weight.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=125|weight=8|light=0|damage=0|armor=3|slot=outer_torso|quest_item=0|opens=false
+iron_helmet|armor|name=Iron Helmet|type=armor|desc=An iron helmet, protecting the wearer's head from damage.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=80|weight=4|light=0|damage=0|armor=2|slot=head|quest_item=0|opens=false
+chainmail|armor|name=Chainmail|type=armor|desc=A suit of chainmail, offering excellent protection to the torso and arms.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=300|weight=12|light=0|damage=0|armor=5|slot=under_torso|quest_item=0|opens=false
+gauntlets|armor|name=Gauntlets|type=armor|desc=Iron gauntlets, protecting hands and forearms from harm.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=75|weight=2|light=0|damage=0|armor=1|slot=hands|quest_item=0|opens=false

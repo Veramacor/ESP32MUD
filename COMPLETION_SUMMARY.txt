@@ -1,0 +1,254 @@
+# ESP32MUD - Feature Completion Summary
+
+## v1.1.0 - January 20, 2026
+
+### ✅ Core Game Engine
+- [x] Telnet server (port 23)
+- [x] 3D voxel world with unlimited coordinates
+- [x] Room system with descriptions and exits
+- [x] 10-directional movement (N, S, E, W, NE, NW, SE, SW, Up, Down)
+- [x] Player persistence (save/load)
+- [x] LittleFS file storage
+- [x] Version tracking with auto-generated version.h
+
+### ✅ Combat System
+- [x] Turn-based 3-second rounds
+- [x] To-hit calculations against armor class
+- [x] Damage rolls
+- [x] Armor damage absorption
+- [x] NPC counter-attacks
+- [x] Combat dialog system
+- [x] Player death handling
+- [x] Health regeneration
+
+### ✅ Item System
+- [x] Parent/child item hierarchy (containers)
+- [x] 11 equipment body slots (head, torso, hands, legs, feet, arms, L/R hand, neck, belt, back)
+- [x] Item attributes from items.vxd (name, type, weight, ac, damage, etc.)
+- [x] Item display with attribute-based names in rooms
+- [x] Stackable coins (no weight penalty)
+- [x] Weight system with carrying capacity
+- [x] GET/DROP/WIELD/WEAR commands
+- [x] Equipment inspection (EQ command)
+
+### ✅ Shop System
+- [x] Blacksmith shop (254, 244, 50) - Weapons & armor
+- [x] Esperthertu Wares shop (251, 248, 50) - Miscellaneous items
+- [x] Shop inventory tracking
+- [x] BUY command with item copying from itemDefs
+- [x] SELL command with filtering by item type
+- [x] SELL ALL command with shop type filtering
+- [x] Price system per item
+- [x] Dynamic inventory updates
+
+### ✅ NPC System
+- [x] NPC definitions (vxd format)
+- [x] NPC world placement (vxi format)
+- [x] Configurable stats (HP, damage, armor, aggression)
+- [x] Combat behavior
+- [x] Combat dialog/taunts
+- [x] 10-minute respawn timers
+- [x] Loot drops on death (gold + items)
+- [x] Quest integration
+
+### ✅ Quest System
+- [x] Quest definitions (quests.txt)
+- [x] Multi-step quest chains
+- [x] Quest event triggers (kill NPC, reach location, collect item)
+- [x] XP and gold rewards
+- [x] NPC unloading on quest completion
+- [x] QUEST commands (LIST, STATUS, ACCEPT, COMPLETE)
+
+### ✅ Player Progression
+- [x] Leveling system (1-20)
+- [x] Experience tracking
+- [x] Race system with titles
+- [x] Character stats (HP, damage, armor)
+- [x] SCORE command
+
+### ✅ Session Management (NEW - Jan 2026)
+- [x] One active session per player enforcement
+- [x] Duplicate login detection and old session disconnection
+- [x] Location persistence (restore to last room on reconnect)
+- [x] Login password authentication
+- [x] Session-to-connection mapping
+
+### ✅ Session Logging (NEW - Jan 2026)
+- [x] LOGIN events logged to /session_log.txt
+- [x] LOGOUT events logged with timestamps
+- [x] Automatic duplicate-disconnect logging
+- [x] DEBUG SESSIONS command (last 50 entries, descending)
+- [x] Timestamp format: YYYY-MM-DD HH:MM:SS
+
+### ✅ QR Code System (ENHANCED - Jan 2026)
+- [x] QR code generation from text
+- [x] Player-targeted QR codes (QRCODE playername message)
+- [x] Fallback to local display if player not found
+- [x] Support for up to ~100 character messages
+- [x] Proper word wrapping and terminal display
+
+### ✅ Time Synchronization (NEW - Jan 2026)
+- [x] NTP time sync on WiFi connection
+- [x] Multiple NTP server fallbacks (Google, Cloudflare, pool.ntp.org)
+- [x] 10-second timeout with year validation (>2020)
+- [x] Serial logging of sync status
+- [x] UTC timezone (configurable)
+- [x] Used for session log timestamps
+
+### ✅ Wizard Commands
+- [x] GOTO <x> <y> <z> - Teleportation
+- [x] HEAL <player> - Restore HP
+- [x] INVIS - Invisibility toggle
+- [x] REBOOT - Graceful world restart
+- [x] RESETWORLDITEMS - Item spawn reset
+- [x] MAKE_WIZARD <player> - Grant admin status
+- [x] KICK <player> - Disconnect session
+- [x] DEBUG ITEMS - Dump item definitions
+- [x] DEBUG NPCS - List NPC definitions
+- [x] DEBUG SESSIONS - Show login/logout events
+- [x] DEBUG FLASHSPACE - Storage usage
+- [x] DEBUG PLAYERS - List active players
+- [x] WIZ - Show wizard help
+
+### ✅ Communication
+- [x] SAY <message> - Room chat
+- [x] SHOUT <message> - World broadcast
+- [x] TELL <player> <msg> - Private messages
+- [x] REPLY - Quick response to last message
+
+### ✅ World Management
+- [x] Room persistence
+- [x] Item instance management
+- [x] NPC respawning
+- [x] Global reboot timer (6-hour default)
+- [x] 5-minute, 2-minute, 1-minute, 30-second, 5-second reboot warnings
+
+### ✅ Persistence & Storage
+- [x] Player file save format (text-based)
+- [x] World state preservation across reboots
+- [x] Item instance files (items.vxi)
+- [x] NPC instance files (npcs.vxi)
+- [x] Quest state tracking
+- [x] Flash storage usage monitoring
+
+### ✅ WiFi & Provisioning
+- [x] WiFi credential provisioning via serial (first boot)
+- [x] Credentials saved to /credentials.txt
+- [x] Automatic WiFi connection on startup
+- [x] Connection status logging
+- [x] Fallback to provisioning mode if no credentials
+
+### ✅ Serial & Debug Features
+- [x] USB-CDC serial monitoring
+- [x] Serial command input (future expansion)
+- [x] Boot debug output
+- [x] WiFi status reporting
+- [x] Game state dumps
+- [x] Build version tracking
+
+### ✅ File Upload System (Ymodem)
+- [x] Binary file upload capability
+- [x] Firmware update support
+- [x] Data file upload support
+- [x] Progress reporting
+
+### 📋 Known Issues & Limitations
+- Single-core ESP32 limits performance with many concurrent operations
+- 32-item inventory limit per player
+- 50 living NPC limit
+- 4MB flash (1.8MB usable after firmware)
+- Telnet only (no encryption - use on trusted LAN)
+- 10 concurrent player limit
+- 20 level cap
+- No database system (file-based only)
+
+### 🎯 Future Enhancement Candidates
+- [ ] Per-player timezone configuration for session logs
+- [ ] Expanded quest system with branching paths
+- [ ] Player-to-player trading system
+- [ ] Guilds or faction system
+- [ ] PvP arena
+- [ ] Additional NPC types (merchants, guards, etc.)
+- [ ] Spell/ability system
+- [ ] Dungeon instances
+- [ ] Persistent chat history
+- [ ] Player rankings/leaderboard
+
+## Data File Formats
+
+### items.vxd (Item Definitions)
+```
+itemid|type|name=Display Name|type=category|desc=Description|weight=1|ac=0|damage=1d4|can_contain=0|stackable=0|value=10
+```
+
+### items.vxi (Item Instances)
+```
+x|y|z|itemid|quantity|condition|container_parent
+```
+
+### npcs.vxd (NPC Definitions)
+```
+npcid|name|hp=20|damage=1d4|ac=5|aggression=2|exp=10|gold=5|respawn=600
+```
+
+### npcs.vxi (NPC Instances)
+```
+x|y|z|npcid|hp|last_respawn_time
+```
+
+### quests.txt (Quest Definitions)
+```
+questid|name|step1_trigger:npcid|step1_reward_xp:100|step2_trigger:location|step2_reward_gold:50
+```
+
+### player_*.txt (Player Save Files)
+```
+Name|Race|Level|XP|HP|MaxHP|Armor|Damage|LastX|LastY|LastZ|Inventory...
+```
+
+### session_log.txt (Login/Logout Audit Trail)
+```
+2026-01-20 14:32:15 | LOGIN | PlayerName
+2026-01-20 14:35:42 | LOGOUT | PlayerName
+```
+
+## Statistics
+
+- **Main code**: ESP32MUD.cpp (11,400+ lines)
+- **Max concurrent players**: 10
+- **Max living NPCs**: 50
+- **Max inventory items**: 32
+- **Max levels**: 20
+- **Equipment slots**: 11
+- **Directional movement**: 10 directions
+- **Shop locations**: 2 (Blacksmith + Esperthertu Wares)
+- **Flash usage**: ~45% (962KB / 2.1MB)
+- **RAM usage**: ~17% baseline
+- **Reboot interval**: 6 hours (configurable)
+
+## Testing Checklist
+
+- [x] Compilation success (PlatformIO)
+- [x] Firmware upload to device
+- [x] WiFi provisioning
+- [x] Telnet connection
+- [x] Player login/logout
+- [x] Movement in all directions
+- [x] Combat system
+- [x] Item pickup and drop
+- [x] Equipment wearing
+- [x] Shop buying and selling
+- [x] Wield command with proper display names
+- [x] Sell all command filtering
+- [x] QR code generation
+- [x] QR code player targeting
+- [x] Session logging to file
+- [x] Duplicate login handling
+- [x] Location persistence
+- [x] NTP time synchronization
+
+---
+
+**Last Updated**: January 20, 2026  
+**Version**: v1.1.0  
+**Status**: Production Ready

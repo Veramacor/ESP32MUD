@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: if you change the phy_init or app partition offset, make sure to change the offset in Kconfig.projbuild
+# Note: currently you MUST make sure that the bootloader & partition_table are in the first 4 sectors of the flash (starting at 0x0)
+#
+nvs,        data, nvs,     0x9000,   0x4000
+phy_init,   data, phy,     0xd000,   0x1000
+factory,    app,  factory, 0x10000,  0x100000
+littlefs,   data, 0x10,    0x110000, 0x2E0000

@@ -1,0 +1,15 @@
+// VS Code Keybindings for ESP32MUD
+// Place this in: .vscode/keybindings.json
+
+[
+    {
+        "key": "ctrl+shift+b",
+        "command": "workbench.action.tasks.runTask",
+        "args": "🔒 Create Backup (timestamped)"
+    },
+    {
+        "key": "ctrl+shift+g",
+        "command": "workbench.action.tasks.runTask",
+        "args": "📤 Push to GitHub"
+    }
+]
