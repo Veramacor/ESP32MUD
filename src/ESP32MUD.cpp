@@ -248,6 +248,7 @@ void cmdDrop(Player &p, const String &input);
 void cmdDropAll(Player &p, const char *unused);
 void cmdDropAll(Player &p);
 void cmdQrCode(Player &p, const String &input);
+void cmdMap(Player &p);
 void cmdReadSign(Player &p, const String &input);
 void cmdBuy(Player &p, const String &arg);
 void cmdSell(Player &p, const String &arg);
@@ -5244,6 +5245,9 @@ void cmdHelp(Player &p) {
     p.client.println("tell <player> <msg>    - Send a private message to a player");
     p.client.println("actions                - List available emotes");
 
+    // --- World navigation ---
+    p.client.println("map                    - Display ASCII map of the Town");
+
     // --- Account / system ---
     p.client.println("password               - Change your password");
     p.client.println("quit                   - Save and disconnect");
@@ -5368,6 +5372,202 @@ void cmdQrCode(Player &p, const String &input) {
         // Display locally
         displayQrCode(p.client);
     }
+}
+
+// =============================
+// Map display command
+// =============================
+
+/**
+ * Generate a 3x3 character block for a room
+ * Represents all 8 directions (cardinal + diagonal)
+ * Returns a 3-line string representing the icon
+ */
+String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
+                   int exit_ne, int exit_nw, int exit_se, int exit_sw) {
+    // 3x3 grid for each voxel
+    int grid[3][3] = {
+        {0, 0, 0},
+        {0, 0, 0},
+        {0, 0, 0}
+    };
+    
+    // No room at all - return empty 3x3
+    if (!exit_n && !exit_s && !exit_e && !exit_w &&
+        !exit_ne && !exit_nw && !exit_se && !exit_sw) {
+        return "   \n   \n   ";
+    }
+    
+    // Center (always present for occupied rooms)
+    grid[1][1] = 1;
+    
+    // Cardinal directions
+    if (exit_n) grid[0][1] = 1;   // North - top center
+    if (exit_s) grid[2][1] = 1;   // South - bottom center
+    if (exit_e) grid[1][2] = 1;   // East - right center
+    if (exit_w) grid[1][0] = 1;   // West - left center
+    
+    // Diagonal directions
+    if (exit_ne) grid[0][2] = 1;  // NorthEast - top right
+    if (exit_nw) grid[0][0] = 1;  // NorthWest - top left
+    if (exit_se) grid[2][2] = 1;  // SouthEast - bottom right
+    if (exit_sw) grid[2][0] = 1;  // SouthWest - bottom left
+    
+    // Build the 3-line string
+    String result = "";
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 3; col++) {
+            result += grid[row][col] ? "█" : " ";
+        }
+        if (row < 2) result += "\n";
+    }
+    
+    return result;
+}
+
+void cmdMap(Player &p) {
+    const int TARGET_Z = 50;
+    
+    // Scan all rooms to find min/max X and Y coordinates
+    File f = LittleFS.open("/rooms.txt", "r");
+    if (!f) {
+        p.client.println("Cannot open rooms file.");
+        return;
+    }
+
+    // First pass: find min/max coordinates for Z=50
+    int minX = INT_MAX, maxX = INT_MIN;
+    int minY = INT_MAX, maxY = INT_MIN;
+    std::vector<String> roomLines;
+
+    if (f.available()) f.readStringUntil('\n');  // Skip header
+
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+
+        // Parse CSV: x,y,z,...
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+
+        if (c1 < 0 || c2 < 0 || c3 < 0) continue;
+
+        int x = line.substring(0, c1).toInt();
+        int y = line.substring(c1 + 1, c2).toInt();
+        int z = line.substring(c2 + 1, c3).toInt();
+
+        if (z == TARGET_Z) {
+            minX = min(minX, x);
+            maxX = max(maxX, x);
+            minY = min(minY, y);
+            maxY = max(maxY, y);
+            roomLines.push_back(line);
+        }
+    }
+    f.close();
+
+    if (roomLines.empty()) {
+        p.client.println("No rooms found at Z level " + String(TARGET_Z) + ".");
+        return;
+    }
+
+    // Calculate grid dimensions
+    int gridWidth = maxX - minX + 1;
+    int gridHeight = maxY - minY + 1;
+
+    // Create a 2D grid to store room data
+    struct RoomData {
+        bool exists = false;
+        int exit_n = 0, exit_s = 0, exit_e = 0, exit_w = 0;
+        int exit_ne = 0, exit_nw = 0, exit_se = 0, exit_sw = 0;
+    };
+
+    std::vector<std::vector<RoomData>> grid(gridHeight, std::vector<RoomData>(gridWidth));
+
+    // Second pass: populate grid with room exit data
+    for (const String &line : roomLines) {
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+
+        int x = line.substring(0, c1).toInt();
+        int y = line.substring(c1 + 1, c2).toInt();
+
+        int gridX = x - minX;
+        int gridY = y - minY;
+
+        auto getField = [&](int fieldIndex) -> int {
+            int count = 0;
+            int start = 0;
+            for (int i = 0; i <= line.length(); i++) {
+                if (i == line.length() || line[i] == ',') {
+                    if (count == fieldIndex) {
+                        return line.substring(start, i).toInt();
+                    }
+                    start = i + 1;
+                    count++;
+                }
+            }
+            return 0;
+        };
+
+        RoomData &room = grid[gridY][gridX];
+        room.exists = true;
+        room.exit_n = getField(5);
+        room.exit_s = getField(6);
+        room.exit_e = getField(7);
+        room.exit_w = getField(8);
+        room.exit_ne = getField(9);
+        room.exit_nw = getField(10);
+        room.exit_se = getField(11);
+        room.exit_sw = getField(12);
+    }
+
+    // Display the map at 3x3 scaling (26 voxels per 80-column row)
+    p.client.println("");
+    p.client.println("═══════════════════════════════════════════════════════════════════");
+    p.client.println("                   Town Map (Z Level " + String(TARGET_Z) + ")");
+    p.client.println("═══════════════════════════════════════════════════════════════════");
+    p.client.println("");
+
+    // Print each row of voxels - each voxel becomes a 3-character wide, 3-line tall block
+    for (int y = 0; y < gridHeight; y++) {
+        // Build 3 output lines for this row of voxels
+        String outLines[3] = {"", "", ""};
+        
+        for (int x = 0; x < gridWidth; x++) {
+            const RoomData &room = grid[y][x];
+            String block;
+            
+            if (room.exists) {
+                block = getMapBlock(room.exit_n, room.exit_s, room.exit_e, room.exit_w,
+                                   room.exit_ne, room.exit_nw, room.exit_se, room.exit_sw);
+            } else {
+                block = "   \n   \n   ";
+            }
+            
+            // Split block into 3 lines and append to output lines
+            int lineIdx = 0;
+            int startPos = 0;
+            for (int i = 0; i <= block.length() && lineIdx < 3; i++) {
+                if (i == block.length() || block[i] == '\n') {
+                    outLines[lineIdx] += block.substring(startPos, i);
+                    startPos = i + 1;
+                    lineIdx++;
+                }
+            }
+        }
+        
+        // Print the 3 lines
+        for (int i = 0; i < 3; i++) {
+            p.client.println(outLines[i]);
+        }
+    }
+
+    p.client.println("");
+    p.client.println("═══════════════════════════════════════════════════════════════════");
 }
 
 
@@ -10599,6 +10799,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
 
     if (cmd == "qrcode") {
         cmdQrCode(p, args);
+        return;
+    }
+
+    if (cmd == "map") {
+        cmdMap(p);
         return;
     }
 
