@@ -30,6 +30,10 @@ const char* credPath = "/credentials.txt";
 //Check for Serial connection if there is none we MUST skip provisioning
 bool NoSerial = false;  
 
+// =====================================================
+// TIMEZONE OFFSET (in hours, fetched from time server or hardcoded)
+// =====================================================
+int timezoneOffsetSeconds = -5 * 3600;  // Default: EST (UTC-5), will be updated from time server
 
 // =====================================================
 // GLOBAL REBOOT INTERVAL 
@@ -1536,6 +1540,183 @@ void resetPlayer(Player &p) {
 }
 
 // =============================
+// Timezone Detection
+// =============================
+
+// Fetch timezone offset from worldtimeapi.org
+// Returns true if successful, false if failed (will use hardcoded EST)
+bool fetchTimezoneFromServer() {
+    Serial.println("[TIMEZONE] Attempting to fetch timezone from time server...");
+    
+    WiFiClient client;
+    if (!client.connect("worldtimeapi.org", 80)) {
+        Serial.println("[TIMEZONE] Failed to connect to worldtimeapi.org");
+        return false;
+    }
+    
+    // Request timezone info based on IP address
+    client.print("GET /api/ip HTTP/1.1\r\n");
+    client.print("Host: worldtimeapi.org\r\n");
+    client.print("Connection: close\r\n");
+    client.print("\r\n");
+    
+    // Read response
+    String response = "";
+    unsigned long timeout = millis() + 5000;  // 5 second timeout
+    
+    while (client.connected() && millis() < timeout) {
+        if (client.available()) {
+            char c = client.read();
+            response += c;
+        }
+    }
+    
+    client.stop();
+    
+    // Parse JSON response for utc_offset
+    // Look for: "utc_offset":"-05:00"
+    int offsetIdx = response.indexOf("\"utc_offset\"");
+    if (offsetIdx < 0) {
+        Serial.println("[TIMEZONE] Could not find utc_offset in response");
+        return false;
+    }
+    
+    // Find the value after the colon
+    int colonIdx = response.indexOf(":", offsetIdx);
+    if (colonIdx < 0) {
+        Serial.println("[TIMEZONE] Malformed offset value");
+        return false;
+    }
+    
+    // Extract offset string like "-05:00" or "+02:00"
+    int quoteIdx = response.indexOf("\"", colonIdx);
+    if (quoteIdx < 0) {
+        Serial.println("[TIMEZONE] Malformed offset value");
+        return false;
+    }
+    
+    String offsetStr = response.substring(colonIdx + 2, quoteIdx);
+    
+    // Parse offset: "-05:00" -> -5 hours
+    int sign = (offsetStr[0] == '-') ? -1 : 1;
+    int hours = offsetStr.substring(1, 3).toInt();
+    int minutes = offsetStr.substring(4, 6).toInt();
+    
+    timezoneOffsetSeconds = sign * (hours * 3600 + minutes * 60);
+    
+    Serial.print("[TIMEZONE] Successfully fetched timezone offset: ");
+    Serial.print(offsetStr);
+    Serial.print(" (");
+    Serial.print(timezoneOffsetSeconds / 3600);
+    Serial.println(" hours)");
+    
+    return true;
+}
+
+// Initialize timezone on startup
+void initializeTimezone() {
+    // Try to fetch from time server
+    if (!fetchTimezoneFromServer()) {
+        // Fall back to hardcoded EST
+        timezoneOffsetSeconds = -5 * 3600;
+        Serial.println("[TIMEZONE] Using hardcoded EST timezone (UTC-5)");
+    }
+}
+
+// Format compile time with timezone info
+// Takes compile time string (HH:MM:SS) and returns "HH:MM:SS UTC (HH:MM:SS AM/PM EST)"
+String formatCompileTimeWithTimezone(const char* timeStr) {
+    // Parse compile time from the __TIME__ macro format (HH:MM:SS)
+    // __TIME__ is in the compiler's local timezone (EST in this case)
+    int hours = 0, minutes = 0, seconds = 0;
+    sscanf(timeStr, "%d:%d:%d", &hours, &minutes, &seconds);
+    
+    // Create a time_t for today at the compile time (LOCAL timezone from __TIME__)
+    time_t now = time(nullptr);
+    struct tm* timeinfo = gmtime(&now);
+    timeinfo->tm_hour = hours;
+    timeinfo->tm_min = minutes;
+    timeinfo->tm_sec = seconds;
+    time_t compileTimeLocal = mktime(timeinfo);
+    
+    // Convert local compile time to UTC by subtracting the timezone offset
+    // Since timezoneOffsetSeconds is negative for EST, subtracting it adds hours
+    time_t compileTimeUTC = compileTimeLocal - timezoneOffsetSeconds;
+    
+    // Format UTC
+    char utcStr[16];
+    strftime(utcStr, sizeof(utcStr), "%H:%M:%S", gmtime(&compileTimeUTC));
+    
+    // Format local time by converting UTC back to local: local = UTC + offset
+    // For EST with offset -18000: local = UTC + (-18000) = UTC - 5 hours
+    time_t compileTimeLocalFormatted = compileTimeUTC + timezoneOffsetSeconds;
+    struct tm* localinfo = gmtime(&compileTimeLocalFormatted);
+    char localStr[32];
+    strftime(localStr, sizeof(localStr), "%I:%M:%S %p", localinfo);
+    
+    // Get timezone abbreviation
+    String tzName = "EST";
+    int offsetHours = timezoneOffsetSeconds / 3600;
+    if (offsetHours != -5) {
+        tzName = "TZ" + String(offsetHours);
+    }
+    
+    return String(utcStr) + " UTC (" + String(localStr) + " " + tzName + ")";
+}
+
+// =============================
+// Timezone and Time Formatting
+// =============================
+
+// Convert UTC time to local time string with timezone abbreviation
+// Returns formatted string like "11:29:48 UTC (11:29:48 AM EST)"
+String formatTimeWithTimezone(time_t utcTime) {
+    // UTC time
+    struct tm* gmtimeinfo = gmtime(&utcTime);
+    char utcStr[16];
+    strftime(utcStr, sizeof(utcStr), "%H:%M:%S", gmtimeinfo);
+    
+    // Calculate local time using global timezone offset
+    time_t localTime = utcTime + timezoneOffsetSeconds;
+    struct tm* localinfo = gmtime(&localTime);
+    char localStr[32];
+    strftime(localStr, sizeof(localStr), "%I:%M:%S %p", localinfo);
+    
+    // Get timezone abbreviation
+    String tzName = "EST";
+    int offsetHours = timezoneOffsetSeconds / 3600;
+    if (offsetHours != -5) {
+        tzName = "TZ" + String(offsetHours);
+    }
+    
+    return String(utcStr) + " UTC (" + String(localStr) + " " + tzName + ")";
+}
+
+// Format UTC date and time with local timezone
+String formatDateTimeWithTimezone(time_t utcTime) {
+    // UTC date and time
+    struct tm* gmtimeinfo = gmtime(&utcTime);
+    char utcStr[32];
+    strftime(utcStr, sizeof(utcStr), "%Y-%m-%d %H:%M:%S", gmtimeinfo);
+    
+    // Calculate local time using global timezone offset: local = UTC + offset
+    // For EST with offset -18000: local = UTC + (-18000) = UTC - 5 hours
+    time_t localTime = utcTime + timezoneOffsetSeconds;
+    struct tm* localinfo = gmtime(&localTime);
+    char timeStr[32];
+    strftime(timeStr, sizeof(timeStr), "%I:%M:%S %p", localinfo);
+    
+    // Get timezone abbreviation
+    String tzName = "EST";
+    int offsetHours = timezoneOffsetSeconds / 3600;
+    if (offsetHours != -5) {
+        tzName = "TZ" + String(offsetHours);
+    }
+    
+    return String(utcStr) + " UTC (" + String(timeStr) + " " + tzName + ")";
+}
+
+// =============================
 // Session Logging
 // =============================
 
@@ -1547,9 +1728,7 @@ void logSessionLogin(const char* playerName) {
     }
     
     time_t now = time(nullptr);
-    struct tm* timeinfo = localtime(&now);
-    char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+    String timestamp = formatDateTimeWithTimezone(now);
     
     String logEntry = String(timestamp) + " | LOGIN  | " + String(playerName) + "\n";
     logFile.print(logEntry);
@@ -1564,9 +1743,7 @@ void logSessionLogout(const char* playerName) {
     }
     
     time_t now = time(nullptr);
-    struct tm* timeinfo = localtime(&now);
-    char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+    String timestamp = formatDateTimeWithTimezone(now);
     
     String logEntry = String(timestamp) + " | LOGOUT | " + String(playerName) + "\n";
     logFile.print(logEntry);
@@ -10082,7 +10259,7 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             if (p.IsWizard) {
                 p.client.println("=== WIZARD MODE ===");
                 p.client.println("ESP32MUD v" + String(ESP32MUD_VERSION));
-                p.client.println("Compiled: " + String(COMPILE_DATE) + " " + String(COMPILE_TIME));
+                p.client.println("Compiled: " + String(COMPILE_DATE) + " " + formatCompileTimeWithTimezone(COMPILE_TIME));
                 
                 // Program size (flash)
                 uint32_t sketchSize = ESP.getSketchSize();
@@ -11939,6 +12116,11 @@ void setup() {
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
 
+    // =====================================================
+    // INITIALIZE TIMEZONE FROM TIME SERVER
+    // =====================================================
+    initializeTimezone();
+
     {
         int mudPort = portStr.toInt();
         server = new WiFiServer(mudPort);
@@ -12232,6 +12414,12 @@ for (auto &npc : npcInstances) {
             continue;  // No dialogs for this item
         }
         
+        // Count how many dialogs this item has
+        int dialogCount = 0;
+        if (dialog1 != item.attributes.end()) dialogCount++;
+        if (dialog2 != item.attributes.end()) dialogCount++;
+        if (dialog3 != item.attributes.end()) dialogCount++;
+        
         // Initialize dialog timer if needed
         if (item.attributes.find("nextDialogTime") == item.attributes.end()) {
             item.attributes["nextDialogTime"] = std::to_string(now + random(8000, 30001));
@@ -12240,7 +12428,7 @@ for (auto &npc : npcInstances) {
         unsigned long nextTime = (unsigned long)strtoull(item.attributes["nextDialogTime"].c_str(), NULL, 10);
         
         if (now >= nextTime) {
-            // Pick dialog based on cycle order (0, 1, 2 or shuffled)
+            // Pick dialog based on cycle order - only cycle through actual dialogs
             int dialogNum = item.dialogOrder[item.dialogIndex] + 1;  // Convert 0-2 to 1-3
             String dialogKey = "dialog_" + String(dialogNum);
             std::string skey = std::string(dialogKey.c_str());
@@ -12261,17 +12449,23 @@ for (auto &npc : npcInstances) {
                 announceToRoom(item.x, item.y, item.z, msg, -1);
             }
             
-            // Move to next dialog
-            item.dialogIndex++;
-            if (item.dialogIndex >= 3) {
-                item.dialogIndex = 0;
-                
-                // Shuffle order for next cycle
-                for (int i = 0; i < 3; i++) {
-                    int r = random(0, 3);
-                    int tmp = item.dialogOrder[i];
-                    item.dialogOrder[i] = item.dialogOrder[r];
-                    item.dialogOrder[r] = tmp;
+            // Move to next dialog - only cycle through the dialogs that exist
+            if (dialogCount == 1) {
+                // Single dialog: only repeat if it's the ONLY one
+                // Don't cycle, just repeat the same dialog
+            } else {
+                // Multiple dialogs: cycle through without repeating
+                item.dialogIndex++;
+                if (item.dialogIndex >= dialogCount) {
+                    item.dialogIndex = 0;
+                    
+                    // Shuffle order for next cycle
+                    for (int j = 0; j < dialogCount; j++) {
+                        int r = random(0, dialogCount);
+                        int tmp = item.dialogOrder[j];
+                        item.dialogOrder[j] = item.dialogOrder[r];
+                        item.dialogOrder[r] = tmp;
+                    }
                 }
             }
             
