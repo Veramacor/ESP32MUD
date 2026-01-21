@@ -185,6 +185,12 @@ void cmdGetFrom(Player &p, const char* targetStr, const char* containerStr);
 void broadcastToRoom(int x, int y, int z, const String &msg, Player *exclude = nullptr);
 void broadcastToAll(const String &msg);
 void broadcastRoomExcept(Player &p, const String &msg, Player &exclude);
+String wordWrap(const String &text, int width);
+String ensurePunctuation(const String &text);
+void printWrappedLines(Client &client, const String &text, int width);
+void announceToRoomWrapped(int x, int y, int z, const String &msg, int excludeIndex);
+void announceToRoom(int x, int y, int z, const String &msg, int excludeIndex);
+void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, int excludeB);
 
 // Debug and logging
 void debugDumpItemsToSerial();
@@ -307,6 +313,8 @@ struct WorldItem {
     String parentName;
     int value;
     int nextWorldItemId = 1;
+    int dialogIndex = 0;
+    int dialogOrder[3] = {0, 1, 2};
 
 
     // SAFE: std::string inside std::map
@@ -1421,19 +1429,12 @@ String oppositeDir(const String &dir) {
 
 
 void announceToRoom(int x, int y, int z, const String &msg, int excludeIndex) {
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!players[i].active || !players[i].loggedIn) continue;
-        if (i == excludeIndex) continue;
-
-        if (players[i].roomX == x &&
-            players[i].roomY == y &&
-            players[i].roomZ == z) {
-            players[i].client.println(msg);
-        }
-    }
+    announceToRoomWrapped(x, y, z, msg, excludeIndex);
 }
 
 void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, int excludeB) {
+    String cleaned = ensurePunctuation(msg);
+    String wrappedMsg = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!players[i].active || !players[i].loggedIn) continue;
         if (i == excludeA || i == excludeB) continue;
@@ -1441,7 +1442,15 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
         if (players[i].roomX == x &&
             players[i].roomY == y &&
             players[i].roomZ == z) {
-            players[i].client.println(msg);
+            // Print each line separately to avoid client-side indentation
+            int start = 0;
+            for (int j = 0; j <= wrappedMsg.length(); j++) {
+                if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
+                    String line = wrappedMsg.substring(start, j);
+                    players[i].client.println(line);
+                    start = j + 1;
+                }
+            }
         }
     }
 }
@@ -2114,6 +2123,73 @@ String wordWrap(const String &text, int width = MAX_OUTPUT_WIDTH) {
 }
 
 /**
+ * Ensure text ends with punctuation (.?!")
+ * If it doesn't, add a period (unless it ends with a quote)
+ */
+String ensurePunctuation(const String &text) {
+    String trimmed = text;
+    // Trim trailing spaces
+    while (trimmed.length() > 0 && trimmed[trimmed.length() - 1] == ' ') {
+        trimmed = trimmed.substring(0, trimmed.length() - 1);
+    }
+    
+    if (trimmed.length() == 0) return trimmed;
+    
+    char lastChar = trimmed[trimmed.length() - 1];
+    if (lastChar == '.' || lastChar == '?' || lastChar == '!' || lastChar == '"') {
+        return trimmed;
+    }
+    
+    return trimmed + ".";
+}
+
+/**
+ * Unified function to print wrapped text line-by-line to a client
+ * Handles wrapping and ensures no leading spaces on continuation lines
+ */
+void printWrappedLines(Client &client, const String &text, int width = MAX_OUTPUT_WIDTH) {
+    String cleaned = ensurePunctuation(text);
+    String wrappedMsg = wordWrap(cleaned, width);
+    
+    int start = 0;
+    for (int j = 0; j <= wrappedMsg.length(); j++) {
+        if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
+            String line = wrappedMsg.substring(start, j);
+            client.println(line);
+            start = j + 1;
+        }
+    }
+}
+
+/**
+ * Unified function to announce text to a room with proper wrapping
+ * Ensures no leading spaces on continuation lines
+ */
+void announceToRoomWrapped(int x, int y, int z, const String &msg, int excludeIndex = -1) {
+    String cleaned = ensurePunctuation(msg);
+    String wrappedMsg = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
+    
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        if (i == excludeIndex) continue;
+
+        if (players[i].roomX == x &&
+            players[i].roomY == y &&
+            players[i].roomZ == z) {
+            // Print each line separately to avoid client-side indentation
+            int start = 0;
+            for (int j = 0; j <= wrappedMsg.length(); j++) {
+                if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
+                    String line = wrappedMsg.substring(start, j);
+                    players[i].client.println(line);
+                    start = j + 1;
+                }
+            }
+        }
+    }
+}
+
+/**
  * Print wrapped text to client, properly handling each wrapped line
  */
 void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WIDTH) {
@@ -2136,7 +2212,6 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
         }
     }
 }
-
 void recalcBonuses(Player &p) {
     applyEquipmentBonuses(p);
 }
@@ -2253,6 +2328,14 @@ void loadWorldItemsFromSave() {
     }
 
     f.close();
+    
+    // After loading, populate attributes from itemDefs
+    for (auto &wi : worldItems) {
+        auto it = itemDefs.find(std::string(wi.name.c_str()));
+        if (it != itemDefs.end()) {
+            wi.attributes = it->second.attributes;
+        }
+    }
 }
 
 void saveWorldItems() {
@@ -11694,10 +11777,10 @@ for (auto &npc : npcInstances) {
         // Only process world items (not in inventory)
         if (item.ownerName.length() > 0) continue;
         
-        // Check if item has any dialog attributes
-        auto dialog1 = item.attributes.find("dialog1");
-        auto dialog2 = item.attributes.find("dialog2");
-        auto dialog3 = item.attributes.find("dialog3");
+        // Check if item has any dialog attributes (using dialog_1, dialog_2, dialog_3 format)
+        auto dialog1 = item.attributes.find("dialog_1");
+        auto dialog2 = item.attributes.find("dialog_2");
+        auto dialog3 = item.attributes.find("dialog_3");
         
         if (dialog1 == item.attributes.end() && 
             dialog2 == item.attributes.end() && 
@@ -11710,12 +11793,12 @@ for (auto &npc : npcInstances) {
             item.attributes["nextDialogTime"] = std::to_string(now + random(8000, 30001));
         }
         
-        unsigned long nextTime = (unsigned long)atol(item.attributes["nextDialogTime"].c_str());
+        unsigned long nextTime = (unsigned long)strtoull(item.attributes["nextDialogTime"].c_str(), NULL, 10);
         
         if (now >= nextTime) {
-            // Pick a random dialog (1, 2, or 3)
-            int dialogNum = random(1, 4);
-            String dialogKey = "dialog" + String(dialogNum);
+            // Pick dialog based on cycle order (0, 1, 2 or shuffled)
+            int dialogNum = item.dialogOrder[item.dialogIndex] + 1;  // Convert 0-2 to 1-3
+            String dialogKey = "dialog_" + String(dialogNum);
             std::string skey = std::string(dialogKey.c_str());
             
             auto dialogIt = item.attributes.find(skey);
@@ -11732,6 +11815,20 @@ for (auto &npc : npcInstances) {
                 String msg = "The " + itemName + " says: \"" + line + "\"";
                 
                 announceToRoom(item.x, item.y, item.z, msg, -1);
+            }
+            
+            // Move to next dialog
+            item.dialogIndex++;
+            if (item.dialogIndex >= 3) {
+                item.dialogIndex = 0;
+                
+                // Shuffle order for next cycle
+                for (int i = 0; i < 3; i++) {
+                    int r = random(0, 3);
+                    int tmp = item.dialogOrder[i];
+                    item.dialogOrder[i] = item.dialogOrder[r];
+                    item.dialogOrder[r] = tmp;
+                }
             }
             
             // Schedule next dialog
