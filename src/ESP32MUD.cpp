@@ -248,7 +248,9 @@ void cmdDrop(Player &p, const String &input);
 void cmdDropAll(Player &p, const char *unused);
 void cmdDropAll(Player &p);
 void cmdQrCode(Player &p, const String &input);
+void drawPlayerMap(Player &p);
 void cmdMap(Player &p);
+void cmdTownMap(Player &p);
 void cmdReadSign(Player &p, const String &input);
 void cmdBuy(Player &p, const String &arg);
 void cmdSell(Player &p, const String &arg);
@@ -463,6 +465,16 @@ struct Player {
     bool inCombat = false;
     unsigned long nextCombatTime = 0;
     NpcInstance* combatTarget = nullptr;
+
+    // Visited voxels tracker for mapper utility (max 500 visited rooms)
+    struct VisitedVoxel {
+        int x, y, z;
+    };
+    std::vector<VisitedVoxel> visitedVoxels;
+    static const int MAX_VISITED_VOXELS = 500;
+    
+    // Map tracker toggle
+    bool mapTrackerEnabled = false;
 };
 
 // =============================
@@ -1470,6 +1482,20 @@ bool loadRoomForPlayer(Player &p, int x, int y, int z) {
   p.roomX = r.x;
   p.roomY = r.y;
   p.roomZ = r.z;
+
+  // Track this voxel as visited
+  uint64_t voxelKey = packVoxelKey(x, y, z);
+  bool alreadyVisited = false;
+  for (const auto &visited : p.visitedVoxels) {
+    if (visited.x == x && visited.y == y && visited.z == z) {
+      alreadyVisited = true;
+      break;
+    }
+  }
+  
+  if (!alreadyVisited && p.visitedVoxels.size() < Player::MAX_VISITED_VOXELS) {
+    p.visitedVoxels.push_back({x, y, z});
+  }
 
   return true;
 }
@@ -4025,6 +4051,12 @@ String addArticle(const String &text) {
 // =============================================================
 
 void cmdLook(Player &p) {
+    // Draw map tracker if enabled
+    if (p.mapTrackerEnabled) {
+        drawPlayerMap(p);
+        p.client.println("");  // blank line between map and room description
+    }
+    
     // Use the player's currentRoom, not a global rooms[][][]
     Room &r = p.currentRoom;
 
@@ -5246,7 +5278,8 @@ void cmdHelp(Player &p) {
     p.client.println("actions                - List available emotes");
 
     // --- World navigation ---
-    p.client.println("map                    - Display ASCII map of the Town");
+    p.client.println("map                    - Toggle the Mapper Utility on or off");
+    p.client.println("townmap                - Town Map of Espertheru");
 
     // --- Account / system ---
     p.client.println("password               - Change your password");
@@ -5380,12 +5413,17 @@ void cmdQrCode(Player &p, const String &input) {
 
 /**
  * Generate a 3x3 character block for a room
- * Represents all 8 directions (cardinal + diagonal)
+ * Represents all 10 directions (8 cardinal/diagonal + up/down)
+ * Center is filled circle (●) if only 1 of the 8 directions (dead end), else filled square (█)
+ * Up/Down arrows do NOT count toward dead end detection
+ * If isPlayerHere is true, center shows @ instead of █/●
  * Returns a 3-line string representing the icon
  */
 String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
-                   int exit_ne, int exit_nw, int exit_se, int exit_sw) {
+                   int exit_ne, int exit_nw, int exit_se, int exit_sw,
+                   int exit_u, int exit_d, bool isPlayerHere = false) {
     // 3x3 grid for each voxel
+    // Using 0 for empty, 1 for filled square, 2 for up arrow, 3 for down arrow, 4 for circle
     int grid[3][3] = {
         {0, 0, 0},
         {0, 0, 0},
@@ -5394,12 +5432,22 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     
     // No room at all - return empty 3x3
     if (!exit_n && !exit_s && !exit_e && !exit_w &&
-        !exit_ne && !exit_nw && !exit_se && !exit_sw) {
+        !exit_ne && !exit_nw && !exit_se && !exit_sw &&
+        !exit_u && !exit_d) {
         return "   \n   \n   ";
     }
     
-    // Center (always present for occupied rooms)
-    grid[1][1] = 1;
+    // Count only the 8 cardinal/diagonal directions (not up/down)
+    int directionCount = exit_n + exit_s + exit_e + exit_w +
+                        exit_ne + exit_nw + exit_se + exit_sw;
+    
+    // Center: player icon (X) if player here, filled circle (●) if dead end, else filled square (█)
+    // Note: up/down don't count toward dead end, so North+Up = circle
+    if (isPlayerHere) {
+        grid[1][1] = 5;  // Player icon (X)
+    } else {
+        grid[1][1] = (directionCount == 1) ? 4 : 1;
+    }
     
     // Cardinal directions
     if (exit_n) grid[0][1] = 1;   // North - top center
@@ -5413,11 +5461,27 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     if (exit_se) grid[2][2] = 1;  // SouthEast - bottom right
     if (exit_sw) grid[2][0] = 1;  // SouthWest - bottom left
     
+    // Vertical directions (overwrite left/right middle with arrows)
+    if (exit_u) grid[1][0] = 2;   // Up arrow - left middle
+    if (exit_d) grid[1][2] = 3;   // Down arrow - right middle
+    
     // Build the 3-line string
     String result = "";
     for (int row = 0; row < 3; row++) {
         for (int col = 0; col < 3; col++) {
-            result += grid[row][col] ? "█" : " ";
+            if (grid[row][col] == 0) {
+                result += " ";
+            } else if (grid[row][col] == 1) {
+                result += "█";
+            } else if (grid[row][col] == 2) {
+                result += "↑";
+            } else if (grid[row][col] == 3) {
+                result += "↓";
+            } else if (grid[row][col] == 4) {
+                result += "●";
+            } else if (grid[row][col] == 5) {
+                result += "X";
+            }
         }
         if (row < 2) result += "\n";
     }
@@ -5425,20 +5489,19 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     return result;
 }
 
-void cmdMap(Player &p) {
-    const int TARGET_Z = 50;
-    
-    // Scan all rooms to find min/max X and Y coordinates
+// Draw the player's visited map (20x20 grid centered on player)
+// Called by both the map tracker display and the cmdMap toggle
+void drawPlayerMap(Player &p) {
+    const int GRID_RADIUS = 10;  // 10 voxels in each direction from player
+    int TARGET_Z = p.roomZ;       // Use player's current Z level
+
+    // Read all rooms on this Z level
     File f = LittleFS.open("/rooms.txt", "r");
     if (!f) {
-        p.client.println("Cannot open rooms file.");
         return;
     }
 
-    // First pass: find min/max coordinates for Z=50
-    int minX = INT_MAX, maxX = INT_MIN;
-    int minY = INT_MAX, maxY = INT_MIN;
-    std::vector<String> roomLines;
+    std::map<uint64_t, String> roomMap;  // key = packVoxelKey(x,y,z), value = room line
 
     if (f.available()) f.readStringUntil('\n');  // Skip header
 
@@ -5459,35 +5522,197 @@ void cmdMap(Player &p) {
         int z = line.substring(c2 + 1, c3).toInt();
 
         if (z == TARGET_Z) {
-            minX = min(minX, x);
-            maxX = max(maxX, x);
-            minY = min(minY, y);
-            maxY = max(maxY, y);
-            roomLines.push_back(line);
+            uint64_t key = packVoxelKey(x, y, z);
+            roomMap[key] = line;
         }
     }
     f.close();
 
-    if (roomLines.empty()) {
-        p.client.println("No rooms found at Z level " + String(TARGET_Z) + ".");
+    // Create a helper to parse room data from a line
+    auto parseRoomData = [](const String &line) -> std::pair<bool, std::array<int, 10>> {
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+        
+        if (c1 < 0 || c2 < 0 || c3 < 0) {
+            return {false, {}};
+        }
+
+        auto getField = [&](int fieldIndex) -> int {
+            int count = 0;
+            int start = 0;
+            for (int i = 0; i <= line.length(); i++) {
+                if (i == line.length() || line[i] == ',') {
+                    if (count == fieldIndex) {
+                        return line.substring(start, i).toInt();
+                    }
+                    start = i + 1;
+                    count++;
+                }
+            }
+            return 0;
+        };
+
+        std::array<int, 10> exits = {
+            getField(5),   // exit_n
+            getField(6),   // exit_s
+            getField(7),   // exit_e
+            getField(8),   // exit_w
+            getField(9),   // exit_ne
+            getField(10),  // exit_nw
+            getField(11),  // exit_se
+            getField(12),  // exit_sw
+            getField(13),  // exit_u
+            getField(14)   // exit_d
+        };
+        
+        return {true, exits};
+    };
+
+    // Build the 20x20 grid centered on player
+    // Create a set of visited voxels for fast lookup
+    std::set<uint64_t> visitedSet;
+    for (const auto &voxel : p.visitedVoxels) {
+        visitedSet.insert(packVoxelKey(voxel.x, voxel.y, voxel.z));
+    }
+
+    // Display the map without header/footer (just the grid)
+    for (int dy = -GRID_RADIUS; dy <= GRID_RADIUS; dy++) {
+        // Build 3 output lines for this row of voxels
+        String outLines[3] = {"", "", ""};
+        
+        for (int dx = -GRID_RADIUS; dx <= GRID_RADIUS; dx++) {
+            int worldX = p.roomX + dx;
+            int worldY = p.roomY + dy;
+            uint64_t key = packVoxelKey(worldX, worldY, TARGET_Z);
+            
+            String block;
+            
+            // Check if this voxel has been visited
+            if (visitedSet.count(key)) {
+                // Voxel visited - show its exits
+                const String &roomLine = roomMap[key];
+                auto result = parseRoomData(roomLine);
+                bool exists = result.first;
+                std::array<int, 10> exits = result.second;
+                
+                if (exists) {
+                    bool isPlayerHere = (dx == 0 && dy == 0);
+                    block = getMapBlock(exits[0], exits[1], exits[2], exits[3],
+                                       exits[4], exits[5], exits[6], exits[7],
+                                       exits[8], exits[9], isPlayerHere);
+                } else {
+                    block = "   \n   \n   ";
+                }
+            } else {
+                // Unvisited voxel - show empty space
+                block = "   \n   \n   ";
+            }
+            
+            // Split block into 3 lines and append to output lines
+            int lineIdx = 0;
+            int startPos = 0;
+            for (int i = 0; i <= block.length() && lineIdx < 3; i++) {
+                if (i == block.length() || block[i] == '\n') {
+                    outLines[lineIdx] += block.substring(startPos, i);
+                    startPos = i + 1;
+                    lineIdx++;
+                }
+            }
+        }
+        
+        // Print the 3 lines for this row, skipping blank lines
+        for (int i = 0; i < 3; i++) {
+            // Check if line has any non-whitespace characters
+            bool hasContent = false;
+            for (int j = 0; j < outLines[i].length(); j++) {
+                if (outLines[i][j] != ' ') {
+                    hasContent = true;
+                    break;
+                }
+            }
+            // Only print if line has content
+            if (hasContent) {
+                p.client.println(outLines[i]);
+            }
+        }
+    }
+}
+
+void cmdMap(Player &p) {
+    // Toggle map tracker on/off
+    p.mapTrackerEnabled = !p.mapTrackerEnabled;
+    
+    if (p.mapTrackerEnabled) {
+        p.client.println("Map tracker is on");
+    } else {
+        p.client.println("Map tracker is off");
+    }
+}
+
+void cmdTownMap(Player &p) {
+    const int TARGET_Z = 50;
+    const int TOWN_MIN_X = 246;
+    const int TOWN_MIN_Y = 242;
+    const int TOWN_MAX_X = 254;
+    const int TOWN_MAX_Y = 251;
+    
+    // Scan all rooms to find those in the town area
+    File f = LittleFS.open("/rooms.txt", "r");
+    if (!f) {
+        p.client.println("Cannot open rooms file.");
         return;
     }
 
-    // Calculate grid dimensions
-    int gridWidth = maxX - minX + 1;
-    int gridHeight = maxY - minY + 1;
+    std::vector<String> townLines;
+
+    if (f.available()) f.readStringUntil('\n');  // Skip header
+
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+
+        // Parse CSV: x,y,z,...
+        int c1 = line.indexOf(',');
+        int c2 = line.indexOf(',', c1 + 1);
+        int c3 = line.indexOf(',', c2 + 1);
+
+        if (c1 < 0 || c2 < 0 || c3 < 0) continue;
+
+        int x = line.substring(0, c1).toInt();
+        int y = line.substring(c1 + 1, c2).toInt();
+        int z = line.substring(c2 + 1, c3).toInt();
+
+        // Filter for town area at Z=50
+        if (z == TARGET_Z && x >= TOWN_MIN_X && x <= TOWN_MAX_X &&
+            y >= TOWN_MIN_Y && y <= TOWN_MAX_Y) {
+            townLines.push_back(line);
+        }
+    }
+    f.close();
+
+    if (townLines.empty()) {
+        p.client.println("No town rooms found.");
+        return;
+    }
+
+    // Calculate grid dimensions (town is fixed: 9x10)
+    int gridWidth = TOWN_MAX_X - TOWN_MIN_X + 1;   // 9 voxels
+    int gridHeight = TOWN_MAX_Y - TOWN_MIN_Y + 1;  // 10 voxels
 
     // Create a 2D grid to store room data
     struct RoomData {
         bool exists = false;
         int exit_n = 0, exit_s = 0, exit_e = 0, exit_w = 0;
         int exit_ne = 0, exit_nw = 0, exit_se = 0, exit_sw = 0;
+        int exit_u = 0, exit_d = 0;
     };
 
     std::vector<std::vector<RoomData>> grid(gridHeight, std::vector<RoomData>(gridWidth));
 
-    // Second pass: populate grid with room exit data
-    for (const String &line : roomLines) {
+    // Populate grid with room exit data
+    for (const String &line : townLines) {
         int c1 = line.indexOf(',');
         int c2 = line.indexOf(',', c1 + 1);
         int c3 = line.indexOf(',', c2 + 1);
@@ -5495,8 +5720,8 @@ void cmdMap(Player &p) {
         int x = line.substring(0, c1).toInt();
         int y = line.substring(c1 + 1, c2).toInt();
 
-        int gridX = x - minX;
-        int gridY = y - minY;
+        int gridX = x - TOWN_MIN_X;
+        int gridY = y - TOWN_MIN_Y;
 
         auto getField = [&](int fieldIndex) -> int {
             int count = 0;
@@ -5523,12 +5748,14 @@ void cmdMap(Player &p) {
         room.exit_nw = getField(10);
         room.exit_se = getField(11);
         room.exit_sw = getField(12);
+        room.exit_u = getField(13);
+        room.exit_d = getField(14);
     }
 
-    // Display the map at 3x3 scaling (26 voxels per 80-column row)
+    // Display the town map
     p.client.println("");
     p.client.println("═══════════════════════════════════════════════════════════════════");
-    p.client.println("                   Town Map (Z Level " + String(TARGET_Z) + ")");
+    p.client.println("                     The Town of Espertheru");
     p.client.println("═══════════════════════════════════════════════════════════════════");
     p.client.println("");
 
@@ -5538,12 +5765,19 @@ void cmdMap(Player &p) {
         String outLines[3] = {"", "", ""};
         
         for (int x = 0; x < gridWidth; x++) {
+            // Calculate actual world coordinates
+            int worldX = TOWN_MIN_X + x;
+            int worldY = TOWN_MIN_Y + y;
+            
             const RoomData &room = grid[y][x];
             String block;
             
             if (room.exists) {
+                // Check if player is at this location
+                bool isPlayerHere = (p.roomX == worldX && p.roomY == worldY && p.roomZ == TARGET_Z);
                 block = getMapBlock(room.exit_n, room.exit_s, room.exit_e, room.exit_w,
-                                   room.exit_ne, room.exit_nw, room.exit_se, room.exit_sw);
+                                   room.exit_ne, room.exit_nw, room.exit_se, room.exit_sw,
+                                   room.exit_u, room.exit_d, isPlayerHere);
             } else {
                 block = "   \n   \n   ";
             }
@@ -10804,6 +11038,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
 
     if (cmd == "map") {
         cmdMap(p);
+        return;
+    }
+
+    if (cmd == "townmap") {
+        cmdTownMap(p);
         return;
     }
 
