@@ -264,6 +264,9 @@ void cmdSellAll(Player &p);
 Shop* getShopForRoom(Player &p);
 void initializeShops();
 
+// File upload handler
+void handleFileUploadRequest(WiFiClient &client);
+
 // =============================
 // Item and NPC definition system
 // =============================
@@ -530,6 +533,12 @@ std::vector<NpcInstance> npcInstances;
 std::map<int, QuestDef> quests;
 
 WiFiServer* server = nullptr;
+
+// =====================================================
+// FILE UPLOAD SERVER (WiFi-based, runs on port 8080)
+// =====================================================
+WiFiServer* fileUploadServer = nullptr;
+const int FILE_UPLOAD_PORT = 8080;
 
 Player players[MAX_PLAYERS];
 int    npcCount = 0;
@@ -12027,6 +12036,12 @@ void setup() {
     // Always start with a clean YMODEM log
     LittleFS.remove("/ymodem_debug.txt");
 
+    // Remove any leftover shops.txt from previous development (not part of current code)
+    if (LittleFS.exists("/shops.txt")) {
+        LittleFS.remove("/shops.txt");
+        Serial.println("[BOOT] Removed legacy shops.txt file");
+    }
+
     // =====================================================
     // YMODEM UPLOAD WINDOW (SKIPPED IF NO SERIAL)
     // =====================================================
@@ -12128,6 +12143,18 @@ void setup() {
 
         Serial.print("MUD server started on port ");
         Serial.println(mudPort);
+    }
+
+    // =====================================================
+    // INITIALIZE FILE UPLOAD SERVER (Port 8080)
+    // =====================================================
+    {
+        fileUploadServer = new WiFiServer(FILE_UPLOAD_PORT);
+        fileUploadServer->begin();
+
+        Serial.print("File upload server started on port ");
+        Serial.println(FILE_UPLOAD_PORT);
+        Serial.println("  Access: http://<device-ip>:8080");
     }
 
     // Initialize players
@@ -12496,4 +12523,153 @@ for (auto &npc : npcInstances) {
         restockAllShops();
         lastShopRestock = now;
     }
+
+    // =====================================================
+    // HANDLE FILE UPLOADS VIA HTTP (Port 8080)
+    // =====================================================
+    if (fileUploadServer) {
+        WiFiClient uploadClient = fileUploadServer->available();
+        if (uploadClient) {
+            handleFileUploadRequest(uploadClient);
+        }
+    }
+}
+
+// =====================================================
+// FILE UPLOAD HANDLER - HTTP POST endpoint
+// =====================================================
+void handleFileUploadRequest(WiFiClient &client) {
+    String request = "";
+    unsigned long timeout = millis() + 2000;  // 2-second timeout
+    
+    // Read HTTP request headers
+    while (client.available() && millis() < timeout) {
+        char c = client.read();
+        request += c;
+        if (request.endsWith("\r\n\r\n")) break;
+    }
+
+    // Parse request line
+    int firstLine = request.indexOf("\r\n");
+    String requestLine = request.substring(0, firstLine);
+
+    if (requestLine.indexOf("POST /upload") >= 0) {
+        // Extract Content-Length
+        int contentLenIdx = request.indexOf("Content-Length: ");
+        int contentLen = 0;
+        if (contentLenIdx >= 0) {
+            int eol = request.indexOf("\r\n", contentLenIdx);
+            String lenStr = request.substring(contentLenIdx + 16, eol);
+            contentLen = lenStr.toInt();
+        }
+
+        // Find boundary (for multipart/form-data)
+        int boundaryIdx = request.indexOf("boundary=");
+        String boundary = "";
+        if (boundaryIdx >= 0) {
+            int end = request.indexOf("\r\n", boundaryIdx);
+            boundary = request.substring(boundaryIdx + 9, end);
+        }
+
+        // Read file data
+        String fileName = "unknown.txt";
+
+        // Read remaining body until boundary
+        String fileContent = "";
+        while (client.available() && fileContent.length() < contentLen * 2) {
+            fileContent += (char)client.read();
+        }
+
+        // Parse filename from the multipart Content-Disposition header (in the body)
+        // Look for: Content-Disposition: form-data; name="file"; filename="shops.txt"
+        int dispIdx = fileContent.indexOf("filename=");
+        if (dispIdx >= 0) {
+            int start = dispIdx + 9;
+            // Skip quote if present
+            if (fileContent[start] == '"') start++;
+            
+            int end = start;
+            while (end < fileContent.length()) {
+                char c = fileContent[end];
+                if (c == '"' || c == ';' || c == '\r' || c == '\n') break;
+                end++;
+            }
+            
+            if (end > start) {
+                fileName = fileContent.substring(start, end);
+                fileName.trim();
+                
+                // Sanitize filename
+                fileName.toLowerCase();
+                for (int i = 0; i < fileName.length(); i++) {
+                    char c = fileName[i];
+                    if (!isalnum(c) && c != '.' && c != '_' && c != '-') {
+                        fileName[i] = '_';
+                    }
+                }
+            }
+        }
+
+        // Extract actual file data (between boundaries)
+        int dataStart = fileContent.indexOf("\r\n\r\n");
+        if (dataStart >= 0) {
+            dataStart += 4;
+            int dataEnd = fileContent.lastIndexOf("\r\n--");
+            if (dataEnd > dataStart) {
+                String actualData = fileContent.substring(dataStart, dataEnd);
+
+                // Write to LittleFS
+                String filePath = "/" + fileName;
+                File f = LittleFS.open(filePath, "w");
+                if (f) {
+                    f.print(actualData);
+                    f.close();
+                    
+                    // Send success response
+                    client.println("HTTP/1.1 200 OK");
+                    client.println("Content-Type: text/plain");
+                    client.println("Connection: close");
+                    client.println();
+                    client.println("File uploaded successfully!");
+                    client.println("File: " + fileName);
+                    client.println("Size: " + String(actualData.length()) + " bytes");
+                    client.println();
+                    client.println("To check the file, use: DEBUG FILES");
+                    
+                    Serial.println("[FILE UPLOAD] Received: " + filePath + " (" + String(actualData.length()) + " bytes)");
+                } else {
+                    // Send error
+                    client.println("HTTP/1.1 500 Internal Server Error");
+                    client.println("Content-Type: text/plain");
+                    client.println("Connection: close");
+                    client.println();
+                    client.println("Failed to write file");
+                    Serial.println("[FILE UPLOAD] Failed to open: " + filePath);
+                }
+            }
+        }
+    } else if (requestLine.indexOf("GET /") >= 0) {
+        // Serve simple upload HTML form
+        String html = 
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "<!DOCTYPE html><html><body>"
+            "<h1>ESP32 MUD - File Upload</h1>"
+            "<form method='POST' action='/upload' enctype='multipart/form-data'>"
+            "<input type='file' name='file' required>"
+            "<button type='submit'>Upload</button>"
+            "</form>"
+            "<p>Supported files: shops.txt, items.vxd, items.vxi, npcs.vxd, npcs.vxi, quests.txt, rooms.txt</p>"
+            "</body></html>";
+        client.print(html);
+    } else {
+        client.println("HTTP/1.1 404 Not Found");
+        client.println("Connection: close");
+        client.println();
+    }
+
+    delay(100);
+    client.stop();
 }
