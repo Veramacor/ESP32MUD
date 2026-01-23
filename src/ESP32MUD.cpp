@@ -94,6 +94,15 @@ struct Tavern {
     void displayMenu();
 };
 
+// =============================================================
+// POST OFFICE SYSTEM
+// =============================================================
+
+struct PostOffice {
+    int x, y, z;              // room location
+    String postOfficeName;    // e.g., "The Post Office"
+};
+
 bool warned5min  = false;
 bool warned2min  = false;
 bool warned1min  = false;
@@ -110,6 +119,9 @@ std::vector<Shop> shops;
 
 // Global tavern vector
 std::vector<Tavern> taverns;
+
+// Global post office vector
+std::vector<PostOffice> postOffices;
 
 bool g_inYmodem = false;
 
@@ -294,6 +306,12 @@ void initializeTaverns();
 void updateDrunkennessRecovery(Player &p);
 void updateFullnessRecovery(Player &p);
 void showTavernSign(Player &p, Tavern &tavern);
+
+// Post Office functions
+PostOffice* getPostOfficeForRoom(Player &p);
+void initializePostOffices();
+void cmdSend(Player &p, const String &input);
+void showPostOfficeSign(Player &p, PostOffice &po);
 
 // File upload handler
 void handleFileUploadRequest(WiFiClient &client);
@@ -5051,11 +5069,28 @@ void showTavernSign(Player &p, Tavern &tavern) {
     p.client.println("  Drunkenness: " + String(p.drunkenness) + "/6");
 }
 
+void showPostOfficeSign(Player &p, PostOffice &po) {
+    p.client.println("");
+    p.client.println("      Postal Instructions");
+    p.client.println("");
+    p.client.println("type 'send [emailaddress] [message]'");
+    p.client.println("");
+    p.client.println("We cannot guarantee delivery");
+    p.client.println("");
+}
+
 void cmdReadSign(Player &p, const String &input) {
     // Check if there's a tavern in this room
     Tavern* tavern = getTavernForRoom(p);
     if (tavern) {
         showTavernSign(p, *tavern);
+        return;
+    }
+    
+    // Check if there's a post office in this room
+    PostOffice* po = getPostOfficeForRoom(p);
+    if (po) {
+        showPostOfficeSign(p, *po);
         return;
     }
     
@@ -5487,6 +5522,47 @@ void cmdDrink(Player &p, const String &arg) {
     consumeWorldItem(p, worldIndex);
 }
 
+// =============================================================
+// POST OFFICE SYSTEM - Send mail
+// =============================================================
+
+void cmdSend(Player &p, const String &input) {
+    // Check if player is in a post office
+    PostOffice* po = getPostOfficeForRoom(p);
+    if (!po) {
+        p.client.println("You must be at a post office to send mail.");
+        return;
+    }
+
+    String args = input;
+    args.trim();
+    
+    if (args.length() == 0) {
+        p.client.println("Send to whom?");
+        return;
+    }
+
+    // Parse: send <email> <message>
+    int spaceIdx = args.indexOf(' ');
+    if (spaceIdx == -1) {
+        p.client.println("Usage: send [emailaddress] [message]");
+        return;
+    }
+
+    String emailAddress = args.substring(0, spaceIdx);
+    String message = args.substring(spaceIdx + 1);
+    
+    emailAddress.trim();
+    message.trim();
+    
+    if (emailAddress.length() == 0 || message.length() == 0) {
+        p.client.println("Usage: send [emailaddress] [message]");
+        return;
+    }
+
+    // For now, show unavailable message
+    p.client.println("Mail services are unavailable at the moment.");
+}
 
 // =============================
 // Score, levels, and help
@@ -5841,12 +5917,10 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     int directionCount = exit_n + exit_s + exit_e + exit_w +
                         exit_ne + exit_nw + exit_se + exit_sw;
     
-    // Center: location code if provided, else player icon (X) if player here, filled circle (●) if dead end, else filled square (█)
-    // Note: up/down don't count toward dead end, so North+Up = circle
+    // Center: location code if provided, else filled circle (●) if dead end, else filled square (█)
+    // Note: Player position will be drawn LAST to always appear on top
     if (locationCode != 0) {
         grid[1][1] = 6;  // Location code
-    } else if (isPlayerHere) {
-        grid[1][1] = 5;  // Player icon (X)
     } else {
         grid[1][1] = (directionCount == 1) ? 4 : 1;
     }
@@ -5866,6 +5940,11 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     // Vertical directions (overwrite left/right middle with arrows)
     if (exit_u) grid[1][0] = 2;   // Up arrow - left middle
     if (exit_d) grid[1][2] = 3;   // Down arrow - right middle
+    
+    // Player position is drawn LAST to ensure it always appears on top of everything
+    if (isPlayerHere) {
+        grid[1][1] = 5;  // Player icon (X) - overrides location code and center
+    }
     
     // Build the 3-line string
     String result = "";
@@ -6245,55 +6324,62 @@ void cmdTownMap(Player &p) {
         }
         
         // For each of the 3 output lines in this voxel row, add corresponding legend item
+        // Helper function to calculate visual width of a string (counting UTF-8 characters, not bytes)
+        auto visualWidth = [](const String &s) -> int {
+            int width = 0;
+            for (size_t i = 0; i < s.length(); i++) {
+                unsigned char c = s[i];
+                // Count only non-continuation bytes (leading bytes of UTF-8 sequences)
+                // Continuation bytes start with 10xxxxxx (0x80-0xBF)
+                if ((c & 0xC0) != 0x80) {
+                    width++;
+                }
+            }
+            return width;
+        };
+
         for (int i = 0; i < 3; i++) {
             String mapLine = outLines[i];
-            // Pad to at least 33 characters (11 voxels * 3 chars = 33)
-            while (mapLine.length() < 33) {
-                mapLine += " ";
-            }
             
             // Calculate absolute output line number
             int outputLineNum = y * 3 + i;
-            String legendLine = "";
+            String legendCode = "";
+            String legendDesc = "";
             
-            // Legend starts 2 rows down (at output line 2)
+            // Build legend based on output line number
             if (outputLineNum == 2) {
-                legendLine = "Legend:";
-            }
-            // Empty line after Legend (output line 3)
-            else if (outputLineNum == 3) {
-                legendLine = "";  // Empty spacing line
-            }
-            // Legend items 0-13 (output lines 4-17)
-            else if (outputLineNum >= 4 && outputLineNum <= 17) {
+                legendCode = "----------Legend:----------";
+            } else if (outputLineNum == 3) {
+                legendCode = "";  // Empty spacing line
+            } else if (outputLineNum >= 4 && outputLineNum <= 17) {
                 int itemIdx = outputLineNum - 4;
-                legendLine = String(legendCodes[itemIdx]) + ":  " + String(legendDescs[itemIdx]);
-            }
-            // Empty line between S and X (output line 18)
-            else if (outputLineNum == 18) {
-                legendLine = "";  // Empty spacing line
-            }
-            // Legend item 14 (X: YOU ARE HERE) at output line 19
-            else if (outputLineNum == 19) {
-                legendLine = String(legendCodes[14]) + ":  " + String(legendDescs[14]);
+                legendCode = String(legendCodes[itemIdx]);
+                legendDesc = String(legendDescs[itemIdx]);
+            } else if (outputLineNum == 18) {
+                legendCode = "";  // Empty spacing line
+            } else if (outputLineNum == 19) {
+                legendCode = String(legendCodes[14]);
+                legendDesc = String(legendDescs[14]);
             }
             
             if (outputLineNum >= 2 && outputLineNum <= 19) {
                 String outputLine = mapLine;
                 
-                // Pad to position 39 (0-indexed), which is column 40 (1-indexed)
-                while (outputLine.length() < 39) {
+                // Pad to exactly 31 visual characters (position 32 is where legend starts)
+                // Use visualWidth instead of length() to account for multi-byte UTF-8 characters
+                while (visualWidth(outputLine) < 31) {
                     outputLine += " ";
                 }
                 
-                // Add legend line starting at column 40
+                // Add legend starting at position 32
                 if (outputLineNum == 2) {
-                    outputLine += "----------Legend:----------";
-                } else if (outputLineNum >= 4 && outputLineNum <= 17) {
-                    int itemIdx = outputLineNum - 4;
-                    outputLine += String(legendCodes[itemIdx]) + ":  " + String(legendDescs[itemIdx]);
-                } else if (outputLineNum == 19) {
-                    outputLine += String(legendCodes[14]) + ":  " + String(legendDescs[14]);
+                    // Full header line
+                    outputLine += legendCode;
+                } else if (outputLineNum == 3 || outputLineNum == 18) {
+                    // Empty spacing lines - nothing added
+                } else if (legendCode.length() > 0) {
+                    // Regular legend item: code (C:, E:, etc) + description
+                    outputLine += legendCode + ":  " + legendDesc;
                 }
                 
                 p.client.println(outputLine);
@@ -6303,11 +6389,6 @@ void cmdTownMap(Player &p) {
         }
     }
 
-    // Footer separator starting at column 40
-    String footer = "";
-    for (int i = 0; i < 39; i++) footer += " ";
-    footer += "----------------------------";
-    p.client.println(footer);
 
     p.client.println("");
     p.client.println("═══════════════════════════════════════════════════════════════════");
@@ -8036,6 +8117,17 @@ Tavern* getTavernForRoom(Player &p) {
     return nullptr;
 }
 
+PostOffice* getPostOfficeForRoom(Player &p) {
+    for (auto &po : postOffices) {
+        if (po.x == p.roomX && 
+            po.y == p.roomY && 
+            po.z == p.roomZ) {
+            return &po;
+        }
+    }
+    return nullptr;
+}
+
 void initializeTaverns() {
     // Clear existing taverns
     taverns.clear();
@@ -8070,6 +8162,20 @@ void initializeTaverns() {
     tavern.drinks.push_back(faery_fire);
     
     taverns.push_back(tavern);
+}
+
+void initializePostOffices() {
+    // Clear existing post offices
+    postOffices.clear();
+    
+    // POST OFFICE at voxel 252,248,50
+    PostOffice po;
+    po.x = 252;
+    po.y = 248;
+    po.z = 50;
+    po.postOfficeName = "The Post Office";
+    
+    postOffices.push_back(po);
 }
 
 void updateDrunkennessRecovery(Player &p) {
@@ -11546,6 +11652,18 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
 // -----------------------------------------
+// POST OFFICE: SEND
+// -----------------------------------------
+    if (cmd == "send") {
+        if (args.length() == 0) {
+            p.client.println("Send to whom?");
+            return;
+        }
+        cmdSend(p, args);
+        return;
+    }
+
+// -----------------------------------------
 // EQUIPMENT: WEAR / REMOVE / WIELD / UNWIELD
 // -----------------------------------------
     if (cmd == "wear") {
@@ -12610,6 +12728,7 @@ void setup() {
     buildRoomIndexesIfNeeded();     // build room lookup tables
     initializeShops();              // initialize room-based shops
     initializeTaverns();            // initialize taverns with drinks
+    initializePostOffices();        // initialize post offices
 
     // Initialize 6-hour reboot timer
     nextGlobalRespawn = millis() + GLOBAL_RESPAWN_INTERVAL;
