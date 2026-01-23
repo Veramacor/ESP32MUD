@@ -6280,7 +6280,7 @@ void cmdTownMap(Player &p) {
             
             if (outputLineNum >= 2 && outputLineNum <= 19) {
                 if (legendLine.length() > 0) {
-                    p.client.println(mapLine + "          " + legendLine);
+                    p.client.println(mapLine + "        " + legendLine);
                 } else {
                     p.client.println(mapLine);
                 }
