@@ -198,11 +198,14 @@ function parseEmail($lines) {
         'from' => '',
         'subject' => '',
         'body' => '',
-        'recipient' => ''  // Player name extracted from body
+        'recipient' => ''
     ];
     
     $in_headers = true;
     $body_lines = [];
+    $mime_boundary = null;
+    $text_content = '';
+    $in_text_part = false;
     
     foreach ($lines as $line) {
         if ($in_headers) {
@@ -219,27 +222,91 @@ function parseEmail($lines) {
                 $email['from'] = trim($m[1]);
             } elseif (preg_match('/^Subject:\s*(.+)$/i', $line, $m)) {
                 $email['subject'] = trim($m[1]);
+            } elseif (preg_match('/boundary="([^"]+)"/i', $line, $m)) {
+                $mime_boundary = $m[1];
             }
         } else {
-            // Body line
-            $body_lines[] = $line;
+            // Processing body
+            $trimmed = trim($line);
+            
+            // Handle MIME boundaries
+            if ($mime_boundary && strpos($trimmed, '--' . $mime_boundary) === 0) {
+                // Check if this starts a text/plain section
+                $in_text_part = false;
+                continue;
+            }
+            
+            // Look for start of text/plain content type
+            if (preg_match('/Content-Type:\s*text\/plain/i', $line)) {
+                $in_text_part = true;
+                continue;
+            }
+            
+            // Skip MIME header lines after Content-Type
+            if ($in_text_part && preg_match('/^[A-Z\-]+:\s*(.*)$/i', $line)) {
+                continue;
+            }
+            
+            // Skip empty line after MIME headers
+            if ($in_text_part && $trimmed === '') {
+                continue;
+            }
+            
+            // Collect actual message content
+            if (!$mime_boundary) {
+                // Simple email, no MIME
+                $body_lines[] = $line;
+            } elseif ($in_text_part && $trimmed !== '') {
+                $body_lines[] = $line;
+            }
         }
     }
     
-    $email['body'] = implode("\r\n", $body_lines);
+    $raw_body = trim(implode("\r\n", $body_lines));
     
-    // Extract recipient from body: "A message from [playername]"
-    // Search case-insensitive for pattern
-    $body_lower = strtolower($email['body']);
+    // Decode quoted-printable if needed
+    if (preg_match('/=\r?\n/', $raw_body) || preg_match('/=[\dA-F]{2}/', $raw_body)) {
+        $raw_body = quoted_printable_decode($raw_body);
+    }
+    
+    // Extract only the sender's reply (before quoted text begins)
+    // Look for "On [date]..." which indicates the start of quoted content
+    $reply_text = $raw_body;
+    $quote_markers = [
+        '/On\s+\w+,\s+\w+\s+\d+,\s+\d{4}/',  // "On Fri, Jan 23, 2026"
+        '/^>/m',                                // Lines starting with >
+        '/^--\s*$/m',                           // Signature separator
+        '/^Best regards,/i',                    // Signature start
+        '/^Applied Computer Services/i',       // Company name (signature)
+    ];
+    
+    foreach ($quote_markers as $marker) {
+        if (preg_match($marker, $reply_text)) {
+            // Find position of quote marker
+            if (preg_match($marker, $reply_text, $matches, PREG_OFFSET_CAPTURE)) {
+                $pos = $matches[0][1];
+                $reply_text = substr($reply_text, 0, $pos);
+            }
+            break;
+        }
+    }
+    
+    // Clean up trailing whitespace and newlines
+    $reply_text = trim($reply_text);
+    
+    // Format the body: "A letter from [email]: [blank line] [reply]"
+    $from_email = trim($email['from']);
+    $email['body'] = "A letter from " . $from_email . ":\n\n" . $reply_text;
+    
+    // Extract recipient from body
     if (preg_match('/a message from\s+(\w+)/i', $email['body'], $m)) {
         $email['recipient'] = trim($m[1]);
-        error_log("[POP3] Extracted recipient from body: " . $email['recipient']);
-    } else {
-        error_log("[POP3] Could not extract recipient from body");
+        error_log("[POP3] Extracted recipient: " . $email['recipient']);
     }
     
     // Validate email has required fields
     if (empty($email['from']) || empty($email['body'])) {
+        error_log("[POP3] Email missing from or body. From: " . $email['from'] . ", Body length: " . strlen($email['body']));
         return null;
     }
     

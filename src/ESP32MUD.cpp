@@ -325,7 +325,7 @@ void initializePostOffices();
 void cmdSend(Player &p, const String &input);
 void cmdSendMail(Player &p, const String &input);
 void showPostOfficeSign(Player &p, PostOffice &po);
-void checkAndSpawnMailLetters(Player &p);
+bool checkAndSpawnMailLetters(Player &p);  // Returns true if mail was found and letters spawned
 bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters);
 String extractPlayerNameFromEmail(const String &emailBody);
 
@@ -8581,26 +8581,38 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
             }
         }
         
-        // Extract "body" (note: body may contain escaped newlines)
-        int bodyStart = emailObj.indexOf("\"body\": \"");
-        if (bodyStart == -1) bodyStart = emailObj.indexOf("\"body\":\"");
+        // Extract "body" (note: body may contain escaped newlines and special chars)
+        // This is more robust - find "body": then skip to the opening quote, then extract until closing quote
+        int bodyStart = emailObj.indexOf("\"body\":");
         if (bodyStart != -1) {
-            bodyStart = emailObj.indexOf("\"", bodyStart + 5) + 1;
-            // Find the ending quote (need to handle escaped quotes)
-            int bodyEnd = bodyStart;
-            while (bodyEnd < emailObj.length()) {
-                if (emailObj[bodyEnd] == '"' && emailObj[bodyEnd - 1] != '\\') {
-                    break;
+            // Find the opening quote for the body value
+            bodyStart = emailObj.indexOf("\"", bodyStart + 7);
+            if (bodyStart != -1) {
+                bodyStart++;  // Move past the opening quote
+                
+                // Find the closing quote - must handle escaped characters
+                int bodyEnd = bodyStart;
+                while (bodyEnd < emailObj.length()) {
+                    char c = emailObj[bodyEnd];
+                    if (c == '\\' && (bodyEnd + 1) < emailObj.length()) {
+                        // Skip escaped character
+                        bodyEnd += 2;
+                    } else if (c == '"') {
+                        // Found unescaped closing quote
+                        break;
+                    } else {
+                        bodyEnd++;
+                    }
                 }
-                bodyEnd++;
-            }
-            if (bodyEnd < emailObj.length()) {
-                letter.body = emailObj.substring(bodyStart, bodyEnd);
-                // Unescape JSON sequences
-                letter.body.replace("\\r\\n", "\r\n");
-                letter.body.replace("\\n", "\n");
-                letter.body.replace("\\\"", "\"");
-                letter.body.replace("\\\\", "\\");
+                
+                if (bodyEnd <= emailObj.length()) {
+                    letter.body = emailObj.substring(bodyStart, bodyEnd);
+                    // Unescape JSON sequences
+                    letter.body.replace("\\r\\n", "\r\n");
+                    letter.body.replace("\\n", "\n");
+                    letter.body.replace("\\\"", "\"");
+                    letter.body.replace("\\\\", "\\");
+                }
             }
         }
         
@@ -8653,10 +8665,10 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
  */
 /**
  * Check for mail and spawn letter items in the post office
- * Called when player enters the post office
- * Silent operation - only announces if mail is found
+ * Called when player enters the post office or uses "check mail" command
+ * Returns true if mail was found and letters were spawned
  */
-void checkAndSpawnMailLetters(Player &p) {
+bool checkAndSpawnMailLetters(Player &p) {
     Serial.println("");
     Serial.println("========== POST OFFICE MAIL CHECK ==========");
     Serial.print("[MAIL] Checking mail for player: ");
@@ -8668,13 +8680,13 @@ void checkAndSpawnMailLetters(Player &p) {
     if (!fetchMailFromServer(String(p.name), letters)) {
         Serial.println("[MAIL] RESULT: Failed to fetch mail from server");
         Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
-        return;
+        return false;
     }
     
     if (letters.size() == 0) {
         Serial.println("[MAIL] RESULT: No mail found");
         Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
-        return;  // Silent - no announcement if no mail
+        return false;  // No mail found
     }
     
     Serial.print("[MAIL] Found ");
@@ -8700,11 +8712,11 @@ void checkAndSpawnMailLetters(Player &p) {
         Serial.print(" of ");
         Serial.println(letters.size());
         
-        // Use displayName from server (playername if found in body, else sender email part)
-        String letterName = "A Letter from " + letter.displayName;
+        // Use player's name for the letter (not the sender)
+        String letterName = "Letter for " + String(capFirst(p.name));
         
-        Serial.print("[MAIL] Letter from: ");
-        Serial.println(letter.displayName);
+        Serial.print("[MAIL] Letter for player: ");
+        Serial.println(p.name);
         
         // Create world item for the letter
         WorldItem letter_item;
@@ -8742,6 +8754,7 @@ void checkAndSpawnMailLetters(Player &p) {
     }
     
     Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
+    return true;  // Mail was found and spawned
 }
 
 void updateDrunkennessRecovery(Player &p) {
@@ -12226,7 +12239,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
 // -----------------------------------------
-// POST OFFICE: SEND
+// POST OFFICE: SEND / CHECK MAIL
 // -----------------------------------------
     if (cmd == "send") {
         if (args.length() == 0) {
@@ -12234,6 +12247,17 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         cmdSend(p, args);
+        return;
+    }
+
+    if (cmd == "checkmail" || cmd == "check mail" || cmd == "mail") {
+        // Check for mail and spawn letters
+        bool hasMailResult = checkAndSpawnMailLetters(p);
+        
+        // Provide feedback
+        if (!hasMailResult) {
+            p.client.println("No mail today, sorry.");
+        }
         return;
     }
 
