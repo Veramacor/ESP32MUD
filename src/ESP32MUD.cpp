@@ -541,10 +541,6 @@ struct Player {
     
     // Map tracker toggle
     bool mapTrackerEnabled = false;
-    
-    // Post Office password setup state
-    bool needsPostOfficePassword = false;
-    String postOfficePasswordInput = "";
 };
 
 // =============================
@@ -687,54 +683,17 @@ String decryptPassword(const String &encrypted) {
 }
 
 // =============================================================
-// POST OFFICE PASSWORD FILE MANAGEMENT
+// POST OFFICE SMTP PASSWORD (Hard-coded)
 // =============================================================
-
-const char* POST_OFFICE_PASSWORD_FILE = "/post_office.txt";
-
-bool postOfficePasswordExists() {
-    return LittleFS.exists(POST_OFFICE_PASSWORD_FILE);
-}
-
-String readPostOfficePassword() {
-    if (!postOfficePasswordExists()) {
-        return "";
-    }
-    File f = LittleFS.open(POST_OFFICE_PASSWORD_FILE, "r");
-    if (!f) return "";
-    
-    String encrypted = f.readStringUntil('\n');
-    f.close();
-    encrypted.trim();
-    
-    return decryptPassword(encrypted);
-}
-
-bool savePostOfficePassword(const String &password) {
-    if (password.length() == 0) return false;
-    
-    String encrypted = encryptPassword(password);
-    
-    File f = LittleFS.open(POST_OFFICE_PASSWORD_FILE, "w");
-    if (!f) return false;
-    
-    f.println(encrypted);
-    f.close();
-    return true;
-}
-
-bool deletePostOfficePassword() {
-    return LittleFS.remove(POST_OFFICE_PASSWORD_FILE);
-}
-
+const char* POST_OFFICE_SMTP_PASSWORD = "VXN_jhn8bfe5cve7dve";
 // =============================================================
 // SMTP EMAIL SENDING
 // =============================================================
 
 // ISP SMTP Configuration
 #define SMTP_HOST "mail.storyboardacs.com"
-#define SMTP_PORT 465
-#define SMTP_USERNAME "acssupport@storyboardacs.com"
+#define SMTP_PORT 587
+#define SMTP_USERNAME "esperthertu_post_office@storyboardacs.com"
 
 // Forward declaration for email callback
 void smtpCallback(SMTP_Status status);
@@ -746,7 +705,7 @@ void smtpCallback(SMTP_Status status) {
     // Callback for SMTP status updates (can be used for debugging)
 }
 
-bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const String &password) {
+bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const String &playerName, const String &password) {
     // Configure email session
     ESP_Mail_Session session;
     
@@ -756,17 +715,26 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     session.login.password = password.c_str();
     session.login.user_domain = "";
     
-    // Set SSL/TLS with secure connection
-    session.secure.startTLS = false;
+    // Set TLS with secure connection (port 587)
+    session.secure.startTLS = true;
     session.secure.mode = esp_mail_secure_mode_ssl_tls;
     
     // Create message
     SMTP_Message message_obj;
     message_obj.sender.name = "Esperthertu Post Office";
     message_obj.sender.email = SMTP_USERNAME;
-    message_obj.subject = "Mail from Esperthertu";
+    
+    // Subject: "Message from [playername]"
+    char subjectBuf[128];
+    snprintf(subjectBuf, sizeof(subjectBuf), "Message from %s", playerName.c_str());
+    message_obj.subject = subjectBuf;
+    
     message_obj.addRecipient("recipient", recipientEmail.c_str());
-    message_obj.text.content = message.c_str();
+    
+    // Build email body with header
+    String emailBody = "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
+    emailBody += message;
+    message_obj.text.content = emailBody.c_str();
     message_obj.text.charSet = "us-ascii";
     message_obj.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
     
@@ -5669,23 +5637,7 @@ void cmdSend(Player &p, const String &input) {
         return;
     }
 
-    // Check if password file exists
-    if (!postOfficePasswordExists()) {
-        // No password set up - only wizards can set it up
-        if (!p.IsWizard) {
-            p.client.println("Mail services are unavailable at the moment.");
-            return;
-        }
-        
-        // Wizard - ask for password
-        p.client.println("Post Office password not configured.");
-        p.client.println("Enter password (or type 'cancel' to abort):");
-        p.needsPostOfficePassword = true;
-        p.postOfficePasswordInput = "";
-        return;
-    }
-
-    // Password exists - can send mail
+    // Send mail directly with hard-coded password
     cmdSendMail(p, input);
 }
 
@@ -5723,17 +5675,10 @@ void cmdSendMail(Player &p, const String &input) {
         return;
     }
 
-    // Get the stored password
-    String password = readPostOfficePassword();
-    if (password.length() == 0) {
-        p.client.println("Post Office password not configured. Ask a wizard.");
-        return;
-    }
-
-    // Attempt to send email
+    // Attempt to send email with hard-coded password
     p.client.println("Sending mail to " + emailAddress + "...");
     
-    if (sendEmailViaSMTP(emailAddress, message, password)) {
+    if (sendEmailViaSMTP(emailAddress, message, String(p.name), String(POST_OFFICE_SMTP_PASSWORD))) {
         p.client.println("Mail sent successfully!");
     } else {
         p.client.println("Failed to send mail. Check recipient address and try again.");
@@ -11472,47 +11417,7 @@ void debugPrint(Player &p, const String &msg) {
 // =============================
 void handleCommand(Player &p, int index, const String &rawLine) {
     // -----------------------------------------
-    // POST OFFICE PASSWORD INPUT HANDLER
-    // -----------------------------------------
-    if (p.needsPostOfficePassword) {
-        String input = rawLine;
-        input.trim();
-        
-        if (input == "delete") {
-            if (deletePostOfficePassword()) {
-                p.client.println("Password file deleted.");
-            } else {
-                p.client.println("Failed to delete password file.");
-            }
-            p.needsPostOfficePassword = false;
-            return;
-        }
-        
-        if (input == "cancel") {
-            p.client.println("Password setup cancelled.");
-            p.needsPostOfficePassword = false;
-            return;
-        }
-        
-        if (input.length() == 0) {
-            p.client.println("Please enter a password or type 'delete' or 'cancel':");
-            return;
-        }
-        
-        // Save password
-        if (savePostOfficePassword(input)) {
-            p.client.println("Post Office password saved successfully!");
-            p.needsPostOfficePassword = false;
-            // Now try to send the mail
-            cmdSendMail(p, p.postOfficePasswordInput);
-            return;
-        } else {
-            p.client.println("Failed to save password. Try again.");
-            return;
-        }
-    }
 
-    // -----------------------------------------
     // Clean and split input
     // -----------------------------------------
     String line = cleanInput(rawLine);
@@ -13186,7 +13091,10 @@ for (auto &npc : npcInstances) {
                 }
             }
 
-            npc.nextDialogTime = now + random(8000, 30001);
+            // Increase minimum dialog time in post office to reduce dialog spam
+            int minDialogTime = (npc.x == 252 && npc.y == 248 && npc.z == 50) ? 30000 : 8000;
+            int maxDialogTime = (npc.x == 252 && npc.y == 248 && npc.z == 50) ? 120001 : 30001;
+            npc.nextDialogTime = now + random(minDialogTime, maxDialogTime);
         }
     }
 
@@ -13216,7 +13124,10 @@ for (auto &npc : npcInstances) {
         
         // Initialize dialog timer if needed
         if (item.attributes.find("nextDialogTime") == item.attributes.end()) {
-            item.attributes["nextDialogTime"] = std::to_string(now + random(8000, 30001));
+            // Increase minimum dialog time in post office to reduce dialog spam
+            int minDialogTime = (item.x == 252 && item.y == 248 && item.z == 50) ? 30000 : 8000;
+            int maxDialogTime = (item.x == 252 && item.y == 248 && item.z == 50) ? 120001 : 30001;
+            item.attributes["nextDialogTime"] = std::to_string(now + random(minDialogTime, maxDialogTime));
         }
         
         unsigned long nextTime = (unsigned long)strtoull(item.attributes["nextDialogTime"].c_str(), NULL, 10);
@@ -13264,7 +13175,10 @@ for (auto &npc : npcInstances) {
             }
             
             // Schedule next dialog
-            item.attributes["nextDialogTime"] = std::to_string(now + random(8000, 30001));
+            // Increase minimum dialog time in post office to reduce dialog spam
+            int minDialogTime = (item.x == 252 && item.y == 248 && item.z == 50) ? 30000 : 8000;
+            int maxDialogTime = (item.x == 252 && item.y == 248 && item.z == 50) ? 120001 : 30001;
+            item.attributes["nextDialogTime"] = std::to_string(now + random(minDialogTime, maxDialogTime));
         }
     }
 
