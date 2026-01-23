@@ -5821,9 +5821,9 @@ void cmdQrCode(Player &p, const String &input) {
  */
 String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
                    int exit_ne, int exit_nw, int exit_se, int exit_sw,
-                   int exit_u, int exit_d, bool isPlayerHere = false) {
+                   int exit_u, int exit_d, bool isPlayerHere = false, char locationCode = 0) {
     // 3x3 grid for each voxel
-    // Using 0 for empty, 1 for filled square, 2 for up arrow, 3 for down arrow, 4 for circle
+    // Using 0 for empty, 1 for filled square, 2 for up arrow, 3 for down arrow, 4 for circle, 5 for player, 6 for location code
     int grid[3][3] = {
         {0, 0, 0},
         {0, 0, 0},
@@ -5841,9 +5841,11 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
     int directionCount = exit_n + exit_s + exit_e + exit_w +
                         exit_ne + exit_nw + exit_se + exit_sw;
     
-    // Center: player icon (X) if player here, filled circle (●) if dead end, else filled square (█)
+    // Center: location code if provided, else player icon (X) if player here, filled circle (●) if dead end, else filled square (█)
     // Note: up/down don't count toward dead end, so North+Up = circle
-    if (isPlayerHere) {
+    if (locationCode != 0) {
+        grid[1][1] = 6;  // Location code
+    } else if (isPlayerHere) {
         grid[1][1] = 5;  // Player icon (X)
     } else {
         grid[1][1] = (directionCount == 1) ? 4 : 1;
@@ -5881,12 +5883,33 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
                 result += "●";
             } else if (grid[row][col] == 5) {
                 result += "X";
+            } else if (grid[row][col] == 6) {
+                result += locationCode;
             }
         }
         if (row < 2) result += "\n";
     }
     
     return result;
+}
+
+char getLocationCode(int x, int y) {
+    // Map coordinates to location codes
+    if (x == 250 && y == 205) return 'C';  // Church
+    if (x == 249 && y == 248) return 'E';  // Esperthertu Inn
+    if (x == 246 && y == 246) return 'D';  // Doctor's Office
+    if (x == 246 && y == 244) return 'L';  // Lawyer's Office
+    if (x == 248 && y == 242) return 'W';  // Weather Station
+    if (x == 249 && y == 242) return 'A';  // The Hammered Anvil (Tavern)
+    if (x == 251 && y == 242) return 'R';  // Recycling Center
+    if (x == 252 && y == 242) return 'P';  // Police Station
+    if (x == 254 && y == 244) return 'B';  // Blacksmith
+    if (x == 254 && y == 245) return '$';  // Bank
+    if (x == 254 && y == 246) return 'O';  // Administration Offices
+    if (x == 254 && y == 247) return 'M';  // Magic Shop
+    if (x == 252 && y == 248) return 'p';  // Post Office
+    if (x == 251 && y == 248) return 'S';  // Esperthertu Shop
+    return 0;  // No location code
 }
 
 // Draw the player's visited map (20x20 grid centered on player)
@@ -6159,6 +6182,26 @@ void cmdTownMap(Player &p) {
     p.client.println("═══════════════════════════════════════════════════════════════════");
     p.client.println("");
 
+    // Legend data
+    const char* legendCodes[] = {"C", "E", "D", "L", "W", "A", "R", "P", "B", "$", "O", "M", "p", "S"};
+    const char* legendDescs[] = {
+        "Church",
+        "Esperthertu Inn",
+        "Doctor's Office",
+        "Lawyer's Office",
+        "Weather Station",
+        "The Hammered Anvil",
+        "Recycling Center",
+        "Police Station",
+        "Blacksmith",
+        "Bank",
+        "Administration Offices",
+        "Magic Shop",
+        "Post Office",
+        "Esperthertu Shop"
+    };
+    const int legendCount = 14;
+
     // Print each row of voxels - each voxel becomes a 3-character wide, 3-line tall block
     for (int y = 0; y < gridHeight; y++) {
         // Build 3 output lines for this row of voxels
@@ -6175,9 +6218,10 @@ void cmdTownMap(Player &p) {
             if (room.exists) {
                 // Check if player is at this location
                 bool isPlayerHere = (p.roomX == worldX && p.roomY == worldY && p.roomZ == TARGET_Z);
+                char locCode = getLocationCode(worldX, worldY);
                 block = getMapBlock(room.exit_n, room.exit_s, room.exit_e, room.exit_w,
                                    room.exit_ne, room.exit_nw, room.exit_se, room.exit_sw,
-                                   room.exit_u, room.exit_d, isPlayerHere);
+                                   room.exit_u, room.exit_d, isPlayerHere, locCode);
             } else {
                 block = "   \n   \n   ";
             }
@@ -6194,9 +6238,32 @@ void cmdTownMap(Player &p) {
             }
         }
         
-        // Print the 3 lines
+        // Build legend lines for this row
+        String legendLine = "";
+        if (y == 0) {
+            legendLine = "          Legend:";
+        } else if (y <= legendCount) {
+            int legIdx = y - 1;
+            legendLine = "          " + String(legendCodes[legIdx]) + " : " + String(legendDescs[legIdx]);
+        }
+        
+        // Pad map lines to column 35, then add legend
         for (int i = 0; i < 3; i++) {
-            p.client.println(outLines[i]);
+            String mapLine = outLines[i];
+            // Pad to at least 33 characters (11 voxels * 3 chars = 33)
+            while (mapLine.length() < 33) {
+                mapLine += " ";
+            }
+            
+            if (i == 0 && legendLine.length() > 0) {
+                p.client.println(mapLine + legendLine);
+            } else if (i == 0) {
+                p.client.println(mapLine);
+            } else if (legendLine.length() > 0) {
+                p.client.println(mapLine + legendLine);
+            } else {
+                p.client.println(mapLine);
+            }
         }
     }
 
