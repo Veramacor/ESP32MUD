@@ -8701,7 +8701,7 @@ bool checkAndSpawnMailLetters(Player &p) {
     Serial.println(" letters - announcing to player and spawning items");
     
     // Mail found - announce it
-    p.client.println("\nThe Postal Clerk says: \"You've got mail!\"");
+    p.client.println("\nThe Postal Clerk says: \"You've got mail!\" and drops the mail on the floor.");
     
     // Create letter items in the room
     for (int i = 0; i < (int)letters.size(); i++) {

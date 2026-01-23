@@ -294,9 +294,9 @@ function parseEmail($lines) {
     // Clean up trailing whitespace and newlines
     $reply_text = trim($reply_text);
     
-    // Format the body: "A letter from [email]: [blank line] [reply]"
+    // Format the body: "A letter from [email]. It reads, [blank line] [reply]"
     $from_email = trim($email['from']);
-    $email['body'] = "A letter from " . $from_email . ":\n\n" . $reply_text;
+    $email['body'] = "A letter from " . $from_email . ".\n\nIt reads,\n\n" . $reply_text;
     
     // Extract recipient from body
     if (preg_match('/a message from\s+(\w+)/i', $email['body'], $m)) {
