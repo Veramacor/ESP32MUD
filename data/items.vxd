@@ -36,3 +36,12 @@ studded_leather|armor|name=Studded Leather|type=armor|desc=Studded leather armor
 iron_helmet|armor|name=Iron Helmet|type=armor|desc=An iron helmet, protecting the wearer's head from damage.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=80|weight=4|light=0|damage=0|armor=2|slot=head|quest_item=0|opens=false
 chainmail|armor|name=Chainmail|type=armor|desc=A suit of chainmail, offering excellent protection to the torso and arms.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=300|weight=12|light=0|damage=0|armor=5|slot=under_torso|quest_item=0|opens=false
 gauntlets|armor|name=Gauntlets|type=armor|desc=Iron gauntlets, protecting hands and forearms from harm.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=75|weight=2|light=0|damage=0|armor=1|slot=hands|quest_item=0|opens=false
+# ========================================
+# DRINKS (for tavern)
+# ========================================
+
+giants_beer|drink|name=Giant's Beer|type=drink|desc=A hearty ale brewed by giants, strong and invigorating.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=2|value=10|weight=1|light=0|damage=0|armor=0|slot=0|quest_item=0|opens=false
+honeyed_mead|drink|name=Honeyed Mead|type=drink|desc=A sweet mead infused with honey, smooth and warming.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=3|value=5|weight=1|light=0|damage=0|armor=0|slot=0|quest_item=0|opens=false
+faery_fire|drink|name=Faery Fire|type=drink|desc=A mysterious potion glowing with ethereal fire, potent and magical.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=5|value=20|weight=1|light=0|damage=0|armor=0|slot=0|quest_item=0|opens=false
+
+```

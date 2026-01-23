@@ -5352,60 +5352,7 @@ void cmdDrink(Player &p, const String &arg) {
         return;
     }
 
-    // First, check if there's a tavern in this room
-    Tavern* tavern = getTavernForRoom(p);
-    if (tavern) {
-        // Try to find a tavern drink
-        Drink* drink = tavern->findDrink(drinkName);
-        if (drink) {
-            // Handle tavern drink
-            
-            // Check if player is too drunk
-            if (p.drunkenness <= 0) {
-                p.client.println("You are too drunk to drink any more!");
-                return;
-            }
-
-            // Check if player has enough drunkenness units
-            if (p.drunkenness < drink->drunkennessCost) {
-                p.client.println("You are too drunk to drink any more!");
-                return;
-            }
-
-            // Check if player can afford it
-            if (p.coins < drink->price) {
-                p.client.println("You can't afford that. " + drink->name + " costs " + String(drink->price) + " gold and you only have " + String(p.coins) + ".");
-                return;
-            }
-
-            // Deduct coins
-            p.coins -= drink->price;
-
-            // Deduct drunkenness units
-            p.drunkenness -= drink->drunkennessCost;
-            if (p.drunkenness < 0) p.drunkenness = 0;
-
-            // Restore HP
-            p.hp += drink->hpRestore;
-            if (p.hp > p.maxHp) p.hp = p.maxHp;
-
-            // Message to player
-            p.client.println("You drink the " + drink->name + " and restore " + String(drink->hpRestore) + " HP.");
-            
-            // Drunkenness feedback
-            if (p.drunkenness == 0) {
-                p.client.println("You are now completely drunk and can't drink any more!");
-            } else if (p.drunkenness <= 2) {
-                p.client.println("You're getting quite drunk...");
-            }
-
-            // Announce to room
-            announceToRoom(p.roomX, p.roomY, p.roomZ, capFirst(p.name) + " drinks a " + drink->name + ".", -1);
-            return;
-        }
-    }
-
-    // Fall back to drinking items from inventory
+    // Find the drink item in inventory or room
     int idx = findItemInRoomOrInventory(p, drinkName);
 
     if (idx == -1) {
@@ -5443,19 +5390,65 @@ void cmdDrink(Player &p, const String &arg) {
         return;
     }
 
-    // Optional thirst effect
-    int thirst = 0;
-    auto thirstIt = def.attributes.find("thirst");
-    if (thirstIt != def.attributes.end()) {
-        thirst = atoi(thirstIt->second.c_str());
+    // Check drunkenness before drinking
+    if (p.drunkenness <= 0) {
+        p.client.println("You are too drunk to drink any more!");
+        return;
     }
 
-    // If you track thirst, apply it here
-    // p.thirst = min(p.thirst + thirst, p.maxThirst);
+    // Determine drunkenness cost based on drink type
+    int drunkennessCost = 0;
+    String itemName = wi.name;
+    itemName.toLowerCase();
+    
+    if (itemName == "giants_beer") {
+        drunkennessCost = 3;
+    } else if (itemName == "honeyed_mead") {
+        drunkennessCost = 2;
+    } else if (itemName == "faery_fire") {
+        drunkennessCost = 5;
+    } else {
+        drunkennessCost = 1;  // default for other drink items
+    }
+
+    // Check if player has enough drunkenness units
+    if (p.drunkenness < drunkennessCost) {
+        p.client.println("You are too drunk to drink any more!");
+        return;
+    }
+
+    // Get HP restoration value
+    int hpRestore = 0;
+    auto healIt = def.attributes.find("heal");
+    if (healIt != def.attributes.end()) {
+        hpRestore = atoi(healIt->second.c_str());
+    }
+
+    // Deduct drunkenness units
+    p.drunkenness -= drunkennessCost;
+    if (p.drunkenness < 0) p.drunkenness = 0;
+
+    // Restore HP
+    int oldHp = p.hp;
+    p.hp += hpRestore;
+    if (p.hp > p.maxHp) p.hp = p.maxHp;
 
     String disp = getItemDisplayName(wi);
 
+    // Message to player
     p.client.println("You drink the " + disp + ".");
+    if (hpRestore > 0) {
+        int restored = p.hp - oldHp;
+        p.client.println("You restore " + String(restored) + " HP!");
+    }
+    
+    // Drunkenness feedback
+    if (p.drunkenness == 0) {
+        p.client.println("You are now completely drunk and can't drink any more!");
+    } else if (p.drunkenness <= 2) {
+        p.client.println("You're getting quite drunk...");
+    }
+
     broadcastRoomExcept(
         p,
         capFirst(p.name) + " drinks a " + disp + ".",
@@ -7723,6 +7716,21 @@ void initializeShops() {
     wares.addItem("map_fragment", "Map Fragment", 3, 10);
     
     shops.push_back(wares);
+
+    // TAVERN LIBATIONS SHOP at voxel 249,242,50
+    Shop tavern_shop;
+    tavern_shop.x = 249;
+    tavern_shop.y = 242;
+    tavern_shop.z = 50;
+    tavern_shop.shopName = "Tavern Libations";
+    tavern_shop.shopType = "misc";
+    
+    // Add drinks (unlimited inventory at tavern)
+    tavern_shop.addItem("giants_beer", "Giant's Beer", 999, 10);
+    tavern_shop.addItem("honeyed_mead", "Honeyed Mead", 999, 5);
+    tavern_shop.addItem("faery_fire", "Faery Fire", 999, 20);
+    
+    shops.push_back(tavern_shop);
 }
 
 WorldItem* findShopSign(Player &p) {
