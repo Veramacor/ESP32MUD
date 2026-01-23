@@ -7289,12 +7289,11 @@ void cmdEat(Player &p, const char* arg) {
         return;
     }
 
-    // Set default values for eating
+    // Look up item definition for values
+    std::string key = std::string(wi.name.c_str());
     int fullnessCost = 1;
     int heal = 0;
 
-    // Look up item definition if available for better values
-    std::string key = std::string(wi.name.c_str());
     auto it = itemDefs.find(key);
     if (it != itemDefs.end()) {
         // Get fullness cost from value attribute (default 1)
