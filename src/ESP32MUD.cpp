@@ -6279,31 +6279,35 @@ void cmdTownMap(Player &p) {
             }
             
             if (outputLineNum >= 2 && outputLineNum <= 19) {
-                if (legendLine.length() > 0) {
-                    // Items O (idx 10), M (idx 11), p (idx 12), S (idx 13), X (idx 14) need 2 less spaces
-                    int itemIdx = -1;
-                    if (outputLineNum >= 4 && outputLineNum <= 17) {
-                        itemIdx = outputLineNum - 4;
-                    } else if (outputLineNum == 19) {
-                        itemIdx = 14;
-                    }
-                    
-                    int spacing = 8;  // Default spacing
-                    if (itemIdx >= 10 && itemIdx <= 14) {
-                        spacing = 6;  // Shift left by 2 for O, M, p, S, X
-                    }
-                    
-                    String pad = "";
-                    for (int s = 0; s < spacing; s++) pad += " ";
-                    p.client.println(mapLine + pad + legendLine);
-                } else {
-                    p.client.println(mapLine);
+                String outputLine = mapLine;
+                
+                // Pad to column 36
+                while (outputLine.length() < 36) {
+                    outputLine += " ";
                 }
+                
+                // Add legend line
+                if (outputLineNum == 2) {
+                    outputLine += "----------Legend:----------";
+                } else if (outputLineNum >= 4 && outputLineNum <= 17) {
+                    int itemIdx = outputLineNum - 4;
+                    outputLine += String(legendCodes[itemIdx]) + ":  " + String(legendDescs[itemIdx]);
+                } else if (outputLineNum == 19) {
+                    outputLine += String(legendCodes[14]) + ":  " + String(legendDescs[14]);
+                }
+                
+                p.client.println(outputLine);
             } else {
                 p.client.println(mapLine);
             }
         }
     }
+
+    // Footer separator starting at column 36
+    String footer = "";
+    for (int i = 0; i < 36; i++) footer += " ";
+    footer += "----------------------------";
+    p.client.println(footer);
 
     p.client.println("");
     p.client.println("═══════════════════════════════════════════════════════════════════");
