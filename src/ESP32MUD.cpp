@@ -74,6 +74,26 @@ struct Shop {
     void addOrUpdateItem(const String &itemId, const String &displayName, int price);
 };
 
+// =============================================================
+// TAVERN DRINK SYSTEM
+// =============================================================
+
+struct Drink {
+    String name;              // e.g., "Giant's Beer"
+    int price;                // gold coins
+    int hpRestore;            // HP restored when drunk
+    int drunkennessCost;      // drunkenness units consumed
+};
+
+struct Tavern {
+    int x, y, z;              // room location
+    String tavernName;        // e.g., "The Rusty Griffin"
+    std::vector<Drink> drinks;
+
+    Drink* findDrink(const String &target);
+    void displayMenu();
+};
+
 bool warned5min  = false;
 bool warned2min  = false;
 bool warned1min  = false;
@@ -87,6 +107,9 @@ unsigned long lastShopRestock = 0;
 
 // Global shops vector
 std::vector<Shop> shops;
+
+// Global tavern vector
+std::vector<Tavern> taverns;
 
 bool g_inYmodem = false;
 
@@ -259,10 +282,16 @@ void cmdReadSign(Player &p, const String &input);
 void cmdBuy(Player &p, const String &arg);
 void cmdSell(Player &p, const String &arg);
 void cmdSellAll(Player &p);
+void cmdDrink(Player &p, const String &arg);
 
 // Shop functions
 Shop* getShopForRoom(Player &p);
 void initializeShops();
+
+// Tavern functions
+Tavern* getTavernForRoom(Player &p);
+void initializeTaverns();
+void updateDrunkennessRecovery(Player &p);
 
 // File upload handler
 void handleFileUploadRequest(WiFiClient &client);
@@ -472,6 +501,10 @@ struct Player {
     bool inCombat = false;
     unsigned long nextCombatTime = 0;
     NpcInstance* combatTarget = nullptr;
+
+    // Drunkenness system (0 = drunk, 6 = sober)
+    int drunkenness = 6;
+    unsigned long lastDrunkRecoveryCheck = 0;
 
     // Visited voxels tracker for mapper utility (max 500 visited rooms)
     struct VisitedVoxel {
@@ -4984,6 +5017,14 @@ void cmdDebug(Player &p, const String &input) {
 // BUY/SELL====================
 
 void cmdReadSign(Player &p, const String &input) {
+    // Check if there's a tavern in this room
+    Tavern* tavern = getTavernForRoom(p);
+    if (tavern) {
+        showTavernSign(p, *tavern);
+        return;
+    }
+    
+    // Check if there's a shop in this room
     Shop* shop = getShopForRoom(p);
     if (!shop) {
         p.client.println("There is no sign to read here.");
@@ -5272,6 +5313,127 @@ void cmdSellAll(Player &p) {
     p.client.println("You sell " + String(itemsSold) + " item(s) for " + String(totalGold) + " gold.");
 }
 
+void cmdDrink(Player &p, const String &arg) {
+    String drinkName = arg;
+    drinkName.trim();
+    
+    if (drinkName.length() == 0) {
+        p.client.println("Drink what?");
+        return;
+    }
+
+    // First, check if there's a tavern in this room
+    Tavern* tavern = getTavernForRoom(p);
+    if (tavern) {
+        // Try to find a tavern drink
+        Drink* drink = tavern->findDrink(drinkName);
+        if (drink) {
+            // Handle tavern drink
+            
+            // Check if player is too drunk
+            if (p.drunkenness <= 0) {
+                p.client.println("You are too drunk to drink any more!");
+                return;
+            }
+
+            // Check if player has enough drunkenness units
+            if (p.drunkenness < drink->drunkennessCost) {
+                p.client.println("You are too drunk to drink any more!");
+                return;
+            }
+
+            // Check if player can afford it
+            if (p.coins < drink->price) {
+                p.client.println("You can't afford that. " + drink->name + " costs " + String(drink->price) + " gold and you only have " + String(p.coins) + ".");
+                return;
+            }
+
+            // Deduct coins
+            p.coins -= drink->price;
+
+            // Deduct drunkenness units
+            p.drunkenness -= drink->drunkennessCost;
+            if (p.drunkenness < 0) p.drunkenness = 0;
+
+            // Restore HP
+            p.hp += drink->hpRestore;
+            if (p.hp > p.maxHp) p.hp = p.maxHp;
+
+            // Message to player
+            p.client.println("You drink the " + drink->name + " and restore " + String(drink->hpRestore) + " HP.");
+            
+            // Drunkenness feedback
+            if (p.drunkenness == 0) {
+                p.client.println("You are now completely drunk and can't drink any more!");
+            } else if (p.drunkenness <= 2) {
+                p.client.println("You're getting quite drunk...");
+            }
+
+            // Announce to room
+            announceToRoom(p.roomX, p.roomY, p.roomZ, capFirst(p.name) + " drinks a " + drink->name + ".", -1);
+            return;
+        }
+    }
+
+    // Fall back to drinking items from inventory
+    int idx = findItemInRoomOrInventory(p, drinkName);
+
+    if (idx == -1) {
+        p.client.println("You don't see that here.");
+        return;
+    }
+
+    bool fromInv = (idx & 0x80000000);
+    int worldIndex = fromInv
+                     ? p.invIndices[idx & 0x7FFFFFFF]
+                     : idx;
+
+    if (worldIndex < 0 || worldIndex >= (int)worldItems.size()) {
+        p.client.println("You don't see that here.");
+        return;
+    }
+
+    WorldItem &wi = worldItems[worldIndex];
+
+    // SAFE lookup
+    std::string key = std::string(wi.name.c_str());
+    auto it = itemDefs.find(key);
+    if (it == itemDefs.end()) {
+        p.client.println("You can't drink that!");
+        return;
+    }
+
+    auto &def = it->second;
+
+    // Must be type "drink"
+    auto typeIt = def.attributes.find("type");
+    if (typeIt == def.attributes.end() ||
+        typeIt->second != "drink") {
+        p.client.println("You can't drink that!");
+        return;
+    }
+
+    // Optional thirst effect
+    int thirst = 0;
+    auto thirstIt = def.attributes.find("thirst");
+    if (thirstIt != def.attributes.end()) {
+        thirst = atoi(thirstIt->second.c_str());
+    }
+
+    // If you track thirst, apply it here
+    // p.thirst = min(p.thirst + thirst, p.maxThirst);
+
+    String disp = getItemDisplayName(wi);
+
+    p.client.println("You drink the " + disp + ".");
+    broadcastRoomExcept(
+        p,
+        capFirst(p.name) + " drinks a " + disp + ".",
+        p
+    );
+
+    consumeWorldItem(p, worldIndex);
+}
 
 
 // =============================
@@ -7063,75 +7225,6 @@ void cmdEat(Player &p, const char* arg) {
 }
 
 
-void cmdDrink(Player &p, const char* arg) {
-    String t = arg;
-    t.trim();
-
-    if (t.length() == 0) {
-        p.client.println("Drink what?");
-        return;
-    }
-
-    int idx = findItemInRoomOrInventory(p, t);
-
-    if (idx == -1) {
-        p.client.println("You don't see that here.");
-        return;
-    }
-
-    bool fromInv = (idx & 0x80000000);
-    int worldIndex = fromInv
-                     ? p.invIndices[idx & 0x7FFFFFFF]
-                     : idx;
-
-    if (worldIndex < 0 || worldIndex >= (int)worldItems.size()) {
-        p.client.println("You don't see that here.");
-        return;
-    }
-
-    WorldItem &wi = worldItems[worldIndex];
-
-    // SAFE lookup
-    std::string key = std::string(wi.name.c_str());
-    auto it = itemDefs.find(key);
-    if (it == itemDefs.end()) {
-        p.client.println("You can't drink that!");
-        return;
-    }
-
-    auto &def = it->second;
-
-    // Must be type "drink"
-    auto typeIt = def.attributes.find("type");
-    if (typeIt == def.attributes.end() ||
-        typeIt->second != "drink") {
-        p.client.println("You can't drink that!");
-        return;
-    }
-
-    // Optional thirst effect
-    int thirst = 0;
-    auto thirstIt = def.attributes.find("thirst");
-    if (thirstIt != def.attributes.end()) {
-        thirst = atoi(thirstIt->second.c_str());
-    }
-
-    // If you track thirst, apply it here
-    // p.thirst = min(p.thirst + thirst, p.maxThirst);
-
-    String disp = getItemDisplayName(wi);
-
-    p.client.println("You drink the " + disp + ".");
-    broadcastRoomExcept(
-        p,
-        capFirst(p.name) + " drinks a " + disp + ".",
-        p
-    );
-
-    consumeWorldItem(p, worldIndex);
-}
-
-
 
 
 
@@ -7671,6 +7764,118 @@ void showPlayerDescription(Player &p, Player &other) {
     p.client.println(getPlayerTitle(other.raceId, other.level));
 }
 
+// =============================================================
+// TAVERN DRINK SYSTEM IMPLEMENTATION
+// =============================================================
+
+Drink* Tavern::findDrink(const String &target) {
+    String targetLower = target;
+    targetLower.toLowerCase();
+    
+    for (auto &drink : drinks) {
+        String nameLower = drink.name;
+        nameLower.toLowerCase();
+        if (nameLower.indexOf(targetLower) >= 0) {
+            return &drink;
+        }
+    }
+    return nullptr;
+}
+
+void Tavern::displayMenu() {
+    // This will be called when displaying the tavern sign
+}
+
+Tavern* getTavernForRoom(Player &p) {
+    for (auto &tavern : taverns) {
+        if (tavern.x == p.roomX && 
+            tavern.y == p.roomY && 
+            tavern.z == p.roomZ) {
+            return &tavern;
+        }
+    }
+    return nullptr;
+}
+
+void initializeTaverns() {
+    // Clear existing taverns
+    taverns.clear();
+    
+    // TAVERN LIBATIONS at voxel 249,242,50
+    Tavern tavern;
+    tavern.x = 249;
+    tavern.y = 242;
+    tavern.z = 50;
+    tavern.tavernName = "Tavern Libations";
+    
+    // Add drinks
+    Drink giants_beer;
+    giants_beer.name = "Giant's Beer";
+    giants_beer.price = 10;
+    giants_beer.hpRestore = 2;
+    giants_beer.drunkennessCost = 3;
+    tavern.drinks.push_back(giants_beer);
+    
+    Drink honeyed_mead;
+    honeyed_mead.name = "Honeyed Mead";
+    honeyed_mead.price = 5;
+    honeyed_mead.hpRestore = 3;
+    honeyed_mead.drunkennessCost = 2;
+    tavern.drinks.push_back(honeyed_mead);
+    
+    Drink faery_fire;
+    faery_fire.name = "Faery Fire";
+    faery_fire.price = 20;
+    faery_fire.hpRestore = 5;
+    faery_fire.drunkennessCost = 5;
+    tavern.drinks.push_back(faery_fire);
+    
+    taverns.push_back(tavern);
+}
+
+void updateDrunkennessRecovery(Player &p) {
+    unsigned long now = millis();
+    
+    // Recover 1 drunkenness unit every 60 seconds (60000 ms)
+    if (now - p.lastDrunkRecoveryCheck >= 60000UL) {
+        p.lastDrunkRecoveryCheck = now;
+        if (p.drunkenness < 6) {
+            p.drunkenness++;
+            if (p.drunkenness == 6) {
+                p.client.println("\nYou feel the fog clearing from your mind. You're sober again!");
+            }
+        }
+    }
+}
+
+void showTavernSign(Player &p, Tavern &tavern) {
+    p.client.println("");
+    p.client.println("      >>> " + tavern.tavernName + " <<<");
+    p.client.println("");
+
+    // Compute longest drink name
+    int longest = 0;
+    for (auto &drink : tavern.drinks) {
+        if (drink.name.length() > longest)
+            longest = drink.name.length();
+    }
+
+    // Print aligned lines
+    for (auto &drink : tavern.drinks) {
+        String line = "  " + drink.name;
+
+        int dots = (longest - drink.name.length()) + 8;
+        for (int d = 0; d < dots; d++)
+            line += ".";
+
+        line += " " + String(drink.price) + " gold (+" + String(drink.hpRestore) + " HP)";
+
+        p.client.println(line);
+    }
+    
+    p.client.println("");
+    p.client.println("  Drunkenness: " + String(p.drunkenness) + "/6");
+}
 
 void showShopSign(Player &p, WorldItem &sign) {
     p.client.println("");
@@ -12179,6 +12384,7 @@ void setup() {
     loadQuests();                   // load quests
     buildRoomIndexesIfNeeded();     // build room lookup tables
     initializeShops();              // initialize room-based shops
+    initializeTaverns();            // initialize taverns with drinks
 
     // Initialize 6-hour reboot timer
     nextGlobalRespawn = millis() + GLOBAL_RESPAWN_INTERVAL;
@@ -12515,6 +12721,8 @@ for (auto &npc : npcInstances) {
                 p.hp += 1;
                 if (p.hp > p.maxHp) p.hp = p.maxHp;
             }
+            // Drunkenness recovery
+            updateDrunkennessRecovery(p);
         }
     }
 
