@@ -12836,16 +12836,18 @@ if (cmd == "debug") {
     // -----------------------------------------
     if (a.length() == 0) {
         p.client.println("Debug commands:");
+        p.client.println("  debug delete <file>      - Delete a LittleFS file");
         p.client.println("  debug destination        - Toggle debug output between SERIAL and TELNET");
-        p.client.println("  debug items              - Dump world items");
         p.client.println("  debug files              - Dump core data files");
-        p.client.println("  debug players            - Dump all player save files");
-        p.client.println("  debug online             - Show currently logged-in players");
-        p.client.println("  debug npcs               - Dump NPC definitions and instances");
-        p.client.println("  debug list               - List all files in LittleFS root");
         p.client.println("  debug flashspace         - Show LittleFS total/used/free space");
+        p.client.println("  debug items              - Dump world items");
+        p.client.println("  debug list               - List all files in LittleFS root");
+        p.client.println("  debug npcs               - Dump NPC definitions and instances");
+        p.client.println("  debug online             - Show currently logged-in players with stats");
+        p.client.println("  debug players            - Dump all player save files");
+        p.client.println("  debug questflags         - Show quest flags");
+        p.client.println("  debug sessions           - Show last 50 session log records");
         p.client.println("  debug ymodem             - Print YMODEM transfer debug log");
-        p.client.println("  debug delete <file>      - Delete a file from LittleFS");
         p.client.println("  debug <player>           - Dump a single player save file");
         return;
     }
