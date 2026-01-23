@@ -5252,9 +5252,16 @@ void showTavernSign(Player &p, Tavern &tavern) {
 
 void showPostOfficeSign(Player &p, PostOffice &po) {
     p.client.println("");
-    p.client.println("      Postal Instructions");
+    p.client.println("      Esperthertu Post Office");
     p.client.println("");
-    p.client.println("type 'send [emailaddress] [message]'");
+    p.client.println("SENDING MAIL:");
+    p.client.println("  type 'send [emailaddress] [message]'");
+    p.client.println("  Cost: 10 gold per message");
+    p.client.println("");
+    p.client.println("RECEIVING MAIL:");
+    p.client.println("  type 'mail' to check for incoming letters");
+    p.client.println("  type 'get letter' to pick up your mail");
+    p.client.println("  type 'examine letter' to read your mail");
     p.client.println("");
     p.client.println("We cannot guarantee delivery");
     p.client.println("");
