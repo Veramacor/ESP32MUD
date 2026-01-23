@@ -5423,43 +5423,31 @@ void cmdDrink(Player &p, const String &arg) {
 
     WorldItem &wi = worldItems[worldIndex];
 
-    // SAFE lookup
-    std::string key = std::string(wi.name.c_str());
-    auto it = itemDefs.find(key);
-    if (it == itemDefs.end()) {
-        p.client.println("You can't drink that!");
-        return;
-    }
-
-    auto &def = it->second;
-
-    // Must be type "drink"
-    auto typeIt = def.attributes.find("type");
-    if (typeIt == def.attributes.end() ||
-        typeIt->second != "drink") {
-        p.client.println("You can't drink that!");
-        return;
-    }
-
     // Check drunkenness before drinking
     if (p.drunkenness <= 0) {
         p.client.println("You are too drunk to drink any more!");
         return;
     }
 
-    // Determine drunkenness cost based on drink type
-    int drunkennessCost = 0;
+    // Determine drunkenness cost and healing based on drink name
     String itemName = wi.name;
     itemName.toLowerCase();
     
+    int drunkennessCost = 0;
+    int heal = 0;
+    
     if (itemName == "giants_beer") {
         drunkennessCost = 3;
+        heal = 2;
     } else if (itemName == "honeyed_mead") {
         drunkennessCost = 2;
+        heal = 3;
     } else if (itemName == "faery_fire") {
         drunkennessCost = 5;
+        heal = 5;
     } else {
-        drunkennessCost = 1;  // default for other drink items
+        p.client.println("You can't drink that!");
+        return;
     }
 
     // Check if player has enough drunkenness units
@@ -5468,27 +5456,20 @@ void cmdDrink(Player &p, const String &arg) {
         return;
     }
 
-    // Get HP restoration value
-    int hpRestore = 0;
-    auto healIt = def.attributes.find("heal");
-    if (healIt != def.attributes.end()) {
-        hpRestore = atoi(healIt->second.c_str());
-    }
-
     // Deduct drunkenness units
     p.drunkenness -= drunkennessCost;
     if (p.drunkenness < 0) p.drunkenness = 0;
 
     // Restore HP
     int oldHp = p.hp;
-    p.hp += hpRestore;
+    p.hp += heal;
     if (p.hp > p.maxHp) p.hp = p.maxHp;
 
     String disp = getItemDisplayName(wi);
 
     // Message to player
     p.client.println("You drink the " + disp + ".");
-    if (hpRestore > 0) {
+    if (heal > 0) {
         int restored = p.hp - oldHp;
         p.client.println("You restore " + String(restored) + " HP!");
     }
@@ -7302,47 +7283,34 @@ void cmdEat(Player &p, const char* arg) {
 
     WorldItem &wi = worldItems[worldIndex];
 
-    // Convert item name to std::string for map lookup
-    std::string key = std::string(wi.name.c_str());
-
-    // Ensure we have a definition
-    auto it = itemDefs.find(key);
-    if (it == itemDefs.end()) {
-        p.client.println("You can't eat that!");
-        return;
-    }
-
-    ItemDefinition &def = it->second;
-
-    // Must be type "food"
-    auto typeIt = def.attributes.find("type");
-    if (typeIt == def.attributes.end() ||
-        typeIt->second != "food") {
-        p.client.println("You can't eat that!");
-        return;
-    }
-
     // Check if player is too full
     if (p.fullness <= 0) {
         p.client.println("You are too full to eat any more!");
         return;
     }
 
-    // Determine fullness cost from value attribute (default 1)
+    // Set default values for eating
     int fullnessCost = 1;
-    auto valueIt = def.attributes.find("value");
-    if (valueIt != def.attributes.end()) {
-        int valueCost = strToInt(valueIt->second);
-        if (valueCost > 0) {
-            fullnessCost = valueCost;
-        }
-    }
-    
-    // Heal amount
     int heal = 0;
-    auto healIt = def.attributes.find("heal");
-    if (healIt != def.attributes.end()) {
-        heal = strToInt(healIt->second);
+
+    // Look up item definition if available for better values
+    std::string key = std::string(wi.name.c_str());
+    auto it = itemDefs.find(key);
+    if (it != itemDefs.end()) {
+        // Get fullness cost from value attribute (default 1)
+        auto valueIt = it->second.attributes.find("value");
+        if (valueIt != it->second.attributes.end()) {
+            int valueCost = strToInt(valueIt->second);
+            if (valueCost > 0) {
+                fullnessCost = valueCost;
+            }
+        }
+        
+        // Get heal amount
+        auto healIt = it->second.attributes.find("heal");
+        if (healIt != it->second.attributes.end()) {
+            heal = strToInt(healIt->second);
+        }
     }
 
     // Deduct fullness units
