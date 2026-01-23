@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <qrcode.h>
+#include <ESP_Mail_Client.h>
 #include "YmodemBootloader.h"
 #include "version.h"  // Auto-generated at build time  VERSION INFO Auto generated version Number
 
@@ -724,6 +725,61 @@ bool savePostOfficePassword(const String &password) {
 
 bool deletePostOfficePassword() {
     return LittleFS.remove(POST_OFFICE_PASSWORD_FILE);
+}
+
+// =============================================================
+// SMTP EMAIL SENDING
+// =============================================================
+
+// ISP SMTP Configuration
+#define SMTP_HOST "mail.storyboardacs.com"
+#define SMTP_PORT 465
+#define SMTP_USERNAME "acssupport@storyboardacs.com"
+
+// Forward declaration for email callback
+void smtpCallback(SMTP_Status status);
+
+// Global SMTP session object
+SMTPSession smtp;
+
+void smtpCallback(SMTP_Status status) {
+    // Callback for SMTP status updates (can be used for debugging)
+}
+
+bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const String &password) {
+    // Configure email session
+    ESP_Mail_Session session;
+    
+    session.server.host_name = SMTP_HOST;
+    session.server.port = SMTP_PORT;
+    session.login.email = SMTP_USERNAME;
+    session.login.password = password.c_str();
+    session.login.user_domain = "";
+    
+    // Set SSL/TLS with secure connection
+    session.secure.startTLS = false;
+    session.secure.mode = esp_mail_secure_mode_ssl_tls;
+    
+    // Create message
+    SMTP_Message message_obj;
+    message_obj.sender.name = "Esperthertu Post Office";
+    message_obj.sender.email = SMTP_USERNAME;
+    message_obj.subject = "Mail from Esperthertu";
+    message_obj.addRecipient("recipient", recipientEmail.c_str());
+    message_obj.text.content = message.c_str();
+    message_obj.text.charSet = "us-ascii";
+    message_obj.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
+    
+    // Send email
+    if (!smtp.connect(&session)) {
+        return false;
+    }
+    
+    if (!MailClient.sendMail(&smtp, &message_obj)) {
+        return false;
+    }
+    
+    return true;
 }
 
 void safeReboot() {
@@ -5667,9 +5723,21 @@ void cmdSendMail(Player &p, const String &input) {
         return;
     }
 
-    // For now, show unavailable message until SMTP is configured
-    p.client.println("Mail services are unavailable at the moment.");
-    // TODO: Implement SMTP sending here with the stored password
+    // Get the stored password
+    String password = readPostOfficePassword();
+    if (password.length() == 0) {
+        p.client.println("Post Office password not configured. Ask a wizard.");
+        return;
+    }
+
+    // Attempt to send email
+    p.client.println("Sending mail to " + emailAddress + "...");
+    
+    if (sendEmailViaSMTP(emailAddress, message, password)) {
+        p.client.println("Mail sent successfully!");
+    } else {
+        p.client.println("Failed to send mail. Check recipient address and try again.");
+    }
 }
 
 // =============================
