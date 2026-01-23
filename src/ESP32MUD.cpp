@@ -6280,7 +6280,22 @@ void cmdTownMap(Player &p) {
             
             if (outputLineNum >= 2 && outputLineNum <= 19) {
                 if (legendLine.length() > 0) {
-                    p.client.println(mapLine + "        " + legendLine);
+                    // Items O (idx 10), M (idx 11), p (idx 12), S (idx 13), X (idx 14) need 2 less spaces
+                    int itemIdx = -1;
+                    if (outputLineNum >= 4 && outputLineNum <= 17) {
+                        itemIdx = outputLineNum - 4;
+                    } else if (outputLineNum == 19) {
+                        itemIdx = 14;
+                    }
+                    
+                    int spacing = 8;  // Default spacing
+                    if (itemIdx >= 10 && itemIdx <= 14) {
+                        spacing = 6;  // Shift left by 2 for O, M, p, S, X
+                    }
+                    
+                    String pad = "";
+                    for (int s = 0; s < spacing; s++) pad += " ";
+                    p.client.println(mapLine + pad + legendLine);
                 } else {
                     p.client.println(mapLine);
                 }
