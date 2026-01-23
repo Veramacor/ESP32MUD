@@ -6281,12 +6281,12 @@ void cmdTownMap(Player &p) {
             if (outputLineNum >= 2 && outputLineNum <= 19) {
                 String outputLine = mapLine;
                 
-                // Pad to column 36
-                while (outputLine.length() < 36) {
+                // Pad to position 35 (which is column 36 in 1-indexed counting)
+                while (outputLine.length() < 35) {
                     outputLine += " ";
                 }
                 
-                // Add legend line
+                // Add legend line starting at column 36
                 if (outputLineNum == 2) {
                     outputLine += "----------Legend:----------";
                 } else if (outputLineNum >= 4 && outputLineNum <= 17) {
@@ -6305,7 +6305,7 @@ void cmdTownMap(Player &p) {
 
     // Footer separator starting at column 36
     String footer = "";
-    for (int i = 0; i < 36; i++) footer += " ";
+    for (int i = 0; i < 35; i++) footer += " ";
     footer += "----------------------------";
     p.client.println(footer);
 
