@@ -11394,7 +11394,7 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 
                 // Program size (flash)
                 uint32_t sketchSize = ESP.getSketchSize();
-                uint32_t sketchSpace = ESP.getFlashChipSize();
+                uint32_t sketchSpace = ESP.getSketchSize() + ESP.getFreeSketchSpace();  // Usable program space
                 int programPercent = (sketchSize * 100) / sketchSpace;
                 p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(sketchSpace / 1024) + " KB) -> " + String(programPercent) + "%");
                 
