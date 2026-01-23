@@ -6182,8 +6182,8 @@ void cmdTownMap(Player &p) {
     p.client.println("═══════════════════════════════════════════════════════════════════");
     p.client.println("");
 
-    // Legend data
-    const char* legendCodes[] = {"C", "E", "D", "L", "W", "A", "R", "P", "B", "$", "O", "M", "p", "S"};
+    // Legend data - 15 items total (14 locations + YOU ARE HERE)
+    const char* legendCodes[] = {"C", "E", "D", "L", "W", "A", "R", "P", "B", "$", "O", "M", "p", "S", "X"};
     const char* legendDescs[] = {
         "Church",
         "Esperthertu Inn",
@@ -6198,12 +6198,17 @@ void cmdTownMap(Player &p) {
         "Administration Offices",
         "Magic Shop",
         "Post Office",
-        "Esperthertu Shop"
+        "Esperthertu Shop",
+        "YOU ARE HERE"
     };
-    const int legendCount = 14;
+    const int legendCount = 15;
 
     // Print each row of voxels - each voxel becomes a 3-character wide, 3-line tall block
-    int lastLegendIdx = -1;  // Track last legend item printed
+    // Map has 10 rows (gridHeight), 3 output lines per map row = 30 lines total
+    // Legend has 15 items, so: 1 "Legend:" + 9 items fit in first 9 map rows + 1 item in row 10 = 11 items shown
+    // Then remaining 4 items (items 11-14) print below map
+    int legendIdx = 0;
+    
     for (int y = 0; y < gridHeight; y++) {
         // Build 3 output lines for this row of voxels
         String outLines[3] = {"", "", ""};
@@ -6239,24 +6244,7 @@ void cmdTownMap(Player &p) {
             }
         }
         
-        // Build legend line for this row - print every other row for double spacing
-        String legendLine = "";
-        if (y == 0) {
-            legendLine = "Legend:";
-            lastLegendIdx = -1;
-        } else if ((y - 1) * 2 - 1 < legendCount) {
-            // Use formula to get every other line: (y-1)*2-1, (y-1)*2+1 would be the pattern
-            // But for simplicity, just print on odd rows
-            if (y % 2 == 1) {
-                int legIdx = (y / 2);
-                if (legIdx < legendCount) {
-                    legendLine = String(legendCodes[legIdx]) + ":  " + String(legendDescs[legIdx]);
-                    lastLegendIdx = legIdx;
-                }
-            }
-        }
-        
-        // Pad map lines to column 35, then add legend
+        // For each of the 3 output lines in this voxel row, add corresponding legend item
         for (int i = 0; i < 3; i++) {
             String mapLine = outLines[i];
             // Pad to at least 33 characters (11 voxels * 3 chars = 33)
@@ -6264,8 +6252,19 @@ void cmdTownMap(Player &p) {
                 mapLine += " ";
             }
             
-            // Only add legend on the first line of this row
-            if (i == 0 && legendLine.length() > 0) {
+            String legendLine = "";
+            
+            // First line of first row shows "Legend:"
+            if (y == 0 && i == 0) {
+                legendLine = "Legend:";
+            }
+            // All other lines show legend items (single-spaced)
+            else if (legendIdx < legendCount) {
+                legendLine = String(legendCodes[legendIdx]) + ":  " + String(legendDescs[legendIdx]);
+                legendIdx++;
+            }
+            
+            if (legendLine.length() > 0) {
                 p.client.println(mapLine + "          " + legendLine);
             } else {
                 p.client.println(mapLine);
@@ -6273,11 +6272,12 @@ void cmdTownMap(Player &p) {
         }
     }
 
-    // Print remaining legend items
-    if (lastLegendIdx < legendCount - 1) {
+    // Print remaining legend items (any that didn't fit in the map rows)
+    if (legendIdx < legendCount) {
         p.client.println("");
-        for (int i = lastLegendIdx + 1; i < legendCount; i++) {
-            p.client.println(String(legendCodes[i]) + ":  " + String(legendDescs[i]));
+        while (legendIdx < legendCount) {
+            p.client.println(String(legendCodes[legendIdx]) + ":  " + String(legendDescs[legendIdx]));
+            legendIdx++;
         }
     }
 
