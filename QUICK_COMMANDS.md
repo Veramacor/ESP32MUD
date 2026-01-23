@@ -66,6 +66,22 @@ QUEST ACCEPT <id>    Accept a quest
 QUEST COMPLETE <id>  Complete a quest step (if conditions met)
 ```
 
+### Post Office & Email (at voxel 252,248,50)
+```
+SEND <email> <message>  Send an email to a recipient (10 gold cost, must be at Post Office)
+MAIL                    Check for incoming mail and spawn letter items
+CHECKMAIL               Check for incoming mail (alias for MAIL)
+CHECK MAIL              Check for incoming mail (alias for MAIL)
+```
+
+### Tavern & Drinks (at voxel 249,242,50)
+```
+SHOPS                 List nearby shops (includes tavern)
+BUY <drink>          Purchase a drink (restores HP, increases drunkenness)
+SELL ALL             Sell all items to current shop
+READ SIGN            View tavern sign (shows drunkenness level)
+```
+
 ### Character
 ```
 RACE <name>          Set your character race

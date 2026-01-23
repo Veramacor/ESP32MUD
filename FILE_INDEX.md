@@ -237,6 +237,34 @@ Atew|Human|5|2500|18|25|10|1d6+2|250|244|50|Head=none|Torso=chainmail|Legs=leath
 ### .gitignore
 **Ignored files**: LittleFS data, compiled binaries, build artifacts
 
+## Server-Side Mail System Files
+
+### retrieveESP32mail.php
+**Location**: `https://www.storyboardacs.com/retrieveESP32mail.php`  
+**Purpose**: POP3 email retrieval endpoint called by ESP32  
+**Language**: PHP 7.0+  
+**Features**:
+- Connects to POP3 server (mail.storyboardacs.com:110)
+- Retrieves unread emails for esperthertu_post_office@storyboardacs.com
+- Filters out system emails (FROM the post office account)
+- Parses MIME multipart messages
+- Decodes quoted-printable encoding
+- Removes quoted text, signatures, and headers
+- Returns JSON with email array and metadata
+**Lines**: 301  
+**Last Updated**: January 18, 2026
+
+### sendESP32mail.php
+**Location**: `https://www.storyboardacs.com/sendESP32mail.php`  
+**Purpose**: Send emails from MUD players to real email addresses  
+**Language**: PHP 7.0+  
+**Features**:
+- Receives JSON POST from ESP32 with: email, subject, body
+- Sends via PHP mail() function
+- Sets From: header to esperthertu_post_office@storyboardacs.com
+- Formats body with letterhead
+**Used by**: `send [email] [message]` command
+
 ## File Locations on Device
 
 ```

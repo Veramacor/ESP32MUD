@@ -21,6 +21,8 @@ A complete **telnet-based Multi-User Dungeon (MUD)** game server running on the 
 - 📸 **QR code generation** - Support for player-targeted QR codes (syntax: `qrcode playername message`)
 - 📋 **Session logging** - Comprehensive LOGIN/LOGOUT audit trail to `/session_log.txt` with timestamps
 - 🕐 **NTP time synchronization** - Automatic time sync from NTP servers on WiFi connection
+- 📧 **Post Office email system** - Send/receive emails via `send` command; POP3 retrieval spawns letters in Post Office (location: 252,248,50)
+- 🍻 **Tavern drink system** - Drunkenness tracking with HP restoration drinks (Giant's Beer, Honeyed Mead, Faery Fire)
 
 ### Infrastructure
 - 💾 **Persistence** - All player data, world state, and item instances saved to LittleFS
@@ -81,6 +83,8 @@ See [START_HERE.md](START_HERE.md) for detailed setup instructions.
 - **[START_HERE.md](START_HERE.md)** - First-time setup and provisioning guide
 - **[ESP32MUD_SYSTEM_REFERENCE.md](ESP32MUD_SYSTEM_REFERENCE.md)** - Complete system documentation (2000+ lines)
 - **[QUICK_COMMANDS.md](QUICK_COMMANDS.md)** - Player and wizard command reference
+- **[MAIL_SYSTEM.md](MAIL_SYSTEM.md)** - Post Office email system (POP3 retrieval, letter spawning)
+- **[TAVERN_SYSTEM.md](TAVERN_SYSTEM.md)** - Drunkenness tracking and drink system
 - **[FILE_INDEX.md](FILE_INDEX.md)** - Data file formats and schema
 - **[COMPLETION_SUMMARY.txt](COMPLETION_SUMMARY.txt)** - Feature checklist and implementation status
 
