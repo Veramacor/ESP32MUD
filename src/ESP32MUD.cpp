@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <LittleFS.h>
 #include <vector>
 #include <map>
@@ -102,6 +103,16 @@ struct Tavern {
 struct PostOffice {
     int x, y, z;              // room location
     String postOfficeName;    // e.g., "The Post Office"
+};
+
+// Letter system for mail retrieval
+struct Letter {
+    String to;               // recipient email
+    String from;             // sender email
+    String subject;          // email subject
+    String body;             // email body text
+    String messageId;        // unique ID for tracking
+    String displayName;      // display name (playername if found, or sender email part)
 };
 
 bool warned5min  = false;
@@ -314,6 +325,10 @@ void initializePostOffices();
 void cmdSend(Player &p, const String &input);
 void cmdSendMail(Player &p, const String &input);
 void showPostOfficeSign(Player &p, PostOffice &po);
+void checkAndSpawnMailLetters(Player &p);
+bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters);
+String extractPlayerNameFromEmail(const String &emailBody);
+
 
 // File upload handler
 void handleFileUploadRequest(WiFiClient &client);
@@ -701,67 +716,111 @@ void smtpCallback(SMTP_Status status);
 // Global SMTP session object
 SMTPSession smtp;
 
+// Global email body buffer - keeps content in memory during send
+static String g_emailBody = "";
+
 void smtpCallback(SMTP_Status status) {
     // Callback for SMTP status updates (can be used for debugging)
 }
 
-bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const String &playerName, const String &password) {
-    // Configure email session
-    ESP_Mail_Session session;
+// Helper function to escape JSON strings
+String escapeJsonString(const String &input) {
+    String output = "";
+    for (int i = 0; i < input.length(); i++) {
+        char c = input[i];
+        if (c == '"') {
+            output += "\\\"";
+        } else if (c == '\\') {
+            output += "\\\\";
+        } else if (c == '\r') {
+            output += "\\r";
+        } else if (c == '\n') {
+            output += "\\n";
+        } else if (c == '\t') {
+            output += "\\t";
+        } else if (c < 32) {
+            // Control characters
+            output += "\\u00";
+            if (c < 16) output += "0";
+            output += String(c, HEX);
+        } else {
+            output += c;
+        }
+    }
+    return output;
+}
+
+bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const String &playerName, const String &playerTitle, const String &password) {
+    // Build email body in global variable to ensure it persists
+    // Capitalize first letter of player name
+    String capitalizedName = playerName;
+    if (capitalizedName.length() > 0) {
+        capitalizedName[0] = toupper(capitalizedName[0]);
+    }
+    g_emailBody = "A message from " + capitalizedName + " - The " + playerTitle + ":\r\n\r\n";
+    g_emailBody += "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
+    g_emailBody += message;
     
-    session.server.host_name = SMTP_HOST;
-    session.server.port = SMTP_PORT;
-    session.login.email = SMTP_USERNAME;
-    session.login.password = password.c_str();
-    session.login.user_domain = "";
+    // Use HTTP API instead of direct SMTP
+    Serial.println("[EMAIL] Sending via API to " + recipientEmail);
+    Serial.println("[EMAIL] Body length: " + String(g_emailBody.length()) + " bytes");
     
-    // Set TLS with secure connection (port 587)
-    session.secure.startTLS = true;
-    session.secure.mode = esp_mail_secure_mode_ssl_tls;
+    // Create HTTP client for API call
+    HTTPClient http;
+    String apiUrl = "https://www.storyboardacs.com/sendESP32mail.php";
     
-    // Create message
-    SMTP_Message message_obj;
-    message_obj.sender.name = "Esperthertu Post Office";
-    message_obj.sender.email = SMTP_USERNAME;
+    // Build JSON payload with proper escaping
+    String escapedBody = escapeJsonString(g_emailBody);
+    String escapedTo = escapeJsonString(recipientEmail);
     
-    // Subject: "Message from [playername]"
-    char subjectBuf[128];
-    snprintf(subjectBuf, sizeof(subjectBuf), "Message from %s", playerName.c_str());
-    message_obj.subject = subjectBuf;
+    String jsonPayload = "{";
+    jsonPayload += "\"to\":\"" + escapedTo + "\",";
+    jsonPayload += "\"subject\":\"Esperthertu Post Office Delivery!\",";
+    jsonPayload += "\"from\":\"esperthertu_post_office@storyboardacs.com\",";
+    jsonPayload += "\"body\":\"" + escapedBody + "\"";
+    jsonPayload += "}";
     
-    message_obj.addRecipient("recipient", recipientEmail.c_str());
+    Serial.println("[EMAIL] JSON size: " + String(jsonPayload.length()) + " bytes");
     
-    // Build email body with header - use static buffer to ensure lifetime
-    static char emailBodyBuf[512];
-    memset(emailBodyBuf, 0, sizeof(emailBodyBuf));
-    const char* header = "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
-    snprintf(emailBodyBuf, sizeof(emailBodyBuf), "%s%s", header, message.c_str());
-    message_obj.text.content = emailBodyBuf;
-    message_obj.text.charSet = "us-ascii";
-    message_obj.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
+    // Make HTTP POST request
+    http.begin(apiUrl);
+    http.addHeader("Content-Type", "application/json");
+    http.setConnectTimeout(5000);  // 5 second connection timeout
+    http.setTimeout(10000);         // 10 second total timeout
     
-    // Send email with timeout protection using watchdog
     unsigned long startTime = millis();
-    const unsigned long SMTP_TIMEOUT = 15000;  // 15 second total timeout
+    const unsigned long HTTP_TIMEOUT = 15000;  // 15 second total timeout
     
-    // Try to connect with timeout awareness
-    if (!smtp.connect(&session)) {
+    Serial.println("[EMAIL] Sending POST request to " + apiUrl);
+    int httpResponseCode = http.POST(jsonPayload);
+    
+    // Check timeout
+    if (millis() - startTime > HTTP_TIMEOUT) {
+        Serial.println("[EMAIL] HTTP request exceeded timeout");
+        http.end();
         return false;
     }
     
-    // Check if we've exceeded timeout during connection
-    if (millis() - startTime > SMTP_TIMEOUT) {
-        smtp.closeSession();
+    Serial.println("[EMAIL] HTTP Response Code: " + String(httpResponseCode));
+    
+    if (httpResponseCode > 0) {
+        String response = http.getString();
+        Serial.println("[EMAIL] Response: " + response);
+        
+        if (httpResponseCode == 200) {
+            http.end();
+            return true;
+        } else {
+            Serial.println("[EMAIL] HTTP error code: " + String(httpResponseCode));
+            http.end();
+            return false;
+        }
+    } else {
+        String errorMsg = http.errorToString(httpResponseCode);
+        Serial.println("[EMAIL] HTTP request failed! Error: " + errorMsg);
+        http.end();
         return false;
     }
-    
-    if (!MailClient.sendMail(&smtp, &message_obj)) {
-        smtp.closeSession();
-        return false;
-    }
-    
-    smtp.closeSession();
-    return true;
 }
 
 void safeReboot() {
@@ -4336,6 +4395,11 @@ void movePlayer(Player &p, int index, const char *dir) {
 
     cmdLook(p);
 
+    // Check for mail when entering post office
+    if (getPostOfficeForRoom(p) != nullptr) {
+        checkAndSpawnMailLetters(p);
+    }
+
     checkNPCAggro(p);
 }
 
@@ -5699,7 +5763,8 @@ void cmdSendMail(Player &p, const String &input) {
     // Attempt to send email with hard-coded password
     p.client.println("Sending mail to " + emailAddress + "...");
     
-    if (sendEmailViaSMTP(emailAddress, message, String(p.name), String(POST_OFFICE_SMTP_PASSWORD))) {
+    String playerTitle = getPlayerTitle(p.raceId, p.level);
+    if (sendEmailViaSMTP(emailAddress, message, String(p.name), playerTitle, String(POST_OFFICE_SMTP_PASSWORD))) {
         // Charge the player after successful send
         p.coins -= MAIL_COST;
         p.client.println("The Postal Clerk says: \"It appears this message can be delivered.\"");
@@ -8321,6 +8386,362 @@ void initializePostOffices() {
     po.postOfficeName = "The Post Office";
     
     postOffices.push_back(po);
+}
+
+/**
+ * Extract player name from email body
+ * Looks for: "a message from [playername]" (case-insensitive)
+ * Returns the extracted name, or empty string if not found
+ */
+String extractPlayerNameFromEmail(const String &emailBody) {
+    String body = emailBody;
+    body.toLowerCase();
+    
+    int pos = body.indexOf("a message from ");
+    if (pos == -1) {
+        return "";
+    }
+    
+    // Start after "a message from "
+    int startPos = pos + 15;  // strlen("a message from ") = 15
+    
+    // Find the end of the name (look for " - the" or ":" or newline)
+    int endPos = startPos;
+    while (endPos < body.length()) {
+        char c = body[endPos];
+        if (c == '-' || c == ':' || c == '\r' || c == '\n') {
+            break;
+        }
+        endPos++;
+    }
+    
+    String name = emailBody.substring(startPos, endPos);
+    name.trim();
+    return name;
+}
+
+/**
+ * Fetch mail from the web server via HTTP API
+ * Returns true if successful, populates letters vector
+ */
+bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters) {
+    if (!playerName || playerName.length() == 0) {
+        Serial.println("[MAIL] ERROR: Empty player name");
+        return false;
+    }
+    
+    HTTPClient http;
+    // Don't pass player name - get ALL unread emails and filter by body content
+    String url = "https://www.storyboardacs.com/retrieveESP32mail.php";
+    
+    Serial.println("");
+    Serial.println("========== MAIL FETCH START ==========");
+    Serial.print("[MAIL] Player: ");
+    Serial.println(playerName);
+    Serial.print("[MAIL] URL: ");
+    Serial.println(url);
+    
+    http.setConnectTimeout(5000);   // 5 second connection timeout
+    http.setTimeout(10000);          // 10 second total timeout
+    
+    Serial.println("[MAIL] Attempting HTTP connection...");
+    
+    if (!http.begin(url)) {
+        Serial.println("[MAIL] ERROR: Failed to begin HTTP request");
+        return false;
+    }
+    
+    Serial.println("[MAIL] HTTP connection started, sending GET request...");
+    http.addHeader("Content-Type", "application/json");
+    
+    int httpCode = http.GET();
+    Serial.print("[MAIL] HTTP Response Code: ");
+    Serial.println(httpCode);
+    
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.print("[MAIL] ERROR: HTTP error code ");
+        Serial.println(httpCode);
+        http.end();
+        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
+        return false;
+    }
+    
+    String response = http.getString();
+    http.end();
+    
+    Serial.print("[MAIL] Response length: ");
+    Serial.print(response.length());
+    Serial.println(" bytes");
+    
+    if (response.length() > 500) {
+        Serial.print("[MAIL] Response (first 500 chars): ");
+        Serial.println(response.substring(0, 500));
+    } else {
+        Serial.print("[MAIL] Full Response: ");
+        Serial.println(response);
+    }
+    
+    // Parse JSON response
+    // Format: {"success": true, "emails": [...], "count": N, "errors": [...]}
+    
+    // Simple JSON parsing (no external library)
+    // Check for success - handle both "success": true and "success":true (no spaces)
+    if (response.indexOf("\"success\":true") == -1 && response.indexOf("\"success\": true") == -1) {
+        Serial.println("[MAIL] ERROR: Server returned error or success=false");
+        Serial.println("[MAIL] Looking for success flag in response...");
+        Serial.println(response);
+        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
+        return false;
+    }
+    
+    Serial.println("[MAIL] Response success=true");
+    
+    if (response.indexOf("\"count\":0") != -1 || response.indexOf("\"count\": 0") != -1) {
+        Serial.println("[MAIL] No new mail (count=0)");
+        Serial.println("========== MAIL FETCH END (SUCCESS, NO MAIL) ==========\n");
+        return true;  // Success, just no mail
+    }
+    
+    Serial.println("[MAIL] Response contains emails, parsing...");
+    
+    // Extract email array
+    // Look for "emails": [...]
+    int emailsStart = response.indexOf("\"emails\": [");
+    if (emailsStart == -1) {
+        emailsStart = response.indexOf("\"emails\":[");  // Also try without space
+    }
+    if (emailsStart == -1) {
+        Serial.println("[MAIL] ERROR: Could not find emails array in response");
+        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
+        return false;
+    }
+    
+    Serial.println("[MAIL] Found emails array, parsing individual emails...");
+    
+    // Parse each email object in the array
+    // Very basic parsing - assumes well-formed JSON
+    int pos = emailsStart;
+    if (response.indexOf("\"emails\": [") != -1) {
+        pos += 11;  // Move past "emails": [
+    } else {
+        pos += 10;  // Move past "emails":[
+    }
+    
+    int emailCount = 0;
+    
+    while (pos < response.length()) {
+        // Look for opening brace of email object
+        int objStart = response.indexOf('{', pos);
+        if (objStart == -1) break;
+        
+        // Find closing brace
+        int objEnd = response.indexOf('}', objStart);
+        if (objEnd == -1) break;
+        
+        String emailObj = response.substring(objStart, objEnd + 1);
+        
+        Serial.print("[MAIL] Parsing email object ");
+        Serial.print(emailCount + 1);
+        Serial.print(": ");
+        Serial.println(emailObj.substring(0, 100));
+        
+        // Parse fields
+        Letter letter;
+        
+        // Extract "to"
+        int toStart = emailObj.indexOf("\"to\": \"");
+        if (toStart == -1) toStart = emailObj.indexOf("\"to\":\"");
+        if (toStart != -1) {
+            toStart = emailObj.indexOf("\"", toStart + 4) + 1;
+            int toEnd = emailObj.indexOf("\"", toStart);
+            if (toEnd != -1) {
+                letter.to = emailObj.substring(toStart, toEnd);
+            }
+        }
+        
+        // Extract "from"
+        int fromStart = emailObj.indexOf("\"from\": \"");
+        if (fromStart == -1) fromStart = emailObj.indexOf("\"from\":\"");
+        if (fromStart != -1) {
+            fromStart = emailObj.indexOf("\"", fromStart + 5) + 1;
+            int fromEnd = emailObj.indexOf("\"", fromStart);
+            if (fromEnd != -1) {
+                letter.from = emailObj.substring(fromStart, fromEnd);
+            }
+        }
+        
+        // Extract "subject"
+        int subjStart = emailObj.indexOf("\"subject\": \"");
+        if (subjStart == -1) subjStart = emailObj.indexOf("\"subject\":\"");
+        if (subjStart != -1) {
+            subjStart = emailObj.indexOf("\"", subjStart + 8) + 1;
+            int subjEnd = emailObj.indexOf("\"", subjStart);
+            if (subjEnd != -1) {
+                letter.subject = emailObj.substring(subjStart, subjEnd);
+            }
+        }
+        
+        // Extract "body" (note: body may contain escaped newlines)
+        int bodyStart = emailObj.indexOf("\"body\": \"");
+        if (bodyStart == -1) bodyStart = emailObj.indexOf("\"body\":\"");
+        if (bodyStart != -1) {
+            bodyStart = emailObj.indexOf("\"", bodyStart + 5) + 1;
+            // Find the ending quote (need to handle escaped quotes)
+            int bodyEnd = bodyStart;
+            while (bodyEnd < emailObj.length()) {
+                if (emailObj[bodyEnd] == '"' && emailObj[bodyEnd - 1] != '\\') {
+                    break;
+                }
+                bodyEnd++;
+            }
+            if (bodyEnd < emailObj.length()) {
+                letter.body = emailObj.substring(bodyStart, bodyEnd);
+                // Unescape JSON sequences
+                letter.body.replace("\\r\\n", "\r\n");
+                letter.body.replace("\\n", "\n");
+                letter.body.replace("\\\"", "\"");
+                letter.body.replace("\\\\", "\\");
+            }
+        }
+        
+        // Extract "messageId"
+        int msgIdStart = emailObj.indexOf("\"messageId\": \"");
+        if (msgIdStart == -1) msgIdStart = emailObj.indexOf("\"messageId\":\"");
+        if (msgIdStart != -1) {
+            msgIdStart = emailObj.indexOf("\"", msgIdStart + 10) + 1;
+            int msgIdEnd = emailObj.indexOf("\"", msgIdStart);
+            if (msgIdEnd != -1) {
+                letter.messageId = emailObj.substring(msgIdStart, msgIdEnd);
+            }
+        }
+        
+        // Extract "displayName" (preferred playername or sender email part)
+        int displayNameStart = emailObj.indexOf("\"displayName\": \"");
+        if (displayNameStart == -1) displayNameStart = emailObj.indexOf("\"displayName\":\"");
+        if (displayNameStart != -1) {
+            displayNameStart = emailObj.indexOf("\"", displayNameStart + 13) + 1;
+            int displayNameEnd = emailObj.indexOf("\"", displayNameStart);
+            if (displayNameEnd != -1) {
+                letter.displayName = emailObj.substring(displayNameStart, displayNameEnd);
+            }
+        }
+        
+        if (letter.body.length() > 0) {
+            letters.push_back(letter);
+            Serial.print("[MAIL] SUCCESS: Parsed email from: ");
+            Serial.println(letter.from);
+            Serial.print("[MAIL] Email subject: ");
+            Serial.println(letter.subject);
+            emailCount++;
+        } else {
+            Serial.println("[MAIL] WARNING: Email has empty body, skipping");
+        }
+        
+        pos = objEnd + 1;
+    }
+    
+    Serial.print("[MAIL] Successfully parsed ");
+    Serial.print(letters.size());
+    Serial.println(" emails");
+    Serial.println("========== MAIL FETCH END (SUCCESS) ==========\n");
+    return true;
+}
+
+/**
+ * Check for mail and spawn letter items in the post office
+ * Called when player enters the post office
+ */
+/**
+ * Check for mail and spawn letter items in the post office
+ * Called when player enters the post office
+ * Silent operation - only announces if mail is found
+ */
+void checkAndSpawnMailLetters(Player &p) {
+    Serial.println("");
+    Serial.println("========== POST OFFICE MAIL CHECK ==========");
+    Serial.print("[MAIL] Checking mail for player: ");
+    Serial.println(p.name);
+    
+    std::vector<Letter> letters;
+    
+    // Fetch ALL unread emails (not filtered by player)
+    if (!fetchMailFromServer(String(p.name), letters)) {
+        Serial.println("[MAIL] RESULT: Failed to fetch mail from server");
+        Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
+        return;
+    }
+    
+    if (letters.size() == 0) {
+        Serial.println("[MAIL] RESULT: No mail found");
+        Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
+        return;  // Silent - no announcement if no mail
+    }
+    
+    Serial.print("[MAIL] Found ");
+    Serial.print(letters.size());
+    Serial.println(" unread letters from server, spawning as items...");
+    
+    // Use all letters directly - no recipient filtering
+    // Each letter will be displayed with the sender's email address part
+    
+    Serial.print("[MAIL] RESULT: Found ");
+    Serial.print(letters.size());
+    Serial.println(" letters - announcing to player and spawning items");
+    
+    // Mail found - announce it
+    p.client.println("\nThe Postal Clerk says: \"You've got mail!\"");
+    
+    // Create letter items in the room
+    for (int i = 0; i < (int)letters.size(); i++) {
+        Letter &letter = letters[i];
+        
+        Serial.print("[MAIL] Creating letter item ");
+        Serial.print(i + 1);
+        Serial.print(" of ");
+        Serial.println(letters.size());
+        
+        // Use displayName from server (playername if found in body, else sender email part)
+        String letterName = "A Letter from " + letter.displayName;
+        
+        Serial.print("[MAIL] Letter from: ");
+        Serial.println(letter.displayName);
+        
+        // Create world item for the letter
+        WorldItem letter_item;
+        letter_item.name = "letter";
+        letter_item.parentName = "";
+        letter_item.ownerName = "";  // Not owned - in room
+        
+        // Position at post office
+        letter_item.x = p.roomX;
+        letter_item.y = p.roomY;
+        letter_item.z = p.roomZ;
+        
+        Serial.print("[MAIL] Position: (");
+        Serial.print(letter_item.x);
+        Serial.print(",");
+        Serial.print(letter_item.y);
+        Serial.print(",");
+        Serial.print(letter_item.z);
+        Serial.println(")");
+        
+        // Set attributes
+        letter_item.attributes["type"] = std::string("letter");
+        letter_item.attributes["name"] = std::string(letterName.c_str());
+        letter_item.attributes["desc"] = std::string(letter.body.c_str());
+        letter_item.attributes["subject"] = std::string(letter.subject.c_str());
+        letter_item.attributes["from"] = std::string(letter.from.c_str());
+        letter_item.attributes["weight"] = std::string("0");
+        letter_item.attributes["value"] = std::string("0");
+        
+        // Add to world
+        worldItems.push_back(letter_item);
+        
+        Serial.print("[MAIL] Letter item created and added to world - Total world items: ");
+        Serial.println(worldItems.size());
+    }
+    
+    Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
 }
 
 void updateDrunkennessRecovery(Player &p) {
@@ -11500,9 +11921,16 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         
-        // Check if they're reading a shop sign
         String argsLower = args;
         argsLower.toLowerCase();
+        
+        // Prevent "read mail" from causing issues - direct to examining letters instead
+        if (argsLower == "mail") {
+            p.client.println("You don't see any mail here. Try getting a letter and examining it.");
+            return;
+        }
+        
+        // Check if they're reading a shop sign
         if (argsLower == "sign") {
             cmdReadSign(p, args);
             return;
