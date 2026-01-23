@@ -5469,10 +5469,7 @@ void cmdDrink(Player &p, const String &arg) {
 
     // Message to player
     p.client.println("You drink the " + disp + ".");
-    if (heal > 0) {
-        int restored = p.hp - oldHp;
-        p.client.println("You restore " + String(restored) + " HP!");
-    }
+    p.client.println("You are feeling a good buzz... *hiccup!*");
     
     // Drunkenness feedback
     if (p.drunkenness == 0) {
