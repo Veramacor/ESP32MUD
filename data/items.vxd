@@ -34,7 +34,8 @@ mace|weapon|name=Mace|type=weapon|desc=A heavy iron mace, crushing through armor
 
 studded_leather|armor|name=Studded Leather|type=armor|desc=Studded leather armor, providing good protection without excessive weight.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=125|weight=8|light=0|damage=0|armor=3|slot=outer_torso|quest_item=0|opens=false
 iron_helmet|armor|name=Iron Helmet|type=armor|desc=An iron helmet, protecting the wearer's head from damage.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=80|weight=4|light=0|damage=0|armor=2|slot=head|quest_item=0|opens=false
-chainmail|armor|name=Chainmail|type=armor|desc=A suit of chainmail, offering excellent protection to the torso and arms.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=300|weight=12|light=0|damage=0|armor=5|slot=under_torso|quest_item=0|opens=false
+chainmail|armor|name=Chainmail|type=armor|desc=A suit of chainmail, offering excellent protection to the torso and arms.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=800|weight=12|light=0|damage=0|armor=5|slot=under_torso|quest_item=0|opens=false
+platemail|armor|name=Platemail|type=armor|desc=A breastplate of plate mail, offering some of the best protection to the torso and arms.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=2000|weight=12|light=0|damage=0|armor=9|slot=outer_torso|quest_item=0|opens=false
 gauntlets|armor|name=Gauntlets|type=armor|desc=Iron gauntlets, protecting hands and forearms from harm.|can_contain=0|capacity=0|mobile=1|invisible=0|heal=0|value=75|weight=2|light=0|damage=0|armor=1|slot=hands|quest_item=0|opens=false
 # ========================================
 # DRINKS (for tavern)
