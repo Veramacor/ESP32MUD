@@ -6252,32 +6252,41 @@ void cmdTownMap(Player &p) {
                 mapLine += " ";
             }
             
+            // Calculate absolute output line number
+            int outputLineNum = y * 3 + i;
             String legendLine = "";
             
-            // First line of first row shows "Legend:"
-            if (y == 0 && i == 0) {
+            // Legend starts 2 rows down (at output line 2)
+            if (outputLineNum == 2) {
                 legendLine = "Legend:";
             }
-            // All other lines show legend items (single-spaced)
-            else if (legendIdx < legendCount) {
-                legendLine = String(legendCodes[legendIdx]) + ":  " + String(legendDescs[legendIdx]);
-                legendIdx++;
+            // Empty line after Legend (output line 3)
+            else if (outputLineNum == 3) {
+                legendLine = "";  // Empty spacing line
+            }
+            // Legend items 0-13 (output lines 4-17)
+            else if (outputLineNum >= 4 && outputLineNum <= 17) {
+                int itemIdx = outputLineNum - 4;
+                legendLine = String(legendCodes[itemIdx]) + ":  " + String(legendDescs[itemIdx]);
+            }
+            // Empty line between S and X (output line 18)
+            else if (outputLineNum == 18) {
+                legendLine = "";  // Empty spacing line
+            }
+            // Legend item 14 (X: YOU ARE HERE) at output line 19
+            else if (outputLineNum == 19) {
+                legendLine = String(legendCodes[14]) + ":  " + String(legendDescs[14]);
             }
             
-            if (legendLine.length() > 0) {
-                p.client.println(mapLine + "          " + legendLine);
+            if (outputLineNum >= 2 && outputLineNum <= 19) {
+                if (legendLine.length() > 0) {
+                    p.client.println(mapLine + "          " + legendLine);
+                } else {
+                    p.client.println(mapLine);
+                }
             } else {
                 p.client.println(mapLine);
             }
-        }
-    }
-
-    // Print remaining legend items (any that didn't fit in the map rows)
-    if (legendIdx < legendCount) {
-        p.client.println("");
-        while (legendIdx < legendCount) {
-            p.client.println(String(legendCodes[legendIdx]) + ":  " + String(legendDescs[legendIdx]));
-            legendIdx++;
         }
     }
 
