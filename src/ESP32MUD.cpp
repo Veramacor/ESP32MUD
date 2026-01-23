@@ -7236,8 +7236,15 @@ void cmdEat(Player &p, const char* arg) {
         return;
     }
 
-    // Determine fullness cost (1 unit for most foods)
+    // Determine fullness cost from value attribute (default 1)
     int fullnessCost = 1;
+    auto valueIt = def.attributes.find("value");
+    if (valueIt != def.attributes.end()) {
+        int valueCost = strToInt(valueIt->second);
+        if (valueCost > 0) {
+            fullnessCost = valueCost;
+        }
+    }
     
     // Heal amount
     int heal = 0;
