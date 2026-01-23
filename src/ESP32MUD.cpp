@@ -311,6 +311,7 @@ void showTavernSign(Player &p, Tavern &tavern);
 PostOffice* getPostOfficeForRoom(Player &p);
 void initializePostOffices();
 void cmdSend(Player &p, const String &input);
+void cmdSendMail(Player &p, const String &input);
 void showPostOfficeSign(Player &p, PostOffice &po);
 
 // File upload handler
@@ -539,6 +540,10 @@ struct Player {
     
     // Map tracker toggle
     bool mapTrackerEnabled = false;
+    
+    // Post Office password setup state
+    bool needsPostOfficePassword = false;
+    String postOfficePasswordInput = "";
 };
 
 // =============================
@@ -651,6 +656,75 @@ void safePrintln(const std::string &s) {
 
 // Forward declaration
 void saveWorldItems();
+
+// =============================================================
+// SIMPLE XOR ENCRYPTION FOR PASSWORDS
+// =============================================================
+
+// Simple XOR cipher - NOT cryptographically secure, but obfuscates plaintext
+String encryptPassword(const String &plaintext) {
+    const char* key = "Esperthertu";  // Simple key
+    String encrypted = "";
+    for (int i = 0; i < plaintext.length(); i++) {
+        char c = plaintext[i] ^ key[i % strlen(key)];
+        // Convert to hex for safe storage
+        encrypted += String(c, HEX);
+    }
+    return encrypted;
+}
+
+String decryptPassword(const String &encrypted) {
+    const char* key = "Esperthertu";
+    String decrypted = "";
+    for (int i = 0; i < encrypted.length(); i += 2) {
+        String hexPair = encrypted.substring(i, i + 2);
+        char c = (char)strtol(hexPair.c_str(), NULL, 16);
+        c = c ^ key[(i / 2) % strlen(key)];
+        decrypted += c;
+    }
+    return decrypted;
+}
+
+// =============================================================
+// POST OFFICE PASSWORD FILE MANAGEMENT
+// =============================================================
+
+const char* POST_OFFICE_PASSWORD_FILE = "/post_office.txt";
+
+bool postOfficePasswordExists() {
+    return LittleFS.exists(POST_OFFICE_PASSWORD_FILE);
+}
+
+String readPostOfficePassword() {
+    if (!postOfficePasswordExists()) {
+        return "";
+    }
+    File f = LittleFS.open(POST_OFFICE_PASSWORD_FILE, "r");
+    if (!f) return "";
+    
+    String encrypted = f.readStringUntil('\n');
+    f.close();
+    encrypted.trim();
+    
+    return decryptPassword(encrypted);
+}
+
+bool savePostOfficePassword(const String &password) {
+    if (password.length() == 0) return false;
+    
+    String encrypted = encryptPassword(password);
+    
+    File f = LittleFS.open(POST_OFFICE_PASSWORD_FILE, "w");
+    if (!f) return false;
+    
+    f.println(encrypted);
+    f.close();
+    return true;
+}
+
+bool deletePostOfficePassword() {
+    return LittleFS.remove(POST_OFFICE_PASSWORD_FILE);
+}
 
 void safeReboot() {
     delay(50);
@@ -5539,6 +5613,34 @@ void cmdSend(Player &p, const String &input) {
         return;
     }
 
+    // Check if password file exists
+    if (!postOfficePasswordExists()) {
+        // No password set up - only wizards can set it up
+        if (!p.IsWizard) {
+            p.client.println("Mail services are unavailable at the moment.");
+            return;
+        }
+        
+        // Wizard - ask for password
+        p.client.println("Post Office password not configured.");
+        p.client.println("Enter password (or type 'cancel' to abort):");
+        p.needsPostOfficePassword = true;
+        p.postOfficePasswordInput = "";
+        return;
+    }
+
+    // Password exists - can send mail
+    cmdSendMail(p, input);
+}
+
+void cmdSendMail(Player &p, const String &input) {
+    // Check if player is in a post office
+    PostOffice* po = getPostOfficeForRoom(p);
+    if (!po) {
+        p.client.println("You must be at a post office to send mail.");
+        return;
+    }
+
     String args = input;
     args.trim();
     
@@ -5565,8 +5667,9 @@ void cmdSend(Player &p, const String &input) {
         return;
     }
 
-    // For now, show unavailable message
+    // For now, show unavailable message until SMTP is configured
     p.client.println("Mail services are unavailable at the moment.");
+    // TODO: Implement SMTP sending here with the stored password
 }
 
 // =============================
@@ -11300,6 +11403,47 @@ void debugPrint(Player &p, const String &msg) {
 // CORE INTERACTION COMMANDS
 // =============================
 void handleCommand(Player &p, int index, const String &rawLine) {
+    // -----------------------------------------
+    // POST OFFICE PASSWORD INPUT HANDLER
+    // -----------------------------------------
+    if (p.needsPostOfficePassword) {
+        String input = rawLine;
+        input.trim();
+        
+        if (input == "delete") {
+            if (deletePostOfficePassword()) {
+                p.client.println("Password file deleted.");
+            } else {
+                p.client.println("Failed to delete password file.");
+            }
+            p.needsPostOfficePassword = false;
+            return;
+        }
+        
+        if (input == "cancel") {
+            p.client.println("Password setup cancelled.");
+            p.needsPostOfficePassword = false;
+            return;
+        }
+        
+        if (input.length() == 0) {
+            p.client.println("Please enter a password or type 'delete' or 'cancel':");
+            return;
+        }
+        
+        // Save password
+        if (savePostOfficePassword(input)) {
+            p.client.println("Post Office password saved successfully!");
+            p.needsPostOfficePassword = false;
+            // Now try to send the mail
+            cmdSendMail(p, p.postOfficePasswordInput);
+            return;
+        } else {
+            p.client.println("Failed to save password. Try again.");
+            return;
+        }
+    }
+
     // -----------------------------------------
     // Clean and split input
     // -----------------------------------------
