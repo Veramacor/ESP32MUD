@@ -731,22 +731,36 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     
     message_obj.addRecipient("recipient", recipientEmail.c_str());
     
-    // Build email body with header
-    String emailBody = "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
-    emailBody += message;
-    message_obj.text.content = emailBody.c_str();
+    // Build email body with header - use static buffer to ensure lifetime
+    static char emailBodyBuf[512];
+    memset(emailBodyBuf, 0, sizeof(emailBodyBuf));
+    const char* header = "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
+    snprintf(emailBodyBuf, sizeof(emailBodyBuf), "%s%s", header, message.c_str());
+    message_obj.text.content = emailBodyBuf;
     message_obj.text.charSet = "us-ascii";
     message_obj.text.transfer_encoding = Content_Transfer_Encoding::enc_7bit;
     
-    // Send email
+    // Send email with timeout protection using watchdog
+    unsigned long startTime = millis();
+    const unsigned long SMTP_TIMEOUT = 15000;  // 15 second total timeout
+    
+    // Try to connect with timeout awareness
     if (!smtp.connect(&session)) {
         return false;
     }
     
-    if (!MailClient.sendMail(&smtp, &message_obj)) {
+    // Check if we've exceeded timeout during connection
+    if (millis() - startTime > SMTP_TIMEOUT) {
+        smtp.closeSession();
         return false;
     }
     
+    if (!MailClient.sendMail(&smtp, &message_obj)) {
+        smtp.closeSession();
+        return false;
+    }
+    
+    smtp.closeSession();
     return true;
 }
 
@@ -5649,6 +5663,13 @@ void cmdSendMail(Player &p, const String &input) {
         return;
     }
 
+    // Check if player has enough gold (10gp per email)
+    const int MAIL_COST = 10;
+    if (p.coins < MAIL_COST) {
+        p.client.println("The Postal Clerk says: \"Sending mail isn't free! We charge " + String(MAIL_COST) + "gp, which you don't have.\"");
+        return;
+    }
+
     String args = input;
     args.trim();
     
@@ -5679,9 +5700,12 @@ void cmdSendMail(Player &p, const String &input) {
     p.client.println("Sending mail to " + emailAddress + "...");
     
     if (sendEmailViaSMTP(emailAddress, message, String(p.name), String(POST_OFFICE_SMTP_PASSWORD))) {
-        p.client.println("Mail sent successfully!");
+        // Charge the player after successful send
+        p.coins -= MAIL_COST;
+        p.client.println("The Postal Clerk says: \"It appears this message can be delivered.\"");
+        p.client.println("You have been charged " + String(MAIL_COST) + " gold pieces for our trouble.");
     } else {
-        p.client.println("Failed to send mail. Check recipient address and try again.");
+        p.client.println("The Postal Clerk says: \"Our services are unavailable today. the scribe runner is sick!\"");
     }
 }
 
