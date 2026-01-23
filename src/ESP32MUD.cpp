@@ -292,6 +292,7 @@ void initializeShops();
 Tavern* getTavernForRoom(Player &p);
 void initializeTaverns();
 void updateDrunkennessRecovery(Player &p);
+void showTavernSign(Player &p, Tavern &tavern);
 
 // File upload handler
 void handleFileUploadRequest(WiFiClient &client);
@@ -5016,6 +5017,35 @@ void cmdDebug(Player &p, const String &input) {
 
 // BUY/SELL====================
 
+void showTavernSign(Player &p, Tavern &tavern) {
+    p.client.println("");
+    p.client.println("      >>> " + tavern.tavernName + " <<<");
+    p.client.println("");
+
+    // Compute longest drink name
+    int longest = 0;
+    for (auto &drink : tavern.drinks) {
+        if (drink.name.length() > longest)
+            longest = drink.name.length();
+    }
+
+    // Print aligned lines
+    for (auto &drink : tavern.drinks) {
+        String line = "  " + drink.name;
+
+        int dots = (longest - drink.name.length()) + 8;
+        for (int d = 0; d < dots; d++)
+            line += ".";
+
+        line += " " + String(drink.price) + " gold";
+
+        p.client.println(line);
+    }
+    
+    p.client.println("");
+    p.client.println("  Drunkenness: " + String(p.drunkenness) + "/6");
+}
+
 void cmdReadSign(Player &p, const String &input) {
     // Check if there's a tavern in this room
     Tavern* tavern = getTavernForRoom(p);
@@ -7846,35 +7876,6 @@ void updateDrunkennessRecovery(Player &p) {
             }
         }
     }
-}
-
-void showTavernSign(Player &p, Tavern &tavern) {
-    p.client.println("");
-    p.client.println("      >>> " + tavern.tavernName + " <<<");
-    p.client.println("");
-
-    // Compute longest drink name
-    int longest = 0;
-    for (auto &drink : tavern.drinks) {
-        if (drink.name.length() > longest)
-            longest = drink.name.length();
-    }
-
-    // Print aligned lines
-    for (auto &drink : tavern.drinks) {
-        String line = "  " + drink.name;
-
-        int dots = (longest - drink.name.length()) + 8;
-        for (int d = 0; d < dots; d++)
-            line += ".";
-
-        line += " " + String(drink.price) + " gold (+" + String(drink.hpRestore) + " HP)";
-
-        p.client.println(line);
-    }
-    
-    p.client.println("");
-    p.client.println("  Drunkenness: " + String(p.drunkenness) + "/6");
 }
 
 void showShopSign(Player &p, WorldItem &sign) {
