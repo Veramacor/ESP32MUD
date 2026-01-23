@@ -4314,6 +4314,11 @@ void cmdLook(Player &p) {
         p.client.println("A sign is here.");
     }
     
+    // Check if this room has a post office - if so, add sign description
+    if (getPostOfficeForRoom(p) != nullptr) {
+        p.client.println("A sign is here.");
+    }
+    
     p.client.println("");  // blank line
 
     // Other players in the room
