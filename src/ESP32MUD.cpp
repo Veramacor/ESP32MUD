@@ -5357,8 +5357,68 @@ void cmdDrink(Player &p, const String &arg) {
         return;
     }
 
-    // Find the drink item in inventory or room
+    // First try exact match
     int idx = findItemInRoomOrInventory(p, drinkName);
+
+    // If no exact match, try partial match for drink items
+    if (idx == -1) {
+        String searchLower = drinkName;
+        searchLower.toLowerCase();
+        
+        // Search inventory first
+        for (int i = 0; i < p.invCount; i++) {
+            int worldIndex = p.invIndices[i];
+            if (worldIndex < 0 || worldIndex >= (int)worldItems.size())
+                continue;
+            
+            WorldItem &wi = worldItems[worldIndex];
+            String id = wi.name;
+            id.toLowerCase();
+            String disp = resolveDisplayName(wi);
+            disp.toLowerCase();
+            
+            // Check if drink matches name or display name (partial)
+            if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+                // Verify it's a drink
+                auto it = itemDefs.find(std::string(wi.name.c_str()));
+                if (it != itemDefs.end()) {
+                    auto typeIt = it->second.attributes.find("type");
+                    if (typeIt != it->second.attributes.end() && typeIt->second == "drink") {
+                        idx = (i | 0x80000000);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If still not found, search room
+        if (idx == -1) {
+            Room &r = p.currentRoom;
+            for (int i = 0; i < (int)worldItems.size(); i++) {
+                WorldItem &wi = worldItems[i];
+                if (wi.x != r.x || wi.y != r.y || wi.z != r.z)
+                    continue;
+                
+                String id = wi.name;
+                id.toLowerCase();
+                String disp = resolveDisplayName(wi);
+                disp.toLowerCase();
+                
+                // Check if drink matches name or display name (partial)
+                if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+                    // Verify it's a drink
+                    auto it = itemDefs.find(std::string(wi.name.c_str()));
+                    if (it != itemDefs.end()) {
+                        auto typeIt = it->second.attributes.find("type");
+                        if (typeIt != it->second.attributes.end() && typeIt->second == "drink") {
+                            idx = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (idx == -1) {
         p.client.println("You don't see that here.");
@@ -7192,6 +7252,66 @@ void cmdEat(Player &p, const char* arg) {
 
     int idx = findItemInRoomOrInventory(p, t);
 
+    // If no exact match, try partial match for food items
+    if (idx == -1) {
+        String searchLower = t;
+        searchLower.toLowerCase();
+        
+        // Search inventory first
+        for (int i = 0; i < p.invCount; i++) {
+            int worldIndex = p.invIndices[i];
+            if (worldIndex < 0 || worldIndex >= (int)worldItems.size())
+                continue;
+            
+            WorldItem &wi = worldItems[worldIndex];
+            String id = wi.name;
+            id.toLowerCase();
+            String disp = resolveDisplayName(wi);
+            disp.toLowerCase();
+            
+            // Check if food matches name or display name (partial)
+            if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+                // Verify it's food
+                auto it = itemDefs.find(std::string(wi.name.c_str()));
+                if (it != itemDefs.end()) {
+                    auto typeIt = it->second.attributes.find("type");
+                    if (typeIt != it->second.attributes.end() && typeIt->second == "food") {
+                        idx = (i | 0x80000000);
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If still not found, search room
+        if (idx == -1) {
+            Room &r = p.currentRoom;
+            for (int i = 0; i < (int)worldItems.size(); i++) {
+                WorldItem &wi = worldItems[i];
+                if (wi.x != r.x || wi.y != r.y || wi.z != r.z)
+                    continue;
+                
+                String id = wi.name;
+                id.toLowerCase();
+                String disp = resolveDisplayName(wi);
+                disp.toLowerCase();
+                
+                // Check if food matches name or display name (partial)
+                if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+                    // Verify it's food
+                    auto it = itemDefs.find(std::string(wi.name.c_str()));
+                    if (it != itemDefs.end()) {
+                        auto typeIt = it->second.attributes.find("type");
+                        if (typeIt != it->second.attributes.end() && typeIt->second == "food") {
+                            idx = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // IMPORTANT: -1 means "not found"
     if (idx == -1) {
         p.client.println("You don't see that here.");
@@ -7265,10 +7385,7 @@ void cmdEat(Player &p, const char* arg) {
     String disp = getItemDisplayName(wi);
 
     p.client.println("You eat the " + disp + ".");
-    if (heal > 0) {
-        int restored = p.hp - oldHp;
-        p.client.println("You restore " + String(restored) + " HP!");
-    }
+    p.client.println("You feel more refreshed.");
     
     // Fullness feedback
     if (p.fullness == 0) {
