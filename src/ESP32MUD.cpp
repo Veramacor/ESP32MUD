@@ -11392,13 +11392,13 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 p.client.println("ESP32MUD v" + String(ESP32MUD_VERSION));
                 p.client.println("Compiled: " + String(COMPILE_DATE) + " " + formatCompileTimeWithTimezone(COMPILE_TIME));
                 
-                // Program size (flash)
+                // Program size (flash) - Partition: factory app 0x100000 (1MB)
                 uint32_t sketchSize = ESP.getSketchSize();
-                uint32_t sketchSpace = ESP.getSketchSize() + ESP.getFreeSketchSpace();  // Usable program space
+                uint32_t sketchSpace = 0x100000;  // 1MB factory partition from no_ota.csv
                 int programPercent = (sketchSize * 100) / sketchSpace;
                 p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(sketchSpace / 1024) + " KB) -> " + String(programPercent) + "%");
                 
-                // LittleFS space
+                // LittleFS space - Partition: littlefs 0x2E0000 (~2.8MB)
                 size_t fsUsed = LittleFS.usedBytes();
                 size_t fsTotal = LittleFS.totalBytes();
                 int fsPercent = (fsUsed * 100) / fsTotal;
