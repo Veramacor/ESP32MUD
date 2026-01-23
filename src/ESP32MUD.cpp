@@ -6241,10 +6241,10 @@ void cmdTownMap(Player &p) {
         // Build legend lines for this row
         String legendLine = "";
         if (y == 0) {
-            legendLine = "          Legend:";
+            legendLine = "Legend:";
         } else if (y <= legendCount) {
             int legIdx = y - 1;
-            legendLine = "          " + String(legendCodes[legIdx]) + " : " + String(legendDescs[legIdx]);
+            legendLine = String(legendCodes[legIdx]) + ":  " + String(legendDescs[legIdx]);
         }
         
         // Pad map lines to column 35, then add legend
@@ -6255,12 +6255,9 @@ void cmdTownMap(Player &p) {
                 mapLine += " ";
             }
             
+            // Only add legend on the first line of this row
             if (i == 0 && legendLine.length() > 0) {
-                p.client.println(mapLine + legendLine);
-            } else if (i == 0) {
-                p.client.println(mapLine);
-            } else if (legendLine.length() > 0) {
-                p.client.println(mapLine + legendLine);
+                p.client.println(mapLine + "          " + legendLine);
             } else {
                 p.client.println(mapLine);
             }
