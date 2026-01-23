@@ -6258,7 +6258,7 @@ void cmdTownMap(Player &p) {
             
             // Legend starts 2 rows down (at output line 2)
             if (outputLineNum == 2) {
-                legendLine = " :  Legend:";
+                legendLine = "Legend:";
             }
             // Empty line after Legend (output line 3)
             else if (outputLineNum == 3) {
