@@ -292,6 +292,7 @@ void initializeShops();
 Tavern* getTavernForRoom(Player &p);
 void initializeTaverns();
 void updateDrunkennessRecovery(Player &p);
+void updateFullnessRecovery(Player &p);
 void showTavernSign(Player &p, Tavern &tavern);
 
 // File upload handler
@@ -506,6 +507,10 @@ struct Player {
     // Drunkenness system (0 = drunk, 6 = sober)
     int drunkenness = 6;
     unsigned long lastDrunkRecoveryCheck = 0;
+
+    // Fullness/satiation system (0 = too full, 6 = hungry)
+    int fullness = 6;
+    unsigned long lastFullnessRecoveryCheck = 0;
 
     // Visited voxels tracker for mapper utility (max 500 visited rooms)
     struct VisitedVoxel {
@@ -7225,6 +7230,15 @@ void cmdEat(Player &p, const char* arg) {
         return;
     }
 
+    // Check if player is too full
+    if (p.fullness <= 0) {
+        p.client.println("You are too full to eat any more!");
+        return;
+    }
+
+    // Determine fullness cost (1 unit for most foods)
+    int fullnessCost = 1;
+    
     // Heal amount
     int heal = 0;
     auto healIt = def.attributes.find("heal");
@@ -7232,12 +7246,30 @@ void cmdEat(Player &p, const char* arg) {
         heal = strToInt(healIt->second);
     }
 
+    // Deduct fullness units
+    p.fullness -= fullnessCost;
+    if (p.fullness < 0) p.fullness = 0;
+
+    // Restore HP
+    int oldHp = p.hp;
     p.hp += heal;
     if (p.hp > p.maxHp) p.hp = p.maxHp;
 
     String disp = getItemDisplayName(wi);
 
     p.client.println("You eat the " + disp + ".");
+    if (heal > 0) {
+        int restored = p.hp - oldHp;
+        p.client.println("You restore " + String(restored) + " HP!");
+    }
+    
+    // Fullness feedback
+    if (p.fullness == 0) {
+        p.client.println("You are now too full and can't eat any more!");
+    } else if (p.fullness <= 2) {
+        p.client.println("You're getting quite full...");
+    }
+
     broadcastRoomExcept(
         p,
         capFirst(p.name) + " eats a " + disp + ".",
@@ -7881,6 +7913,21 @@ void updateDrunkennessRecovery(Player &p) {
             p.drunkenness++;
             if (p.drunkenness == 6) {
                 p.client.println("\nYou feel the fog clearing from your mind. You're sober again!");
+            }
+        }
+    }
+}
+
+void updateFullnessRecovery(Player &p) {
+    unsigned long now = millis();
+    
+    // Recover 1 fullness unit every 60 seconds (60000 ms)
+    if (now - p.lastFullnessRecoveryCheck >= 60000UL) {
+        p.lastFullnessRecoveryCheck = now;
+        if (p.fullness < 6) {
+            p.fullness++;
+            if (p.fullness == 6) {
+                p.client.println("\nYour stomach feels empty again. You're hungry!");
             }
         }
     }
@@ -12732,6 +12779,8 @@ for (auto &npc : npcInstances) {
             }
             // Drunkenness recovery
             updateDrunkennessRecovery(p);
+            // Fullness recovery
+            updateFullnessRecovery(p);
         }
     }
 
