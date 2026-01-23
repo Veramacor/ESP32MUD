@@ -6625,6 +6625,8 @@ void cmdWizHelp(Player &p) {
     // ---------------------------------------------------------
     p.client.println("debug delete <file>     - Delete a LittleFS file");
     p.client.println("debug destination       - Toggle debug output");
+    p.client.println("debug extract <file>    - Backup a single file");
+    p.client.println("debug extractall        - Backup all LittleFS files");
     p.client.println("debug files             - Dump core data files");
     p.client.println("debug flashspace        - Show LittleFS usage");
     p.client.println("debug items             - Dump all world items");
@@ -12838,6 +12840,8 @@ if (cmd == "debug") {
         p.client.println("Debug commands:");
         p.client.println("  debug delete <file>      - Delete a LittleFS file");
         p.client.println("  debug destination        - Toggle debug output between SERIAL and TELNET");
+        p.client.println("  debug extract <file>     - Backup a single file (for pre-partition save)");
+        p.client.println("  debug extractall         - Backup all LittleFS files");
         p.client.println("  debug files              - Dump core data files");
         p.client.println("  debug flashspace         - Show LittleFS total/used/free space");
         p.client.println("  debug items              - Dump world items");
@@ -13009,6 +13013,111 @@ if (cmd == "debug") {
         else
             debugPrint(p, "FAILED to delete: " + fname);
 
+        return;
+    }
+
+    // -----------------------------------------
+    // debug extract <filename> - Backup files before partition changes
+    // -----------------------------------------
+    if (a.startsWith("extract ")) {
+        String fname = a.substring(8);
+        fname.trim();
+
+        if (!fname.startsWith("/"))
+            fname = "/" + fname;
+
+        if (!LittleFS.exists(fname)) {
+            debugPrint(p, "File not found: " + fname);
+            return;
+        }
+
+        File f = LittleFS.open(fname, "r");
+        if (!f) {
+            debugPrint(p, "Cannot open: " + fname);
+            return;
+        }
+
+        size_t fileSize = f.size();
+        debugPrint(p, "=== BACKUP: " + fname + " (" + String(fileSize) + " bytes) ===");
+        
+        // For text files, show as text
+        if (fname.endsWith(".txt") || fname.endsWith(".csv") || fname.endsWith(".vxd")) {
+            while (f.available()) {
+                String line = f.readStringUntil('\n');
+                debugPrint(p, line);
+            }
+        } else {
+            // For binary files, show as hex dump
+            debugPrint(p, "[HEX DUMP]");
+            int bytesPerLine = 16;
+            int lineNum = 0;
+            while (f.available()) {
+                String hexLine = "[" + String(lineNum * bytesPerLine, HEX) + "] ";
+                for (int i = 0; i < bytesPerLine && f.available(); i++) {
+                    uint8_t b = f.read();
+                    if (b < 16) hexLine += "0";
+                    hexLine += String(b, HEX) + " ";
+                }
+                debugPrint(p, hexLine);
+                lineNum++;
+            }
+        }
+        
+        debugPrint(p, "=== END BACKUP ===");
+        f.close();
+        return;
+    }
+
+    // -----------------------------------------
+    // debug extractall - Backup all LittleFS files
+    // -----------------------------------------
+    if (a == "extractall") {
+        debugPrint(p, "=== BACKING UP ALL FILES ===");
+        
+        File root = LittleFS.open("/");
+        File file = root.openNextFile();
+        int fileCount = 0;
+        
+        while (file) {
+            String fileName = file.name();
+            size_t fileSize = file.size();
+            
+            debugPrint(p, "");
+            debugPrint(p, "=== FILE: " + fileName + " (" + String(fileSize) + " bytes) ===");
+            
+            // Show text files as text
+            if (fileName.endsWith(".txt") || fileName.endsWith(".csv") || fileName.endsWith(".vxd")) {
+                file.seek(0);  // Reset to beginning
+                while (file.available()) {
+                    String line = file.readStringUntil('\n');
+                    debugPrint(p, line);
+                }
+            } else {
+                // Binary files as hex
+                debugPrint(p, "[HEX DUMP]");
+                file.seek(0);
+                int bytesPerLine = 16;
+                int lineNum = 0;
+                while (file.available()) {
+                    String hexLine = "[" + String(lineNum * bytesPerLine, HEX) + "] ";
+                    for (int i = 0; i < bytesPerLine && file.available(); i++) {
+                        uint8_t b = file.read();
+                        if (b < 16) hexLine += "0";
+                        hexLine += String(b, HEX) + " ";
+                    }
+                    debugPrint(p, hexLine);
+                    lineNum++;
+                }
+            }
+            
+            fileCount++;
+            file = root.openNextFile();
+        }
+        
+        debugPrint(p, "");
+        debugPrint(p, "=== BACKUP COMPLETE: " + String(fileCount) + " files ===");
+        file.close();
+        root.close();
         return;
     }
 
