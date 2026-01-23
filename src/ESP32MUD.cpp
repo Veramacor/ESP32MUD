@@ -5360,7 +5360,7 @@ void cmdDrink(Player &p, const String &arg) {
     // First try exact match
     int idx = findItemInRoomOrInventory(p, drinkName);
 
-    // If no exact match, try partial match for drink items
+    // If no exact match, try partial match for any item
     if (idx == -1) {
         String searchLower = drinkName;
         searchLower.toLowerCase();
@@ -5377,17 +5377,10 @@ void cmdDrink(Player &p, const String &arg) {
             String disp = resolveDisplayName(wi);
             disp.toLowerCase();
             
-            // Check if drink matches name or display name (partial)
+            // Check if item matches name or display name (partial)
             if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
-                // Verify it's a drink
-                auto it = itemDefs.find(std::string(wi.name.c_str()));
-                if (it != itemDefs.end()) {
-                    auto typeIt = it->second.attributes.find("type");
-                    if (typeIt != it->second.attributes.end() && typeIt->second == "drink") {
-                        idx = (i | 0x80000000);
-                        break;
-                    }
-                }
+                idx = (i | 0x80000000);
+                break;
             }
         }
         
@@ -5404,17 +5397,10 @@ void cmdDrink(Player &p, const String &arg) {
                 String disp = resolveDisplayName(wi);
                 disp.toLowerCase();
                 
-                // Check if drink matches name or display name (partial)
+                // Check if item matches name or display name (partial)
                 if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
-                    // Verify it's a drink
-                    auto it = itemDefs.find(std::string(wi.name.c_str()));
-                    if (it != itemDefs.end()) {
-                        auto typeIt = it->second.attributes.find("type");
-                        if (typeIt != it->second.attributes.end() && typeIt->second == "drink") {
-                            idx = i;
-                            break;
-                        }
-                    }
+                    idx = i;
+                    break;
                 }
             }
         }
@@ -7252,7 +7238,7 @@ void cmdEat(Player &p, const char* arg) {
 
     int idx = findItemInRoomOrInventory(p, t);
 
-    // If no exact match, try partial match for food items
+    // If no exact match, try partial match for any item
     if (idx == -1) {
         String searchLower = t;
         searchLower.toLowerCase();
@@ -7269,17 +7255,10 @@ void cmdEat(Player &p, const char* arg) {
             String disp = resolveDisplayName(wi);
             disp.toLowerCase();
             
-            // Check if food matches name or display name (partial)
+            // Check if item matches name or display name (partial)
             if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
-                // Verify it's food
-                auto it = itemDefs.find(std::string(wi.name.c_str()));
-                if (it != itemDefs.end()) {
-                    auto typeIt = it->second.attributes.find("type");
-                    if (typeIt != it->second.attributes.end() && typeIt->second == "food") {
-                        idx = (i | 0x80000000);
-                        break;
-                    }
-                }
+                idx = (i | 0x80000000);
+                break;
             }
         }
         
@@ -7296,17 +7275,10 @@ void cmdEat(Player &p, const char* arg) {
                 String disp = resolveDisplayName(wi);
                 disp.toLowerCase();
                 
-                // Check if food matches name or display name (partial)
+                // Check if item matches name or display name (partial)
                 if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
-                    // Verify it's food
-                    auto it = itemDefs.find(std::string(wi.name.c_str()));
-                    if (it != itemDefs.end()) {
-                        auto typeIt = it->second.attributes.find("type");
-                        if (typeIt != it->second.attributes.end() && typeIt->second == "food") {
-                            idx = i;
-                            break;
-                        }
-                    }
+                    idx = i;
+                    break;
                 }
             }
         }
