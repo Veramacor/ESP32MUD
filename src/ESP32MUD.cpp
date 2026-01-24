@@ -6033,6 +6033,9 @@ void dealHighLowHand(Player &p, int playerIndex) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
+        // 2 second delay before next round
+        delay(2000);
+        
         // Deal new hand
         p.client.println("");
         dealHighLowHand(p, playerIndex);
@@ -6123,6 +6126,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("Double Ace! You WIN " + String(winnings) + "gp!");
         globalHighLowPot -= winnings;
         if (globalHighLowPot < 50) globalHighLowPot = 50;
+        
+        // 2 second delay before next round
+        delay(2000);
     }
     // Check for post hit (3rd card equals one of first two)
     else if (card3Value == session.card1Value || card3Value == session.card2Value) {
@@ -6134,9 +6140,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
             return;
         }
         p.coins -= loss;
-        p.client.println("You hit a Post! you pay double the pot!");
+        p.client.println("You hit a Post!");
         p.client.println("You LOSE " + String(loss) + "gp!");
         globalHighLowPot += loss;
+        
+        // 2 second delay before next round
+        delay(2000);
     }
     // Check for win (card inside range)
     else if (card3Value > minValue && card3Value < maxValue) {
@@ -6151,6 +6160,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         // If pot goes below 50, reset to default
         if (globalHighLowPot < 50) globalHighLowPot = 50;
         
+        // 2 second delay before ending game
+        delay(2000);
+        
         // Game always ends on a win
         savePlayerToFS(p);
         endHighLowGame(p, playerIndex);
@@ -6162,6 +6174,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.coins -= betAmount;
         p.client.println("You LOSE " + String(betAmount) + "gp!");
         globalHighLowPot += betAmount;
+        
+        // 2 second delay before next round
+        delay(2000);
     }
     
     // Save player
