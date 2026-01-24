@@ -1711,6 +1711,50 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
 
 
 bool loadRoomForPlayer(Player &p, int x, int y, int z) {
+  // Check for hardcoded Game Parlor room
+  if (x == 247 && y == 248 && z == 50) {
+    Room r;
+    r.x = 247;
+    r.y = 248;
+    r.z = 50;
+    strncpy(r.name, "The Game Parlor", sizeof(r.name) - 1);
+    r.name[sizeof(r.name) - 1] = '\0';
+    strncpy(r.description, "A colorful parlor filled with tables for games. Players gather to test their luck and skill against each other.", sizeof(r.description) - 1);
+    r.description[sizeof(r.description) - 1] = '\0';
+    r.exit_n = 1;  // north
+    r.exit_s = 1;  // south
+    r.exit_e = 1;  // east
+    r.exit_w = 1;  // west
+    r.exit_ne = 0;
+    r.exit_nw = 0;
+    r.exit_se = 0;
+    r.exit_sw = 0;
+    r.exit_u = 0;
+    r.exit_d = 0;
+    r.hasPortal = false;
+    r.exitList = "north, south, east, west";
+    
+    p.currentRoom = r;
+    p.roomX = r.x;
+    p.roomY = r.y;
+    p.roomZ = r.z;
+    
+    uint64_t voxelKey = packVoxelKey(x, y, z);
+    bool alreadyVisited = false;
+    for (const auto &visited : p.visitedVoxels) {
+      if (visited.x == x && visited.y == y && visited.z == z) {
+        alreadyVisited = true;
+        break;
+      }
+    }
+    
+    if (!alreadyVisited && p.visitedVoxels.size() < Player::MAX_VISITED_VOXELS) {
+      p.visitedVoxels.push_back({x, y, z});
+    }
+    
+    return true;
+  }
+
   VoxelResult vr = FindVoxel(x, y, z);
   if (vr.line == "NOT_FOUND") {
     return false;
