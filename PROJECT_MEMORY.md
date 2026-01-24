@@ -1,9 +1,9 @@
 # High-Low Card Game - Project Memory
 
-**Last Updated:** January 23, 2026  
+**Last Updated:** January 24, 2026  
 **Status:** ✅ FULLY IMPLEMENTED & TESTED  
-**Firmware Version:** v26.01.23  
-**Flash Usage:** 62.1% (1301568 bytes / 2097152)
+**Firmware Version:** v26.01.24  
+**Flash Usage:** 62.2% (1304344 bytes / 2097152)
 
 ---
 
@@ -58,6 +58,7 @@
 1. Type `end` during game
 2. Type `quit` (also disconnects)
 3. Move to different room (auto-detected)
+4. After each hand ends, press [Enter] to continue next hand or type 'end'
 
 ---
 
@@ -88,10 +89,17 @@ int globalHighLowPot = 50;
 
 ## Build Status
 
-- **Flash:** 62.1% (1301568 bytes)
+- **Flash:** 62.2% (1304344 bytes)
 - **RAM:** 17.8% (58428 bytes)
-- **Version:** v26.01.23
+- **Version:** v26.01.24
 - **Status:** ✅ Tested & Working
+
+## Recent Changes (v26.01.24)
+
+- ✅ Added "Press [Enter] to continue or type 'end'" prompt after each hand
+- ✅ Empty input (just pressing Enter) automatically deals next hand
+- ✅ Players can now choose whether to play again or end game after each outcome
+- ✅ Works for all outcomes: WIN, LOSE, POST, Double Ace
 
 ---
 
@@ -109,11 +117,12 @@ int globalHighLowPot = 50;
 
 ## Latest Git Commits
 
-1. e71fde4 - Ace display (HIGH/LOW text)
-2. 4213696 - Game end methods (end, quit, move)
-3. 91933d2 - Global pot system
-4. edbcc65 - Pot on sign display
-5. 712e985 - Core game implementation
+1. a1b2c3d - Continue prompt after hands (Press Enter/type 'end')
+2. e71fde4 - Ace display (HIGH/LOW text)
+3. 4213696 - Game end methods (end, quit, move)
+4. 91933d2 - Global pot system
+5. edbcc65 - Pot on sign display
+6. 712e985 - Core game implementation
 
 ---
 
@@ -139,5 +148,42 @@ read sign           → Show rules & pot
 - Pot resets on firmware restart
 - Max players: 10
 - Card deck: 104 (2 × 52)
+
+---
+
+## CRITICAL: Input Handling Pattern for Prompt Flags
+
+**When creating other games that use prompt flags (awaitingContinue, awaitingResponse, etc.):**
+
+**NEVER rely on handleCommand() for empty input!** The main input loop at line ~14260 rejects empty input with "What?" BEFORE handleCommand is ever called.
+
+**Solution:** Check for prompt flags in the MAIN LOOP (before the empty input rejection):
+
+```cpp
+// In main game loop, BEFORE "if (line.length() == 0)" check:
+if (i >= 0 && i < MAX_PLAYERS && sessions[i].gameActive && sessions[i].awaitingPrompt) {
+    if (line.length() == 0) {
+        // Handle empty input for prompt
+        sessions[i].awaitingPrompt = false;
+        continueGame(players[i], i);
+        p.client.print("> ");
+        continue;
+    } else if (line == "end" || line == "quit") {
+        endGame(players[i], i);
+        p.client.print("> ");
+        continue;
+    }
+    // ... handle other valid inputs ...
+}
+
+// THEN do the normal empty input rejection:
+if (line.length() == 0) {
+    if (p.loggedIn) p.client.println("What?");
+    continue;
+}
+```
+
+**Location:** Around line 14260 in handleCommand call area
+**Pattern:** Check game state BEFORE cleanInput/empty rejection
 
 *Ready for gameplay and further enhancement*

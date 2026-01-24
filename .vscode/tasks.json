@@ -44,6 +44,33 @@
                 "panel": "new",
                 "showReuseMessage": false
             }
+        },
+        {
+            "label": "🔄 Reset and Upload",
+            "type": "shell",
+            "command": "platformio",
+            "args": [
+                "run",
+                "--target",
+                "upload",
+                "--environment",
+                "seeed_xiao_esp32c3",
+                "--upload-port",
+                "COM5"
+            ],
+            "problemMatcher": [
+                "$platformio"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared",
+                "showReuseMessage": false
+            }
         }
     ]
 }

@@ -118,6 +118,8 @@ struct HighLowSession {
     int card1Value, card2Value;  // may differ from card.value if Ace is involved
     bool gameActive;             // true if player is actively playing
     bool awaitingAceDeclaration; // waiting for player to declare Ace high/low
+    bool awaitingContinue;       // waiting for player to press Enter or type 'end'
+    bool betWasPot;              // true if player bet the entire pot
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
 };
 
@@ -351,8 +353,9 @@ void showPostOfficeSign(Player &p, PostOffice &po);
 void initializeHighLowSession(int playerIndex);
 void startHighLowGame(Player &p, int playerIndex);
 void dealHighLowHand(Player &p, int playerIndex);
-void processHighLowBet(Player &p, int playerIndex, int betAmount);
+void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet = false);
 void declareAceValue(Player &p, int playerIndex, int aceValue);
+void promptHighLowContinue(Player &p, int playerIndex);
 void endHighLowGame(Player &p, int playerIndex);
 String getCardName(const Card &card);
 bool checkAndSpawnMailLetters(Player &p);  // Returns true if mail was found and letters spawned
@@ -5855,8 +5858,19 @@ String getCardName(const Card &card) {
     return names[card.value] + " of " + suits[card.suit];
 }
 
+// Clear telnet screen using ANSI escape sequence
+void clearScreen(Player &p) {
+    // ANSI/telnet clear screen: move cursor home and clear entire screen
+    p.client.print("\033[H\033[2J");
+}
+
 // Render card as ASCII art - print each line separately
 void printCard(Player &p, const Card &card) {
+    clearScreen(p);  // Clear screen before displaying card
+    
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("");
+    
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
     
@@ -5884,6 +5898,11 @@ void printCard(Player &p, const Card &card) {
 
 // Print 2 cards side-by-side on same lines
 void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
+    clearScreen(p);  // Clear screen before displaying cards
+    
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("");
+    
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
     
@@ -5915,6 +5934,11 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
 
 // Render 3 cards: first 2 on top row, 3rd card centered below
 void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
+    clearScreen(p);  // Clear screen before displaying cards
+    
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("");
+    
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
     
@@ -5955,6 +5979,8 @@ void initializeHighLowSession(int playerIndex) {
     // Note: pot is now global (globalHighLowPot), not per-player
     session.gameActive = false;
     session.awaitingAceDeclaration = false;
+    session.awaitingContinue = false;
+    session.betWasPot = false;
     
     // Create 104-card deck (double deck)
     for (int suit = 0; suit < 4; suit++) {
@@ -6011,10 +6037,6 @@ void dealHighLowHand(Player &p, int playerIndex) {
     session.card1Value = session.card1.isAce ? 1 : session.card1.value;
     session.card2Value = session.card2.isAce ? 1 : session.card2.value;
     
-    p.client.println("");
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-    p.client.println("");
-    
     // AUTOMATIC POST: Both cards are Aces
     if (session.card1.isAce && session.card2.isAce) {
         printTwoCardsSideBySide(p, session.card1, session.card2);
@@ -6033,9 +6055,9 @@ void dealHighLowHand(Player &p, int playerIndex) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // Deal new hand
+        // Prompt for continue
         p.client.println("");
-        dealHighLowHand(p, playerIndex);
+        promptHighLowContinue(p, playerIndex);
         return;
     }
     
@@ -6054,8 +6076,9 @@ void dealHighLowHand(Player &p, int playerIndex) {
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 
-void processHighLowBet(Player &p, int playerIndex, int betAmount) {
+void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
     HighLowSession &session = highLowSessions[playerIndex];
+    session.betWasPot = potBet;  // Track if this was a pot bet
     
     // Validate bet
     if (betAmount < 0) {
@@ -6094,8 +6117,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     renderThreeCardsSideBySide(p, session.card1, session.card2, session.card3);
     
     // Determine win/loss
-    int minValue = min(session.card1Value, session.card2Value);
-    int maxValue = max(session.card1Value, session.card2Value);
+    // Get the lower and higher card values
+    int lowerCard = min(session.card1Value, session.card2Value);
+    int higherCard = max(session.card1Value, session.card2Value);
     
     // Determine 3rd card value
     int card3Value;
@@ -6107,7 +6131,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
             // 3rd card Ace should be valued as 1 or 14 based on what's optimal
             // Default to 1 (low) unless that makes it outside range
             card3Value = 1;
-            if (card3Value < minValue || card3Value > maxValue) {
+            if (card3Value < lowerCard || card3Value > higherCard) {
                 card3Value = 14;  // Try high instead
             }
         }
@@ -6118,16 +6142,27 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     // Check for automatic win (3rd Ace when first or second is also Ace)
     if (card3Value == -1) {
         // WIN - double Ace is automatic win!
-        int winnings = betAmount;
-        p.coins += winnings;
-        p.client.println("Double Ace! You WIN " + String(winnings) + "gp!");
-        globalHighLowPot -= winnings;
-        if (globalHighLowPot < 50) globalHighLowPot = 50;
+        // Player wins their bet amount, pot is reduced by bet
+        p.coins += betAmount;
+        p.client.println("Double Ace! You WIN " + String(betAmount) + "gp!");
+        globalHighLowPot -= betAmount;
+        
+        // Check if pot is depleted (player won the game)
+        if (globalHighLowPot <= 0) {
+            globalHighLowPot = 50;  // Reset pot for next player
+            p.client.println("The pot is depleted! YOU WIN THE GAME!");
+            savePlayerToFS(p);
+            endHighLowGame(p, playerIndex);
+            return;
+        }
+        
+        // Pot still has money - continue game
+        p.client.println("Pot is now at " + String(globalHighLowPot) + "gp.");
         savePlayerToFS(p);
         
-        // Deal next hand immediately
+        // Prompt for continue
         p.client.println("");
-        dealHighLowHand(p, playerIndex);
+        promptHighLowContinue(p, playerIndex);
         return;
     }
     // Check for post hit (3rd card equals one of first two)
@@ -6140,50 +6175,68 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
             return;
         }
         p.coins -= loss;
-        p.client.println("You hit a Post!");
-        p.client.println("You LOSE " + String(loss) + "gp!");
+        
+        String card3Name = getCardName(session.card3);
+        p.client.println(card3Name + " - YOU HIT A POST! ... PAY DOUBLE! (" + String(loss) + "gp)");
+        
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // Deal next hand immediately
+        // Prompt for continue
         p.client.println("");
-        dealHighLowHand(p, playerIndex);
+        promptHighLowContinue(p, playerIndex);
         return;
     }
-    // Check for win (card inside range)
-    else if (card3Value > minValue && card3Value < maxValue) {
-        // WIN - player wins the pot!
-        // If bet is >= pot, they win the whole pot
-        int winAmount = (betAmount >= globalHighLowPot) ? globalHighLowPot : betAmount;
-        p.coins += winAmount;
+    // Check for win (card inside range - strictly between lower and higher card)
+    else if (card3Value > lowerCard && card3Value < higherCard) {
+        // WIN - player wins their bet amount, pot is reduced
+        p.coins += betAmount;
         
-        if (betAmount >= globalHighLowPot) {
-            p.client.println("You WIN the POT! The game is over!");
+        String card3Name = getCardName(session.card3);
+        if (session.betWasPot) {
+            p.client.println(card3Name + " - WIN... TAKE IT!");
         } else {
-            p.client.println("You WIN the hand! The game is over!");
+            p.client.println(card3Name + " - WIN... TAKE IT! (" + String(betAmount) + "gp)");
         }
-        p.client.println("You WIN " + String(winAmount) + "gp!");
-        globalHighLowPot -= winAmount;
         
-        // If pot goes below 50, reset to default
-        if (globalHighLowPot < 50) globalHighLowPot = 50;
+        globalHighLowPot -= betAmount;
         
-        // Game always ends on a win
+        // Check if pot is depleted (player won the game!)
+        if (globalHighLowPot <= 0) {
+            globalHighLowPot = 50;  // Reset pot for next player
+            p.client.println("The pot is depleted! YOU WIN THE GAME!");
+            savePlayerToFS(p);
+            endHighLowGame(p, playerIndex);
+            return;
+        }
+        
+        // Pot still has money - continue playing
+        p.client.println("Pot is now at " + String(globalHighLowPot) + "gp.");
         savePlayerToFS(p);
-        endHighLowGame(p, playerIndex);
+        
+        // Prompt for continue
+        p.client.println("");
+        promptHighLowContinue(p, playerIndex);
         return;
     }
     // Otherwise lose (card outside range)
     else {
         // LOSE
         p.coins -= betAmount;
-        p.client.println("You LOSE " + String(betAmount) + "gp!");
+        
+        String card3Name = getCardName(session.card3);
+        if (session.betWasPot) {
+            p.client.println(card3Name + " - MISS... YOU PAY THE WHOLE POT!");
+        } else {
+            p.client.println(card3Name + " - MISS... PAY IT! (" + String(betAmount) + "gp)");
+        }
+        
         globalHighLowPot += betAmount;
         savePlayerToFS(p);
         
-        // Deal next hand immediately
+        // Prompt for continue
         p.client.println("");
-        dealHighLowHand(p, playerIndex);
+        promptHighLowContinue(p, playerIndex);
         return;
     }
 }
@@ -6240,11 +6293,20 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 
+void promptHighLowContinue(Player &p, int playerIndex) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    
+    // Mark that we're waiting for continue/end decision
+    session.awaitingContinue = true;
+    p.client.println("Press [Enter] to continue or type 'end'");
+}
+
 void endHighLowGame(Player &p, int playerIndex) {
     HighLowSession &session = highLowSessions[playerIndex];
     
     session.gameActive = false;
     session.awaitingAceDeclaration = false;
+    session.awaitingContinue = false;
     p.client.println("");
     p.client.println("Game ended.");
     p.client.println("");
@@ -12382,6 +12444,44 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
     // -----------------------------------------
+    // Handle High-Low continue prompt FIRST (before empty check)
+    // -----------------------------------------
+    if (index >= 0 && index < MAX_PLAYERS && highLowSessions[index].gameActive) {
+        HighLowSession &session = highLowSessions[index];
+        
+        if (session.awaitingContinue) {
+            String trimmed = rawLine;
+            trimmed.trim();
+            String lowerTrimmed = trimmed;
+            lowerTrimmed.toLowerCase();
+            
+            p.client.println("[DEBUG CONTINUE] trimmed='" + trimmed + "' length=" + String(trimmed.length()));
+            
+            if (trimmed.length() == 0) {
+                // Empty input - start next hand
+                p.client.println("[DEBUG] Empty input detected - dealing next hand");
+                session.awaitingContinue = false;
+                p.client.println("");
+                dealHighLowHand(p, index);
+                return;
+            } else if (lowerTrimmed == "end" || lowerTrimmed == "quit") {
+                // End the game
+                endHighLowGame(p, index);
+                return;
+            } else if (lowerTrimmed == "n" || lowerTrimmed == "s" || lowerTrimmed == "e" || lowerTrimmed == "w" || 
+                       lowerTrimmed.startsWith("go ")) {
+                // Allow movement commands
+                session.awaitingContinue = false;
+                // Fall through to normal command processing
+            } else {
+                // Invalid input during continue prompt
+                p.client.println("Press [Enter] to continue or type 'end'");
+                return;
+            }
+        }
+    }
+
+    // -----------------------------------------
     // Clean and split input
     // -----------------------------------------
     String line = cleanInput(rawLine);
@@ -12958,6 +13058,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         if (index >= 0 && index < MAX_PLAYERS && highLowSessions[index].gameActive) {
             highLowSessions[index].gameActive = false;
             highLowSessions[index].awaitingAceDeclaration = false;
+            highLowSessions[index].awaitingContinue = false;
         }
         
         // Set spawn room before saving
@@ -13771,8 +13872,26 @@ if (cmd == "debug") {
     if (playerIndex >= 0 && highLowSessions[playerIndex].gameActive) {
         HighLowSession &session = highLowSessions[playerIndex];
         
+        // Check if awaiting continuation after hand
+        if (session.awaitingContinue) {
+            if (cmd == "" || cmd.length() == 0) {
+                // Empty input - start next hand
+                session.awaitingContinue = false;
+                p.client.println("");
+                dealHighLowHand(p, playerIndex);
+                return;
+            } else if (cmd == "end" || cmd == "quit") {
+                // End the game
+                endHighLowGame(p, playerIndex);
+                return;
+            } else {
+                // Invalid input during continue prompt
+                p.client.println("Press [Enter] to continue or type 'end'");
+                return;
+            }
+        }
         // Check if awaiting Ace declaration
-        if (session.awaitingAceDeclaration) {
+        else if (session.awaitingAceDeclaration) {
             if (cmd == "1") {
                 declareAceValue(p, playerIndex, 1);  // Low
                 return;
@@ -13797,14 +13916,14 @@ if (cmd == "debug") {
                     p.client.println("Enter bet amount, 'pot' or 'end':");
                     return;
                 }
-                processHighLowBet(p, playerIndex, potBet);
+                processHighLowBet(p, playerIndex, potBet, true);  // true = pot bet
                 return;
             } else {
                 // Try to parse as a number (bet amount)
                 int bet = cmd.toInt();
                 if (bet > 0 || cmd == "0") {
                     // Valid numeric bet or pass (0)
-                    processHighLowBet(p, playerIndex, bet);
+                    processHighLowBet(p, playerIndex, bet, false);  // false = regular bet
                     return;
                 }
             }
@@ -14168,6 +14287,33 @@ void loop() {
 
         if (p.client.available()) {
             String line = readClientLine(p.client);
+
+            // Check for High-Low continue prompt BEFORE empty line rejection
+            if (i >= 0 && i < MAX_PLAYERS && highLowSessions[i].gameActive && highLowSessions[i].awaitingContinue) {
+                // Player is waiting to continue a game - allow empty input
+                if (line.length() == 0) {
+                    // Empty input continues the game
+                    highLowSessions[i].awaitingContinue = false;
+                    p.client.println("");
+                    dealHighLowHand(players[i], i);
+                    p.client.print("> ");
+                    continue;
+                } else if (line == "end" || line == "quit") {
+                    // End the game
+                    endHighLowGame(players[i], i);
+                    p.client.print("> ");
+                    continue;
+                } else if (line == "n" || line == "s" || line == "e" || line == "w" || line.startsWith("go ")) {
+                    // Allow movement - will be processed by handleCommand
+                    highLowSessions[i].awaitingContinue = false;
+                    // Fall through to normal command processing
+                } else {
+                    // Invalid input
+                    p.client.println("Press [Enter] to continue or type 'end'");
+                    p.client.print("> ");
+                    continue;
+                }
+            }
 
             if (line.length() == 0) {
                 if (p.loggedIn) p.client.println("What?");
