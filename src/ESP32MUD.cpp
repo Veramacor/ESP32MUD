@@ -5855,6 +5855,53 @@ String getCardName(const Card &card) {
     return names[card.value] + " of " + suits[card.suit];
 }
 
+// Render card as ASCII art (4 lines: top border, rank+suit, rank+suit, bottom border)
+// Returns a string with newlines for card display
+String renderCard(const Card &card) {
+    String suitSymbols[] = {"♥", "♠", "♦", "♣"};
+    String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+    
+    String rank = card.isAce ? "A" : ranks[card.value];
+    String suit = suitSymbols[card.suit];
+    
+    // Handle spacing: "10" needs less padding
+    String topPadding = (rank == "10") ? "       " : "        ";
+    String bottomPadding = (rank == "10") ? "       " : "        ";
+    
+    String result = "┌─────────┐\n";
+    result += "│" + rank + topPadding + "│\n";
+    result += "│    " + suit + "    │\n";
+    result += "│" + bottomPadding + rank + "│\n";
+    result += "└─────────┘";
+    
+    return result;
+}
+
+// Render 3 cards side by side
+void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
+    String suitSymbols[] = {"♥", "♠", "♦", "♣"};
+    String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+    
+    auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
+    auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
+    auto getPadding = [](const String &rank) { return (rank == "10") ? "       " : "        "; };
+    
+    String r1 = getRank(card1), s1 = getSuit(card1), p1top = getPadding(r1), p1bot = getPadding(r1);
+    String r2 = getRank(card2), s2 = getSuit(card2), p2top = getPadding(r2), p2bot = getPadding(r2);
+    String r3 = getRank(card3), s3 = getSuit(card3), p3top = getPadding(r3), p3bot = getPadding(r3);
+    
+    // Top border
+    p.client.println("┌─────────┐ ┌─────────┐ ┌─────────┐");
+    // Rank top
+    p.client.println("│" + r1 + p1top + "│ │" + r2 + p2top + "│ │" + r3 + p3top + "│");
+    // Suit
+    p.client.println("│    " + s1 + "    │ │    " + s2 + "    │ │    " + s3 + "    │");
+    // Rank bottom
+    p.client.println("│" + p1bot + r1 + "│ │" + p2bot + r2 + "│ │" + p3bot + r3 + "│");
+    // Bottom border
+    p.client.println("└─────────┘ └─────────┘ └─────────┘");
+}
+
 void initializeHighLowSession(int playerIndex) {
     HighLowSession &session = highLowSessions[playerIndex];
     session.deck.clear();
@@ -5917,12 +5964,17 @@ void dealHighLowHand(Player &p, int playerIndex) {
     session.card1Value = session.card1.isAce ? 1 : session.card1.value;
     session.card2Value = session.card2.isAce ? 1 : session.card2.value;
     
+    p.client.println("");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
+    p.client.println("");
+    
     // AUTOMATIC POST: Both cards are Aces
     if (session.card1.isAce && session.card2.isAce) {
+        p.client.println("1st card:");
+        p.client.println(renderCard(session.card1));
         p.client.println("");
-        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-        p.client.println("your first card is: " + getCardName(session.card1));
-        p.client.println("Second card is: " + getCardName(session.card2));
+        p.client.println("2nd card:");
+        p.client.println(renderCard(session.card2));
         p.client.println("");
         p.client.println("DOUBLE ACE - AUTOMATIC POST!");
         
@@ -5944,36 +5996,32 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // Check if first card is an Ace
+    // Show 1st card
+    p.client.println("1st card:");
+    p.client.println(renderCard(session.card1));
+    p.client.println("");
+    
+    // Check if first card is an Ace - if so, wait for declaration
     if (session.card1.isAce) {
         session.awaitingAceDeclaration = true;
-        p.client.println("");
-        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-        p.client.println("your first card is: " + getCardName(session.card1));
-        p.client.println("");
-        p.client.println("High or Low?  Enter '1' for High and '2' for Low");
+        p.client.println("High or Low?  Enter '1' for Low and '2' for High");
         return;
     }
     
-    // Check if second card is an Ace
+    // Show 2nd card
+    p.client.println("2nd card:");
+    p.client.println(renderCard(session.card2));
+    p.client.println("");
+    
+    // Check if second card is an Ace - if so, wait for declaration
     if (session.card2.isAce) {
         session.awaitingAceDeclaration = true;
-        p.client.println("");
-        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-        p.client.println("your first card is: " + getCardName(session.card1));
-        p.client.println("Second card is: " + getCardName(session.card2));
-        p.client.println("");
-        p.client.println("High or Low?  Enter '1' for High and '2' for Low");
+        p.client.println("High or Low?  Enter '1' for Low and '2' for High");
         return;
     }
     
     // No Aces - ready for betting
     session.awaitingAceDeclaration = false;
-    p.client.println("");
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-    p.client.println("your first card is: " + getCardName(session.card1));
-    p.client.println("Second card is: " + getCardName(session.card2));
-    p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 
@@ -6013,7 +6061,8 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     session.card3 = session.deck.back();
     session.deck.pop_back();
     
-    p.client.println("Third card is " + getCardName(session.card3) + ". ");
+    p.client.println("");
+    renderThreeCardsSideBySide(p, session.card1, session.card2, session.card3);
     
     // Determine win/loss
     int minValue = min(session.card1Value, session.card2Value);
@@ -6100,36 +6149,41 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     bool card1IsAce = session.card1.isAce;
     bool card2IsAce = session.card2.isAce;
     
-    if (aceValue == 1) {
-        // LOW
-        if (card1IsAce) {
+    // If BOTH cards are Aces, ignore player's declaration and force LOW-HIGH
+    if (card1IsAce && card2IsAce) {
+        session.card1Value = 1;   // Always LOW
+        session.card2Value = 14;  // Always HIGH
+        p.client.println("Ace is LOW.");
+        p.client.println("Second card is also an Ace - automatically set to HIGH.");
+    }
+    // Only card1 is Ace - use player's declaration
+    else if (card1IsAce) {
+        if (aceValue == 1) {
             session.card1Value = 1;
             p.client.println("Ace is LOW.");
-        }
-        if (card2IsAce && !card1IsAce) {
-            session.card2Value = 1;
-            p.client.println("Ace is LOW.");
-        }
-    } else if (aceValue == 2) {
-        // HIGH
-        if (card1IsAce) {
+        } else if (aceValue == 2) {
             session.card1Value = 14;
             p.client.println("Ace is HIGH.");
+        } else {
+            p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
+            return;
         }
-        if (card2IsAce && !card1IsAce) {
+    }
+    // Only card2 is Ace - use player's declaration
+    else if (card2IsAce) {
+        if (aceValue == 1) {
+            session.card2Value = 1;
+            p.client.println("Ace is LOW.");
+        } else if (aceValue == 2) {
             session.card2Value = 14;
             p.client.println("Ace is HIGH.");
+        } else {
+            p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
+            return;
         }
     } else {
         p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
         return;
-    }
-    
-    // If BOTH cards are Aces, automatically set second to opposite
-    if (card1IsAce && card2IsAce) {
-        session.card2Value = (session.card1Value == 1) ? 14 : 1;
-        String highOrLow = (session.card2Value == 1) ? "LOW" : "HIGH";
-        p.client.println("Second card is also an Ace - automatically set to " + highOrLow + ".");
     }
     
     session.awaitingAceDeclaration = false;
