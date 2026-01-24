@@ -6070,6 +6070,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("You WIN " + String(winAmount) + "gp!");
         globalHighLowPot -= winAmount;
         
+        // If pot goes below 50, reset to default
+        if (globalHighLowPot < 50) globalHighLowPot = 50;
+        
         // Game always ends on a win
         savePlayerToFS(p);
         endHighLowGame(p, playerIndex);
