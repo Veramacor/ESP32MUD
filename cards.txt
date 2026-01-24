@@ -12,22 +12,37 @@
 
 
 
-        YOUR print:
 
-Pot is at 50gp.
 
-1st card:
-┌────────┐
-          │Q       │
-                    │    ♠   │
-                              │       Q│
-                                        └────────┘
+ WHAT it should look like
 
-2nd card:
-┌────────┐
-          │3       │
-                    │    ♦   │
-                              │       3│
-                                        └────────┘
+┌────────┐      ┌────────┐
+│A       │      │10      │
+│    ♠   │      │    ♠   │
+│       A│      │      10│
+└────────┘      └────────┘
 
-Enter bet amount, 'pot' or 'end':
+Enter bet prompt
+
+
+
+Ace is first ?  then the print will look like:
+
+┌────────┐  
+│A       │  
+│    ♠   │ 
+│       A│      
+└────────┘  
+
+Ace H/L prompt 
+
+
+THEN 
+
+┌────────┐      ┌────────┐
+│A       │      │10      │
+│    ♠   │      │    ♠   │
+│       A│      │      10│
+└────────┘      └────────┘
+
+Enter bet prompt

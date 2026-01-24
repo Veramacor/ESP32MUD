@@ -5882,6 +5882,37 @@ void printCard(Player &p, const Card &card) {
     p.client.println("└────────┘");
 }
 
+// Print 2 cards side-by-side on same lines
+void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
+    String suitSymbols[] = {"♥", "♠", "♦", "♣"};
+    String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+    
+    auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
+    auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
+    
+    auto getPadding = [](const String &rank) -> String {
+        if (rank == "10") {
+            return "      ";  // 6 spaces for "10"
+        } else {
+            return "       ";  // 7 spaces for single char
+        }
+    };
+    
+    String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
+    String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
+    
+    // Top borders
+    p.client.println("┌────────┐      ┌────────┐");
+    // Ranks top
+    p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
+    // Suits
+    p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
+    // Ranks bottom
+    p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
+    // Bottom borders
+    p.client.println("└────────┘      └────────┘");
+}
+
 // Render 3 cards: first 2 on top row, 3rd card centered below
 void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
@@ -6024,20 +6055,10 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // Show 2nd card
-    p.client.println("2nd card:");
-    printCard(p, session.card2);
+    // 1st card not an Ace - show both cards on same row and prompt for bet
     p.client.println("");
-    
-    // Check if second card is an Ace - if so, wait for declaration
-    if (session.card2.isAce) {
-        session.awaitingAceDeclaration = true;
-        p.client.println("High or Low?  Enter '1' for Low and '2' for High");
-        return;
-    }
-    
-    // No Aces - ready for betting
-    session.awaitingAceDeclaration = false;
+    printTwoCardsSideBySide(p, session.card1, session.card2);
+    p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 
@@ -6204,11 +6225,9 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     
     session.awaitingAceDeclaration = false;
     
-    // Ready for betting
+    // Ready for betting - show both cards side-by-side
     p.client.println("");
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
-    p.client.println("your first card is: " + getCardName(session.card1));
-    p.client.println("Second card is: " + getCardName(session.card2));
+    printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
