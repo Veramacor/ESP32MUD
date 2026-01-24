@@ -6017,11 +6017,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // AUTOMATIC POST: Both cards are Aces
     if (session.card1.isAce && session.card2.isAce) {
-        p.client.println("1st card:");
-        printCard(p, session.card1);
-        p.client.println("");
-        p.client.println("2nd card:");
-        printCard(p, session.card2);
+        printTwoCardsSideBySide(p, session.card1, session.card2);
         p.client.println("");
         p.client.println("DOUBLE ACE - AUTOMATIC POST!");
         
@@ -6043,9 +6039,8 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // Show 1st card
-    p.client.println("1st card:");
-    printCard(p, session.card1);
+    // Always show both cards side-by-side
+    printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
     
     // Check if first card is an Ace - if so, wait for declaration
@@ -6055,10 +6050,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // 1st card not an Ace - show both cards on same row and prompt for bet
-    p.client.println("");
-    printTwoCardsSideBySide(p, session.card1, session.card2);
-    p.client.println("");
+    // 1st card not an Ace - prompt for bet
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 

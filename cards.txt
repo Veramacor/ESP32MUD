@@ -14,35 +14,35 @@
 
 
 
- WHAT it should look like
+WHAT YOUR CURRENT PRINT LOOKS LIKE:
+
+ Pot is at 50gp.
+
+1st card:
+┌────────┐
+│9       │
+│    ♣   │
+│       9│
+└────────┘
+
 
 ┌────────┐      ┌────────┐
-│A       │      │10      │
-│    ♠   │      │    ♠   │
-│       A│      │      10│
+│9       │      │9       │
+│    ♣   │      │    ♥   │
+│       9│      │       9│
 └────────┘      └────────┘
 
-Enter bet prompt
+Enter bet amount, 'pot' or 'end':
 
 
 
-Ace is first ?  then the print will look like:
 
-┌────────┐  
-│A       │  
-│    ♠   │ 
-│       A│      
-└────────┘  
-
-Ace H/L prompt 
-
-
-THEN 
+REMOVE SINGLE CARD PRINT IT SHOULD LOOK LIKE THIS:
 
 ┌────────┐      ┌────────┐
-│A       │      │10      │
-│    ♠   │      │    ♠   │
-│       A│      │      10│
+│9       │      │9       │
+│    ♣   │      │    ♥   │
+│       9│      │       9│
 └────────┘      └────────┘
 
-Enter bet prompt
+Enter bet amount, 'pot' or 'end':
