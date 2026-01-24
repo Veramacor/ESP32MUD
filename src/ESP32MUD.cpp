@@ -5321,6 +5321,17 @@ void cmdReadSign(Player &p, const String &input) {
     
     // Check if this is the Game Parlor
     if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
+        // Find player index to get their game pot
+        int playerIndex = -1;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (&players[i] == &p) {
+                playerIndex = i;
+                break;
+            }
+        }
+        
+        int potAmount = (playerIndex >= 0) ? highLowSessions[playerIndex].pot : 50;
+        
         p.client.println("===== GAME PARLOR GAMES =====");
         p.client.println("1. High-Low Card Game - Test your luck!");
         p.client.println("   Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
@@ -5329,6 +5340,8 @@ void cmdReadSign(Player &p, const String &input) {
         p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
         p.client.println("   - Bet with: pot or any amount up to half the pot");
         p.client.println("   - Minimum bet: 10gp");
+        p.client.println("   - The current POT is at " + String(potAmount) + "gp");
+        p.client.println("");
         p.client.println("Type 'play 1' to play!");
         p.client.println("=============================");
         return;
@@ -6132,6 +6145,8 @@ void endHighLowGame(Player &p, int playerIndex) {
     p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
     p.client.println("   - Bet with: pot, 0, or any amount up to half the pot");
     p.client.println("   - Minimum bet: 10gp");
+    p.client.println("   - The current POT is at " + String(session.pot) + "gp");
+    p.client.println("");
     p.client.println("Type 'play 1' to play!");
     p.client.println("=============================");
     p.client.println("");
