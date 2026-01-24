@@ -119,6 +119,7 @@ struct HighLowSession {
     bool gameActive;             // true if player is actively playing
     bool awaitingAceDeclaration; // waiting for player to declare Ace high/low
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
+    unsigned long delayUntil;    // millis() timestamp for non-blocking delay
 };
 
 // Letter system for mail retrieval
@@ -5955,6 +5956,7 @@ void initializeHighLowSession(int playerIndex) {
     // Note: pot is now global (globalHighLowPot), not per-player
     session.gameActive = false;
     session.awaitingAceDeclaration = false;
+    session.delayUntil = 0;
     
     // Create 104-card deck (double deck)
     for (int suit = 0; suit < 4; suit++) {
@@ -5996,6 +5998,13 @@ void initializeHighLowSession(int playerIndex) {
 void dealHighLowHand(Player &p, int playerIndex) {
     HighLowSession &session = highLowSessions[playerIndex];
     
+    // Check if we're in a delay period - if so, ignore and return
+    if (session.delayUntil > 0 && millis() < session.delayUntil) {
+        return;
+    }
+    // Delay period finished, reset it
+    session.delayUntil = 0;
+    
     // Reset deck if less than 3 cards
     if (session.deck.size() < 3) {
         initializeHighLowSession(playerIndex);
@@ -6033,12 +6042,8 @@ void dealHighLowHand(Player &p, int playerIndex) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // 2 second delay before next round
-        delay(2000);
-        
-        // Deal new hand
-        p.client.println("");
-        dealHighLowHand(p, playerIndex);
+        // Non-blocking delay before next round
+        session.delayUntil = millis() + 2000;
         return;
     }
     
@@ -6059,6 +6064,18 @@ void dealHighLowHand(Player &p, int playerIndex) {
 
 void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     HighLowSession &session = highLowSessions[playerIndex];
+    
+    // Check if we're in a delay period - if so, ignore and return
+    if (session.delayUntil > 0 && millis() < session.delayUntil) {
+        return;
+    }
+    // Delay period finished, reset it and deal next hand
+    if (session.delayUntil > 0) {
+        session.delayUntil = 0;
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
+        return;
+    }
     
     // Validate bet
     if (betAmount < 0) {
@@ -6126,9 +6143,11 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("Double Ace! You WIN " + String(winnings) + "gp!");
         globalHighLowPot -= winnings;
         if (globalHighLowPot < 50) globalHighLowPot = 50;
+        savePlayerToFS(p);
         
-        // 2 second delay before next round
-        delay(2000);
+        // Non-blocking delay before next round
+        session.delayUntil = millis() + 2000;
+        return;
     }
     // Check for post hit (3rd card equals one of first two)
     else if (card3Value == session.card1Value || card3Value == session.card2Value) {
@@ -6143,9 +6162,11 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("You hit a Post!");
         p.client.println("You LOSE " + String(loss) + "gp!");
         globalHighLowPot += loss;
+        savePlayerToFS(p);
         
-        // 2 second delay before next round
-        delay(2000);
+        // Non-blocking delay before next round
+        session.delayUntil = millis() + 2000;
+        return;
     }
     // Check for win (card inside range)
     else if (card3Value > minValue && card3Value < maxValue) {
@@ -6160,9 +6181,6 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         // If pot goes below 50, reset to default
         if (globalHighLowPot < 50) globalHighLowPot = 50;
         
-        // 2 second delay before ending game
-        delay(2000);
-        
         // Game always ends on a win
         savePlayerToFS(p);
         endHighLowGame(p, playerIndex);
@@ -6174,17 +6192,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.coins -= betAmount;
         p.client.println("You LOSE " + String(betAmount) + "gp!");
         globalHighLowPot += betAmount;
+        savePlayerToFS(p);
         
-        // 2 second delay before next round
-        delay(2000);
+        // Non-blocking delay before next round
+        session.delayUntil = millis() + 2000;
+        return;
     }
-    
-    // Save player
-    savePlayerToFS(p);
-    
-    // Deal next hand
-    p.client.println("");
-    dealHighLowHand(p, playerIndex);
 }
 
 void declareAceValue(Player &p, int playerIndex, int aceValue) {
