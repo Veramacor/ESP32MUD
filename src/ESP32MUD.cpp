@@ -119,7 +119,6 @@ struct HighLowSession {
     bool gameActive;             // true if player is actively playing
     bool awaitingAceDeclaration; // waiting for player to declare Ace high/low
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
-    unsigned long delayUntil;    // millis() timestamp for non-blocking delay
 };
 
 // Letter system for mail retrieval
@@ -5956,7 +5955,6 @@ void initializeHighLowSession(int playerIndex) {
     // Note: pot is now global (globalHighLowPot), not per-player
     session.gameActive = false;
     session.awaitingAceDeclaration = false;
-    session.delayUntil = 0;
     
     // Create 104-card deck (double deck)
     for (int suit = 0; suit < 4; suit++) {
@@ -5998,13 +5996,6 @@ void initializeHighLowSession(int playerIndex) {
 void dealHighLowHand(Player &p, int playerIndex) {
     HighLowSession &session = highLowSessions[playerIndex];
     
-    // Check if we're in a delay period - if so, ignore and return
-    if (session.delayUntil > 0 && millis() < session.delayUntil) {
-        return;
-    }
-    // Delay period finished, reset it
-    session.delayUntil = 0;
-    
     // Reset deck if less than 3 cards
     if (session.deck.size() < 3) {
         initializeHighLowSession(playerIndex);
@@ -6042,10 +6033,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // Non-blocking delay - ignore further input for 2 seconds
-        session.delayUntil = millis() + 2000;
-        
-        // Deal new hand immediately
+        // Deal new hand
         p.client.println("");
         dealHighLowHand(p, playerIndex);
         return;
@@ -6068,18 +6056,6 @@ void dealHighLowHand(Player &p, int playerIndex) {
 
 void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     HighLowSession &session = highLowSessions[playerIndex];
-    
-    // Check if we're in a delay period - if so, ignore and return
-    if (session.delayUntil > 0 && millis() < session.delayUntil) {
-        return;
-    }
-    // Delay period finished, reset it and deal next hand
-    if (session.delayUntil > 0) {
-        session.delayUntil = 0;
-        p.client.println("");
-        dealHighLowHand(p, playerIndex);
-        return;
-    }
     
     // Validate bet
     if (betAmount < 0) {
@@ -6149,9 +6125,6 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         if (globalHighLowPot < 50) globalHighLowPot = 50;
         savePlayerToFS(p);
         
-        // Non-blocking delay - ignore further input for 2 seconds
-        session.delayUntil = millis() + 2000;
-        
         // Deal next hand immediately
         p.client.println("");
         dealHighLowHand(p, playerIndex);
@@ -6171,9 +6144,6 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("You LOSE " + String(loss) + "gp!");
         globalHighLowPot += loss;
         savePlayerToFS(p);
-        
-        // Non-blocking delay - ignore further input for 2 seconds
-        session.delayUntil = millis() + 2000;
         
         // Deal next hand immediately
         p.client.println("");
@@ -6205,9 +6175,6 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.client.println("You LOSE " + String(betAmount) + "gp!");
         globalHighLowPot += betAmount;
         savePlayerToFS(p);
-        
-        // Non-blocking delay - ignore further input for 2 seconds
-        session.delayUntil = millis() + 2000;
         
         // Deal next hand immediately
         p.client.println("");
