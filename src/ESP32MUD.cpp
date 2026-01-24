@@ -6096,10 +6096,10 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     
     if (aceValue == 1) {
         session.card1Value = 1;  // Ace is low
-        p.client.println("Ace is LOW (value 1).");
+        p.client.println("Ace is LOW.");
     } else if (aceValue == 2) {
         session.card1Value = 14;  // Ace is high
-        p.client.println("Ace is HIGH (value 14).");
+        p.client.println("Ace is HIGH.");
     } else {
         p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
         return;
@@ -6108,7 +6108,8 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     // If second card is also Ace, set it to opposite
     if (session.card2.isAce) {
         session.card2Value = (session.card1Value == 1) ? 14 : 1;
-        p.client.println("Second card is also an Ace - automatically set to " + String(session.card2Value) + ".");
+        String highOrLow = (session.card2Value == 1) ? "LOW" : "HIGH";
+        p.client.println("Second card is also an Ace - automatically set to " + highOrLow + ".");
     }
     
     session.awaitingAceDeclaration = false;
