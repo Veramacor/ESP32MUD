@@ -5863,17 +5863,22 @@ String renderCard(const Card &card) {
     String rank = card.isAce ? "A" : ranks[card.value];
     String suit = suitSymbols[card.suit];
     
-    // Build padding: card width is 8, need (8 - rank.length()) spaces
-    int padSpaces = 8 - rank.length();
-    String padding = "";
-    for (int i = 0; i < padSpaces; i++) {
-        padding += " ";
+    // Card interior is 8 chars wide. Top-left rank + padding to fill 8 chars
+    // Bottom-right: padding + rank to fill 8 chars
+    String topPad, bottomPad;
+    
+    if (rank == "10") {
+        topPad = "      ";      // 10 = 2 chars, needs 6 spaces
+        bottomPad = "      ";   // 6 spaces before rank
+    } else {
+        topPad = "       ";     // Single char, needs 7 spaces
+        bottomPad = "       ";  // 7 spaces before rank
     }
     
     String result = "┌────────┐\n";
-    result += "│" + rank + padding + "│\n";
+    result += "│" + rank + topPad + "│\n";
     result += "│    " + suit + "   │\n";
-    result += "│" + padding + rank + "│\n";
+    result += "│" + bottomPad + rank + "│\n";
     result += "└────────┘";
     
     return result;
@@ -5887,18 +5892,17 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
     auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
     
-    auto buildPadding = [](const String &rank) -> String {
-        int padSpaces = 8 - rank.length();
-        String padding = "";
-        for (int i = 0; i < padSpaces; i++) {
-            padding += " ";
+    auto getPadding = [](const String &rank) -> String {
+        if (rank == "10") {
+            return "      ";  // 6 spaces for "10"
+        } else {
+            return "       ";  // 7 spaces for single char
         }
-        return padding;
     };
     
-    String r1 = getRank(card1), s1 = getSuit(card1), p1 = buildPadding(r1);
-    String r2 = getRank(card2), s2 = getSuit(card2), p2 = buildPadding(r2);
-    String r3 = getRank(card3), s3 = getSuit(card3), p3 = buildPadding(r3);
+    String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
+    String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
+    String r3 = getRank(card3), s3 = getSuit(card3), p3 = getPadding(r3);
     
     // Top row: 1st and 2nd cards with 6 spaces between
     p.client.println("┌────────┐      ┌────────┐");
