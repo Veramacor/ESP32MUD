@@ -5864,14 +5864,37 @@ String renderCard(const Card &card) {
     String rank = card.isAce ? "A" : ranks[card.value];
     String suit = suitSymbols[card.suit];
     
-    // Handle spacing: "10" needs less padding
-    String topPadding = (rank == "10") ? "       " : "        ";
-    String bottomPadding = (rank == "10") ? "       " : "        ";
+    // Calculate visual width of rank string (accounting for UTF-8 multi-byte characters)
+    auto visualWidth = [](const String &s) -> int {
+        int width = 0;
+        for (size_t i = 0; i < s.length(); i++) {
+            unsigned char c = s[i];
+            if ((c & 0xC0) != 0x80) width++;
+        }
+        return width;
+    };
+    
+    // For rank: rank is 1 or 2 chars visual width, needs padding to 9 total
+    // For suit: suit is 1 visual char (unicode), needs padding around it
+    int rankVisualLen = visualWidth(rank);
+    int byteLen = rank.length();  // This is how many bytes the rank takes
+    int padNeeded = 9 - rankVisualLen;  // 9 is the card width (11 chars - 2 borders)
+    
+    // Build padding strings
+    String topPadding = "";
+    String bottomPadding = "";
+    for (int i = 0; i < padNeeded; i++) {
+        topPadding += " ";
+        bottomPadding += " ";
+    }
+    // For rank displayed at top-right, put spaces before it
+    String topRankPadding = String(padNeeded, ' ');
+    String bottomRankPadding = topRankPadding;
     
     String result = "┌─────────┐\n";
-    result += "│" + rank + topPadding + "│\n";
+    result += "│" + rank + topRankPadding + "│\n";
     result += "│    " + suit + "    │\n";
-    result += "│" + bottomPadding + rank + "│\n";
+    result += "│" + bottomRankPadding + rank + "│\n";
     result += "└─────────┘";
     
     return result;
@@ -5884,7 +5907,22 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     
     auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
     auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
-    auto getPadding = [](const String &rank) { return (rank == "10") ? "       " : "        "; };
+    
+    // Calculate visual width of a string (UTF-8 safe)
+    auto visualWidth = [](const String &s) -> int {
+        int width = 0;
+        for (size_t i = 0; i < s.length(); i++) {
+            unsigned char c = s[i];
+            if ((c & 0xC0) != 0x80) width++;
+        }
+        return width;
+    };
+    
+    auto getPadding = [&](const String &rank) -> String {
+        int rankVisualLen = visualWidth(rank);
+        int padNeeded = 9 - rankVisualLen;
+        return String(padNeeded, ' ');
+    };
     
     String r1 = getRank(card1), s1 = getSuit(card1), p1top = getPadding(r1), p1bot = getPadding(r1);
     String r2 = getRank(card2), s2 = getSuit(card2), p2top = getPadding(r2), p2bot = getPadding(r2);
