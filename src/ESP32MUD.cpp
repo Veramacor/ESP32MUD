@@ -5877,7 +5877,7 @@ String renderCard(const Card &card) {
     return result;
 }
 
-// Render 3 cards side by side
+// Render 3 cards: first 2 on top row, 3rd card centered below
 void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
@@ -5890,16 +5890,20 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     String r2 = getRank(card2), s2 = getSuit(card2), p2top = getPadding(r2), p2bot = getPadding(r2);
     String r3 = getRank(card3), s3 = getSuit(card3), p3top = getPadding(r3), p3bot = getPadding(r3);
     
-    // Top border
-    p.client.println("┌─────────┐ ┌─────────┐ ┌─────────┐");
-    // Rank top
-    p.client.println("│" + r1 + p1top + "│ │" + r2 + p2top + "│ │" + r3 + p3top + "│");
-    // Suit
-    p.client.println("│    " + s1 + "    │ │    " + s2 + "    │ │    " + s3 + "    │");
-    // Rank bottom
-    p.client.println("│" + p1bot + r1 + "│ │" + p2bot + r2 + "│ │" + p3bot + r3 + "│");
-    // Bottom border
-    p.client.println("└─────────┘ └─────────┘ └─────────┘");
+    // Top row: 1st and 2nd cards
+    p.client.println("┌─────────┐          ┌─────────┐");
+    p.client.println("│" + r1 + p1top + "│          │" + r2 + p2top + "│");
+    p.client.println("│    " + s1 + "    │          │    " + s2 + "    │");
+    p.client.println("│" + p1bot + r1 + "│          │" + p2bot + r2 + "│");
+    p.client.println("└─────────┘          └─────────┘");
+    
+    // Bottom row: 3rd card centered
+    p.client.println("");
+    p.client.println("        ┌─────────┐");
+    p.client.println("        │" + r3 + p3top + "│");
+    p.client.println("        │    " + s3 + "    │");
+    p.client.println("        │" + p3bot + r3 + "│");
+    p.client.println("        └─────────┘");
 }
 
 void initializeHighLowSession(int playerIndex) {
