@@ -5990,8 +5990,10 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         return;
     }
     
-    if (betAmount > session.pot / 2) {
-        p.client.println("You cannot bet more than half the pot (" + String(session.pot / 2) + "gp).");
+    // Player must have enough to cover 2x the bet (worst case: POST loss)
+    if (betAmount > p.coins / 2) {
+        p.client.println("You can't afford to lose double! You can only bet up to " + String(p.coins / 2) + "gp.");
+        p.client.println("Enter bet amount, 'pot' or 'end':");
         return;
     }
     
@@ -6052,10 +6054,18 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
     }
     // Check for win (card inside range)
     else if (card3Value > minValue && card3Value < maxValue) {
-        // WIN
-        p.coins += betAmount;
-        p.client.println("You WIN " + String(betAmount) + "gp!");
-        session.pot -= betAmount;
+        // WIN - player wins the pot!
+        // If bet is >= pot, they win the whole pot
+        int winAmount = (betAmount >= session.pot) ? session.pot : betAmount;
+        p.coins += winAmount;
+        p.client.println("You WIN the POT! The game is over!");
+        p.client.println("You WIN " + String(winAmount) + "gp!");
+        session.pot -= winAmount;
+        
+        // Game always ends on a win
+        savePlayerToFS(p);
+        endHighLowGame(p, playerIndex);
+        return;
     }
     // Otherwise lose (card outside range)
     else {
