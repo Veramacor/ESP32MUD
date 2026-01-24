@@ -105,6 +105,22 @@ struct PostOffice {
     String postOfficeName;    // e.g., "The Post Office"
 };
 
+// High-Low card game structures
+struct Card {
+    int value;          // 2-13 (2-10 are numeric, 11=Jack, 12=Queen, 13=King)
+    int suit;           // 0=Hearts, 1=Spades, 2=Diamonds, 3=Clubs (flavor only)
+    bool isAce;         // true if value is Ace (1 or 14 depending on declaration)
+};
+
+struct HighLowSession {
+    std::vector<Card> deck;      // 104-card deck (double deck)
+    int pot;                     // current pot amount
+    Card card1, card2, card3;    // current hand
+    int card1Value, card2Value;  // may differ from card.value if Ace is involved
+    bool gameActive;             // true if player is actively playing
+    bool awaitingAceDeclaration; // waiting for player to declare Ace high/low
+};
+
 // Letter system for mail retrieval
 struct Letter {
     String to;               // recipient email
@@ -123,7 +139,6 @@ bool warned5sec  = false;
 
 
 
-
 unsigned long lastShopRestock = 0;
 
 // Global shops vector
@@ -134,6 +149,9 @@ std::vector<Tavern> taverns;
 
 // Global post office vector
 std::vector<PostOffice> postOffices;
+
+// High-Low game sessions (one per player)
+HighLowSession highLowSessions[MAX_PLAYERS];
 
 bool g_inYmodem = false;
 
@@ -325,6 +343,15 @@ void initializePostOffices();
 void cmdSend(Player &p, const String &input);
 void cmdSendMail(Player &p, const String &input);
 void showPostOfficeSign(Player &p, PostOffice &po);
+
+// High-Low card game functions
+void initializeHighLowSession(int playerIndex);
+void startHighLowGame(Player &p, int playerIndex);
+void dealHighLowHand(Player &p, int playerIndex);
+void processHighLowBet(Player &p, int playerIndex, int betAmount);
+void declareAceValue(Player &p, int playerIndex, int aceValue);
+void endHighLowGame(Player &p, int playerIndex);
+String getCardName(const Card &card);
 bool checkAndSpawnMailLetters(Player &p);  // Returns true if mail was found and letters spawned
 bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters);
 String extractPlayerNameFromEmail(const String &emailBody);
@@ -1711,50 +1738,6 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
 
 
 bool loadRoomForPlayer(Player &p, int x, int y, int z) {
-  // Check for hardcoded Game Parlor room
-  if (x == 247 && y == 248 && z == 50) {
-    Room r;
-    r.x = 247;
-    r.y = 248;
-    r.z = 50;
-    strncpy(r.name, "The Game Parlor", sizeof(r.name) - 1);
-    r.name[sizeof(r.name) - 1] = '\0';
-    strncpy(r.description, "A colorful parlor filled with tables for games. Players gather to test their luck and skill against each other.", sizeof(r.description) - 1);
-    r.description[sizeof(r.description) - 1] = '\0';
-    r.exit_n = 1;  // north
-    r.exit_s = 1;  // south
-    r.exit_e = 1;  // east
-    r.exit_w = 1;  // west
-    r.exit_ne = 0;
-    r.exit_nw = 0;
-    r.exit_se = 0;
-    r.exit_sw = 0;
-    r.exit_u = 0;
-    r.exit_d = 0;
-    r.hasPortal = false;
-    r.exitList = "north, south, east, west";
-    
-    p.currentRoom = r;
-    p.roomX = r.x;
-    p.roomY = r.y;
-    p.roomZ = r.z;
-    
-    uint64_t voxelKey = packVoxelKey(x, y, z);
-    bool alreadyVisited = false;
-    for (const auto &visited : p.visitedVoxels) {
-      if (visited.x == x && visited.y == y && visited.z == z) {
-        alreadyVisited = true;
-        break;
-      }
-    }
-    
-    if (!alreadyVisited && p.visitedVoxels.size() < Player::MAX_VISITED_VOXELS) {
-      p.visitedVoxels.push_back({x, y, z});
-    }
-    
-    return true;
-  }
-
   VoxelResult vr = FindVoxel(x, y, z);
   if (vr.line == "NOT_FOUND") {
     return false;
@@ -4539,6 +4522,16 @@ void cmdLook(Player &p) {
         p.client.println("A sign is here.");
     }
     
+    // Check if this room has a tavern - if so, add sign description
+    if (getTavernForRoom(p) != nullptr) {
+        p.client.println("A sign is here.");
+    }
+    
+    // Check if this is the Game Parlor
+    if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
+        p.client.println("A sign is here.");
+    }
+    
     p.client.println("");  // blank line
 
     // Other players in the room
@@ -5326,6 +5319,21 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    // Check if this is the Game Parlor
+    if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
+        p.client.println("===== GAME PARLOR GAMES =====");
+        p.client.println("1. High-Low Card Game - Test your luck!");
+        p.client.println("   Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
+        p.client.println("   - WIN: 3rd card is INSIDE range [min, max]");
+        p.client.println("   - LOSE: 3rd card is OUTSIDE range");
+        p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
+        p.client.println("   - Bet with: pot or any amount up to half the pot");
+        p.client.println("   - Minimum bet: 10gp");
+        p.client.println("Type 'play 1' to play!");
+        p.client.println("=============================");
+        return;
+    }
+    
     // Check if there's a shop in this room
     Shop* shop = getShopForRoom(p);
     if (!shop) {
@@ -5823,6 +5831,300 @@ void cmdSendMail(Player &p, const String &input) {
     } else {
         p.client.println("The Postal Clerk says: \"Our services are unavailable today. the scribe runner is sick!\"");
     }
+}
+
+// =============================
+// High-Low Card Game System
+// =============================
+
+String getCardName(const Card &card) {
+    String suits[] = {"Hearts", "Spades", "Diamonds", "Clubs"};
+    String names[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "Jack", "Queen", "King"};
+    
+    if (card.isAce) {
+        return "Ace of " + suits[card.suit];
+    }
+    return names[card.value] + " of " + suits[card.suit];
+}
+
+void initializeHighLowSession(int playerIndex) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    session.deck.clear();
+    session.pot = 50;  // Start with 50gp pot
+    session.gameActive = false;
+    session.awaitingAceDeclaration = false;
+    
+    // Create 104-card deck (double deck)
+    for (int suit = 0; suit < 4; suit++) {
+        for (int deck_num = 0; deck_num < 2; deck_num++) {
+            // Add cards 2-10
+            for (int value = 2; value <= 10; value++) {
+                Card c;
+                c.value = value;
+                c.suit = suit;
+                c.isAce = false;
+                session.deck.push_back(c);
+            }
+            // Add Jack, Queen, King, Ace
+            for (int value = 11; value <= 13; value++) {
+                Card c;
+                c.value = value;
+                c.suit = suit;
+                c.isAce = false;
+                session.deck.push_back(c);
+            }
+            // Add Ace (separate flag)
+            Card ace;
+            ace.value = 1;  // default low
+            ace.suit = suit;
+            ace.isAce = true;
+            session.deck.push_back(ace);
+        }
+    }
+    
+    // Shuffle the deck
+    for (int i = session.deck.size() - 1; i > 0; i--) {
+        int j = random(0, i + 1);
+        Card temp = session.deck[i];
+        session.deck[i] = session.deck[j];
+        session.deck[j] = temp;
+    }
+}
+
+void dealHighLowHand(Player &p, int playerIndex) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    
+    // Reset deck if less than 3 cards
+    if (session.deck.size() < 3) {
+        initializeHighLowSession(playerIndex);
+    }
+    
+    // Deal first two cards
+    session.card1 = session.deck.back();
+    session.deck.pop_back();
+    session.card2 = session.deck.back();
+    session.deck.pop_back();
+    
+    // Set card values (handle Aces later if needed)
+    session.card1Value = session.card1.isAce ? 1 : session.card1.value;
+    session.card2Value = session.card2.isAce ? 1 : session.card2.value;
+    
+    // AUTOMATIC POST: Both cards are Aces
+    if (session.card1.isAce && session.card2.isAce) {
+        p.client.println("");
+        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("your first card is: " + getCardName(session.card1));
+        p.client.println("Second card is: " + getCardName(session.card2));
+        p.client.println("");
+        p.client.println("DOUBLE ACE - AUTOMATIC POST!");
+        
+        // Player loses double the pot
+        int loss = session.pot * 2;
+        if (p.coins < loss) {
+            p.client.println("You don't have enough gold to cover the loss! Game over.");
+            endHighLowGame(p, playerIndex);
+            return;
+        }
+        p.coins -= loss;
+        p.client.println("You LOSE " + String(loss) + "gp! (double the pot)");
+        session.pot += loss;
+        savePlayerToFS(p);
+        
+        // Deal new hand
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
+        return;
+    }
+    
+    // Check if first card is an Ace
+    if (session.card1.isAce) {
+        session.awaitingAceDeclaration = true;
+        p.client.println("");
+        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("your first card is: " + getCardName(session.card1));
+        p.client.println("");
+        p.client.println("High or Low?  Enter '1' for High and '2' for Low");
+        return;
+    }
+    
+    // Check if second card is an Ace
+    if (session.card2.isAce) {
+        session.awaitingAceDeclaration = true;
+        p.client.println("");
+        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("your first card is: " + getCardName(session.card1));
+        p.client.println("Second card is: " + getCardName(session.card2));
+        p.client.println("");
+        p.client.println("High or Low?  Enter '1' for High and '2' for Low");
+        return;
+    }
+    
+    // No Aces - ready for betting
+    session.awaitingAceDeclaration = false;
+    p.client.println("");
+    p.client.println("Pot is at " + String(session.pot) + "gp.");
+    p.client.println("your first card is: " + getCardName(session.card1));
+    p.client.println("Second card is: " + getCardName(session.card2));
+    p.client.println("");
+    p.client.println("Enter bet amount, 'pot' or 'end':");
+}
+
+void processHighLowBet(Player &p, int playerIndex, int betAmount) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    
+    // Validate bet
+    if (betAmount < 0) {
+        p.client.println("Invalid bet amount.");
+        return;
+    }
+    
+    // Check minimum bet of 10gp (no passing with 0 anymore)
+    if (betAmount < 10) {
+        p.client.println("Your bet is too low. Minimum bet is 10gp.");
+        p.client.println("Enter bet amount, 'pot' or 'end':");
+        return;
+    }
+    
+    if (betAmount > p.coins) {
+        p.client.println("You don't have that much gold!");
+        return;
+    }
+    
+    if (betAmount > session.pot / 2) {
+        p.client.println("You cannot bet more than half the pot (" + String(session.pot / 2) + "gp).");
+        return;
+    }
+    
+    // Deal third card
+    if (session.deck.size() < 1) {
+        initializeHighLowSession(playerIndex);
+    }
+    
+    session.card3 = session.deck.back();
+    session.deck.pop_back();
+    
+    p.client.println("Third card is " + getCardName(session.card3) + ". ");
+    
+    // Determine win/loss
+    int minValue = min(session.card1Value, session.card2Value);
+    int maxValue = max(session.card1Value, session.card2Value);
+    
+    // Determine 3rd card value
+    int card3Value;
+    if (session.card3.isAce) {
+        // If either first or second card is an Ace, 3rd Ace is a WIN
+        if (session.card1.isAce || session.card2.isAce) {
+            card3Value = -1;  // Flag for automatic win
+        } else {
+            // 3rd card Ace should be valued as 1 or 14 based on what's optimal
+            // Default to 1 (low) unless that makes it outside range
+            card3Value = 1;
+            if (card3Value < minValue || card3Value > maxValue) {
+                card3Value = 14;  // Try high instead
+            }
+        }
+    } else {
+        card3Value = session.card3.value;
+    }
+    
+    // Check for automatic win (3rd Ace when first or second is also Ace)
+    if (card3Value == -1) {
+        // WIN - double Ace is automatic win!
+        int winnings = betAmount;
+        p.coins += winnings;
+        p.client.println("Double Ace! You WIN " + String(winnings) + "gp!");
+        session.pot -= winnings;
+        if (session.pot < 50) session.pot = 50;
+    }
+    // Check for post hit (3rd card equals one of first two)
+    else if (card3Value == session.card1Value || card3Value == session.card2Value) {
+        // POST HIT - player loses double
+        int loss = betAmount * 2;
+        if (p.coins < loss) {
+            p.client.println("You don't have enough to cover double! Game over.");
+            endHighLowGame(p, playerIndex);
+            return;
+        }
+        p.coins -= loss;
+        p.client.println("You hit a Post! you pay double the pot!");
+        p.client.println("You LOSE " + String(loss) + "gp!");
+        session.pot += loss;
+    }
+    // Check for win (card inside range)
+    else if (card3Value > minValue && card3Value < maxValue) {
+        // WIN
+        p.coins += betAmount;
+        p.client.println("You WIN " + String(betAmount) + "gp!");
+        session.pot -= betAmount;
+    }
+    // Otherwise lose (card outside range)
+    else {
+        // LOSE
+        p.coins -= betAmount;
+        p.client.println("You LOSE " + String(betAmount) + "gp!");
+        session.pot += betAmount;
+    }
+    
+    // Save player
+    savePlayerToFS(p);
+    
+    // Deal next hand
+    p.client.println("");
+    dealHighLowHand(p, playerIndex);
+}
+
+void declareAceValue(Player &p, int playerIndex, int aceValue) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    
+    if (aceValue == 1) {
+        session.card1Value = 1;  // Ace is low
+        p.client.println("Ace is LOW (value 1).");
+    } else if (aceValue == 2) {
+        session.card1Value = 14;  // Ace is high
+        p.client.println("Ace is HIGH (value 14).");
+    } else {
+        p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
+        return;
+    }
+    
+    // If second card is also Ace, set it to opposite
+    if (session.card2.isAce) {
+        session.card2Value = (session.card1Value == 1) ? 14 : 1;
+        p.client.println("Second card is also an Ace - automatically set to " + String(session.card2Value) + ".");
+    }
+    
+    session.awaitingAceDeclaration = false;
+    
+    // Ready for betting
+    p.client.println("");
+    p.client.println("Pot is at " + String(session.pot) + "gp.");
+    p.client.println("your first card is: " + getCardName(session.card1));
+    p.client.println("Second card is: " + getCardName(session.card2));
+    p.client.println("");
+    p.client.println("Enter bet amount, 'pot' or 'end':");
+}
+
+void endHighLowGame(Player &p, int playerIndex) {
+    HighLowSession &session = highLowSessions[playerIndex];
+    
+    session.gameActive = false;
+    session.awaitingAceDeclaration = false;
+    p.client.println("");
+    p.client.println("Game ended.");
+    p.client.println("");
+    
+    // Show the Game Parlor sign
+    p.client.println("===== GAME PARLOR GAMES =====");
+    p.client.println("1. High-Low Card Game - Test your luck!");
+    p.client.println("   Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
+    p.client.println("   - WIN: 3rd card is INSIDE range [min, max]");
+    p.client.println("   - LOSE: 3rd card is OUTSIDE range");
+    p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
+    p.client.println("   - Bet with: pot, 0, or any amount up to half the pot");
+    p.client.println("   - Minimum bet: 10gp");
+    p.client.println("Type 'play 1' to play!");
+    p.client.println("=============================");
+    p.client.println("");
 }
 
 // =============================
@@ -12315,6 +12617,58 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
 // -----------------------------------------
+// GAME PARLOR: HIGH-LOW CARD GAME
+// -----------------------------------------
+    if (cmd == "play") {
+        // Check if player is in Game Parlor
+        if (!(p.roomX == 247 && p.roomY == 248 && p.roomZ == 50)) {
+            p.client.println("You can only play in the Game Parlor!");
+            return;
+        }
+        
+        // If no game specified, show available games
+        if (args.length() == 0) {
+            p.client.println("Available games:");
+            p.client.println("  1. High-Low Card Game (bet on whether 3rd card is inside/outside range)");
+            p.client.println("Usage: play 1");
+            return;
+        }
+        
+        // Find the player index
+        int playerIndex = -1;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (&players[i] == &p) {
+                playerIndex = i;
+                break;
+            }
+        }
+        
+        if (playerIndex == -1) {
+            p.client.println("Error: Could not find player index.");
+            return;
+        }
+        
+        int gameNum = args.toInt();
+        
+        // Game 1: High-Low
+        if (gameNum == 1) {
+            HighLowSession &session = highLowSessions[playerIndex];
+            
+            // If not playing, start a new game
+            if (!session.gameActive) {
+                initializeHighLowSession(playerIndex);
+                session.gameActive = true;
+                dealHighLowHand(p, playerIndex);
+            } else {
+                p.client.println("You are already in a game. Use commands like a number or 'pot' to bet.");
+            }
+        } else {
+            p.client.println("Unknown game number. Use 'play' to see available games.");
+        }
+        return;
+    }
+
+// -----------------------------------------
 // EQUIPMENT: WEAR / REMOVE / WIELD / UNWIELD
 // -----------------------------------------
     if (cmd == "wear") {
@@ -13239,6 +13593,61 @@ if (cmd == "debug") {
         if (e >= 0) {
             executeEmote(p, index, cmd, args);
             return;
+        }
+    }
+
+// -----------------------------------------
+// HIGH-LOW GAME INPUT PROCESSING
+// -----------------------------------------
+    // Check if player is in an active High-Low game session
+    int playerIndex = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (&players[i] == &p) {
+            playerIndex = i;
+            break;
+        }
+    }
+    
+    if (playerIndex >= 0 && highLowSessions[playerIndex].gameActive) {
+        HighLowSession &session = highLowSessions[playerIndex];
+        
+        // Check if awaiting Ace declaration
+        if (session.awaitingAceDeclaration) {
+            if (cmd == "1") {
+                declareAceValue(p, playerIndex, 1);  // Low
+                return;
+            } else if (cmd == "2") {
+                declareAceValue(p, playerIndex, 2);  // High
+                return;
+            } else if (cmd == "end") {
+                endHighLowGame(p, playerIndex);
+                return;
+            }
+        } else {
+            // Process betting input
+            if (cmd == "end") {
+                endHighLowGame(p, playerIndex);
+                return;
+            } else if (cmd == "pot") {
+                // Bet the entire pot
+                int potBet = session.pot;
+                if (p.coins < potBet * 2) {
+                    // Need double the pot to cover possible losses
+                    p.client.println("You need " + String(potBet * 2) + "gp to bet the pot!");
+                    p.client.println("Enter bet amount, 'pot' or 'end':");
+                    return;
+                }
+                processHighLowBet(p, playerIndex, potBet);
+                return;
+            } else {
+                // Try to parse as a number (bet amount)
+                int bet = cmd.toInt();
+                if (bet > 0 || cmd == "0") {
+                    // Valid numeric bet or pass (0)
+                    processHighLowBet(p, playerIndex, bet);
+                    return;
+                }
+            }
         }
     }
 

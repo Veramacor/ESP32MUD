@@ -5,6 +5,6 @@
 
 #define ESP32MUD_VERSION "26.01.23"
 #define COMPILE_DATE "Jan 23 2026"
-#define COMPILE_TIME "19:21:29"
+#define COMPILE_TIME "21:19:08"
 
 #endif // VERSION_H
