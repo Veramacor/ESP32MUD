@@ -5855,8 +5855,7 @@ String getCardName(const Card &card) {
     return names[card.value] + " of " + suits[card.suit];
 }
 
-// Render card as ASCII art (4 lines: top border, rank+suit, rank+suit, bottom border)
-// Returns a string with newlines for card display
+// Render card as ASCII art with hard-coded spacing
 String renderCard(const Card &card) {
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
@@ -5864,31 +5863,18 @@ String renderCard(const Card &card) {
     String rank = card.isAce ? "A" : ranks[card.value];
     String suit = suitSymbols[card.suit];
     
-    // Calculate visual width of a string (accounting for UTF-8 multi-byte characters)
-    auto visualWidth = [](const String &s) -> int {
-        int width = 0;
-        for (size_t i = 0; i < s.length(); i++) {
-            unsigned char c = s[i];
-            if ((c & 0xC0) != 0x80) width++;
-        }
-        return width;
-    };
-    
-    // Rank needs 9 visual spaces total (11 chars - 2 borders)
-    int rankVisualLen = visualWidth(rank);
-    int padNeeded = 9 - rankVisualLen;
-    
-    // Build padding string
+    // Build padding: card width is 8, need (8 - rank.length()) spaces
+    int padSpaces = 8 - rank.length();
     String padding = "";
-    for (int i = 0; i < padNeeded; i++) {
+    for (int i = 0; i < padSpaces; i++) {
         padding += " ";
     }
     
-    String result = "┌─────────┐\n";
+    String result = "┌────────┐\n";
     result += "│" + rank + padding + "│\n";
-    result += "│    " + suit + "    │\n";
+    result += "│    " + suit + "   │\n";
     result += "│" + padding + rank + "│\n";
-    result += "└─────────┘";
+    result += "└────────┘";
     
     return result;
 }
@@ -5901,21 +5887,10 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
     auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
     
-    // Calculate visual width of a string (UTF-8 safe)
-    auto visualWidth = [](const String &s) -> int {
-        int width = 0;
-        for (size_t i = 0; i < s.length(); i++) {
-            unsigned char c = s[i];
-            if ((c & 0xC0) != 0x80) width++;
-        }
-        return width;
-    };
-    
-    auto buildPadding = [&](const String &rank) -> String {
-        int rankVisualLen = visualWidth(rank);
-        int padNeeded = 9 - rankVisualLen;
+    auto buildPadding = [](const String &rank) -> String {
+        int padSpaces = 8 - rank.length();
         String padding = "";
-        for (int i = 0; i < padNeeded; i++) {
+        for (int i = 0; i < padSpaces; i++) {
             padding += " ";
         }
         return padding;
@@ -5925,20 +5900,20 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     String r2 = getRank(card2), s2 = getSuit(card2), p2 = buildPadding(r2);
     String r3 = getRank(card3), s3 = getSuit(card3), p3 = buildPadding(r3);
     
-    // Top row: 1st and 2nd cards
-    p.client.println("┌─────────┐          ┌─────────┐");
-    p.client.println("│" + r1 + p1 + "│          │" + r2 + p2 + "│");
-    p.client.println("│    " + s1 + "    │          │    " + s2 + "    │");
-    p.client.println("│" + p1 + r1 + "│          │" + p2 + r2 + "│");
-    p.client.println("└─────────┘          └─────────┘");
+    // Top row: 1st and 2nd cards with 6 spaces between
+    p.client.println("┌────────┐      ┌────────┐");
+    p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
+    p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
+    p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
+    p.client.println("└────────┘      └────────┘");
     
-    // Bottom row: 3rd card centered
+    // Bottom row: 3rd card centered with 8 space indent
     p.client.println("");
-    p.client.println("        ┌─────────┐");
+    p.client.println("        ┌────────┐");
     p.client.println("        │" + r3 + p3 + "│");
-    p.client.println("        │    " + s3 + "    │");
+    p.client.println("        │    " + s3 + "   │");
     p.client.println("        │" + p3 + r3 + "│");
-    p.client.println("        └─────────┘");
+    p.client.println("        └────────┘");
 }
 
 void initializeHighLowSession(int playerIndex) {
