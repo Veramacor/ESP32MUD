@@ -9,3 +9,25 @@
         │    ♠   │
         │       2│
         └────────┘
+
+
+
+        YOUR print:
+
+Pot is at 50gp.
+
+1st card:
+┌────────┐
+          │Q       │
+                    │    ♠   │
+                              │       Q│
+                                        └────────┘
+
+2nd card:
+┌────────┐
+          │3       │
+                    │    ♦   │
+                              │       3│
+                                        └────────┘
+
+Enter bet amount, 'pot' or 'end':

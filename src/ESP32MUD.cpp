@@ -5855,8 +5855,8 @@ String getCardName(const Card &card) {
     return names[card.value] + " of " + suits[card.suit];
 }
 
-// Render card as ASCII art with hard-coded spacing
-String renderCard(const Card &card) {
+// Render card as ASCII art - print each line separately
+void printCard(Player &p, const Card &card) {
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
     String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
     
@@ -5875,13 +5875,11 @@ String renderCard(const Card &card) {
         bottomPad = "       ";  // 7 spaces before rank
     }
     
-    String result = "┌────────┐\n";
-    result += "│" + rank + topPad + "│\n";
-    result += "│    " + suit + "   │\n";
-    result += "│" + bottomPad + rank + "│\n";
-    result += "└────────┘";
-    
-    return result;
+    p.client.println("┌────────┐");
+    p.client.println("│" + rank + topPad + "│");
+    p.client.println("│    " + suit + "   │");
+    p.client.println("│" + bottomPad + rank + "│");
+    p.client.println("└────────┘");
 }
 
 // Render 3 cards: first 2 on top row, 3rd card centered below
@@ -5989,10 +5987,10 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // AUTOMATIC POST: Both cards are Aces
     if (session.card1.isAce && session.card2.isAce) {
         p.client.println("1st card:");
-        p.client.println(renderCard(session.card1));
+        printCard(p, session.card1);
         p.client.println("");
         p.client.println("2nd card:");
-        p.client.println(renderCard(session.card2));
+        printCard(p, session.card2);
         p.client.println("");
         p.client.println("DOUBLE ACE - AUTOMATIC POST!");
         
@@ -6016,7 +6014,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // Show 1st card
     p.client.println("1st card:");
-    p.client.println(renderCard(session.card1));
+    printCard(p, session.card1);
     p.client.println("");
     
     // Check if first card is an Ace - if so, wait for declaration
@@ -6028,7 +6026,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // Show 2nd card
     p.client.println("2nd card:");
-    p.client.println(renderCard(session.card2));
+    printCard(p, session.card2);
     p.client.println("");
     
     // Check if second card is an Ace - if so, wait for declaration
