@@ -6156,7 +6156,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         // If bet is >= pot, they win the whole pot
         int winAmount = (betAmount >= globalHighLowPot) ? globalHighLowPot : betAmount;
         p.coins += winAmount;
-        p.client.println("You WIN the POT! The game is over!");
+        
+        if (betAmount >= globalHighLowPot) {
+            p.client.println("You WIN the POT! The game is over!");
+        } else {
+            p.client.println("You WIN the hand! The game is over!");
+        }
         p.client.println("You WIN " + String(winAmount) + "gp!");
         globalHighLowPot -= winAmount;
         
