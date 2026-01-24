@@ -114,7 +114,6 @@ struct Card {
 
 struct HighLowSession {
     std::vector<Card> deck;      // 104-card deck (double deck)
-    int pot;                     // current pot amount
     Card card1, card2, card3;    // current hand
     int card1Value, card2Value;  // may differ from card.value if Ace is involved
     bool gameActive;             // true if player is actively playing
@@ -152,6 +151,9 @@ std::vector<PostOffice> postOffices;
 
 // High-Low game sessions (one per player)
 HighLowSession highLowSessions[MAX_PLAYERS];
+
+// Global High-Low pot (shared by all players)
+int globalHighLowPot = 50;
 
 bool g_inYmodem = false;
 
@@ -5322,15 +5324,7 @@ void cmdReadSign(Player &p, const String &input) {
     // Check if this is the Game Parlor
     if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
         // Find player index to get their game pot
-        int playerIndex = -1;
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            if (&players[i] == &p) {
-                playerIndex = i;
-                break;
-            }
-        }
-        
-        int potAmount = (playerIndex >= 0) ? highLowSessions[playerIndex].pot : 50;
+        int potAmount = globalHighLowPot;
         
         p.client.println("===== GAME PARLOR GAMES =====");
         p.client.println("1. High-Low Card Game - Test your luck!");
@@ -5863,7 +5857,7 @@ String getCardName(const Card &card) {
 void initializeHighLowSession(int playerIndex) {
     HighLowSession &session = highLowSessions[playerIndex];
     session.deck.clear();
-    session.pot = 50;  // Start with 50gp pot
+    // Note: pot is now global (globalHighLowPot), not per-player
     session.gameActive = false;
     session.awaitingAceDeclaration = false;
     
@@ -5925,14 +5919,14 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // AUTOMATIC POST: Both cards are Aces
     if (session.card1.isAce && session.card2.isAce) {
         p.client.println("");
-        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
         p.client.println("your first card is: " + getCardName(session.card1));
         p.client.println("Second card is: " + getCardName(session.card2));
         p.client.println("");
         p.client.println("DOUBLE ACE - AUTOMATIC POST!");
         
         // Player loses double the pot
-        int loss = session.pot * 2;
+        int loss = globalHighLowPot * 2;
         if (p.coins < loss) {
             p.client.println("You don't have enough gold to cover the loss! Game over.");
             endHighLowGame(p, playerIndex);
@@ -5940,7 +5934,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
         }
         p.coins -= loss;
         p.client.println("You LOSE " + String(loss) + "gp! (double the pot)");
-        session.pot += loss;
+        globalHighLowPot += loss;
         savePlayerToFS(p);
         
         // Deal new hand
@@ -5953,7 +5947,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     if (session.card1.isAce) {
         session.awaitingAceDeclaration = true;
         p.client.println("");
-        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
         p.client.println("your first card is: " + getCardName(session.card1));
         p.client.println("");
         p.client.println("High or Low?  Enter '1' for High and '2' for Low");
@@ -5964,7 +5958,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     if (session.card2.isAce) {
         session.awaitingAceDeclaration = true;
         p.client.println("");
-        p.client.println("Pot is at " + String(session.pot) + "gp.");
+        p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
         p.client.println("your first card is: " + getCardName(session.card1));
         p.client.println("Second card is: " + getCardName(session.card2));
         p.client.println("");
@@ -5975,7 +5969,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // No Aces - ready for betting
     session.awaitingAceDeclaration = false;
     p.client.println("");
-    p.client.println("Pot is at " + String(session.pot) + "gp.");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
     p.client.println("your first card is: " + getCardName(session.card1));
     p.client.println("Second card is: " + getCardName(session.card2));
     p.client.println("");
@@ -6048,8 +6042,8 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         int winnings = betAmount;
         p.coins += winnings;
         p.client.println("Double Ace! You WIN " + String(winnings) + "gp!");
-        session.pot -= winnings;
-        if (session.pot < 50) session.pot = 50;
+        globalHighLowPot -= winnings;
+        if (globalHighLowPot < 50) globalHighLowPot = 50;
     }
     // Check for post hit (3rd card equals one of first two)
     else if (card3Value == session.card1Value || card3Value == session.card2Value) {
@@ -6063,17 +6057,17 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         p.coins -= loss;
         p.client.println("You hit a Post! you pay double the pot!");
         p.client.println("You LOSE " + String(loss) + "gp!");
-        session.pot += loss;
+        globalHighLowPot += loss;
     }
     // Check for win (card inside range)
     else if (card3Value > minValue && card3Value < maxValue) {
         // WIN - player wins the pot!
         // If bet is >= pot, they win the whole pot
-        int winAmount = (betAmount >= session.pot) ? session.pot : betAmount;
+        int winAmount = (betAmount >= globalHighLowPot) ? globalHighLowPot : betAmount;
         p.coins += winAmount;
         p.client.println("You WIN the POT! The game is over!");
         p.client.println("You WIN " + String(winAmount) + "gp!");
-        session.pot -= winAmount;
+        globalHighLowPot -= winAmount;
         
         // Game always ends on a win
         savePlayerToFS(p);
@@ -6085,7 +6079,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         // LOSE
         p.coins -= betAmount;
         p.client.println("You LOSE " + String(betAmount) + "gp!");
-        session.pot += betAmount;
+        globalHighLowPot += betAmount;
     }
     
     // Save player
@@ -6120,7 +6114,7 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     
     // Ready for betting
     p.client.println("");
-    p.client.println("Pot is at " + String(session.pot) + "gp.");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.");
     p.client.println("your first card is: " + getCardName(session.card1));
     p.client.println("Second card is: " + getCardName(session.card2));
     p.client.println("");
@@ -6145,7 +6139,7 @@ void endHighLowGame(Player &p, int playerIndex) {
     p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
     p.client.println("   - Bet with: pot, 0, or any amount up to half the pot");
     p.client.println("   - Minimum bet: 10gp");
-    p.client.println("   - The current POT is at " + String(session.pot) + "gp");
+    p.client.println("   - The current POT is at " + String(globalHighLowPot) + "gp");
     p.client.println("");
     p.client.println("Type 'play 1' to play!");
     p.client.println("=============================");
@@ -13655,7 +13649,7 @@ if (cmd == "debug") {
                 return;
             } else if (cmd == "pot") {
                 // Bet the entire pot
-                int potBet = session.pot;
+                int potBet = globalHighLowPot;
                 if (p.coins < potBet * 2) {
                     // Need double the pot to cover possible losses
                     p.client.println("You need " + String(potBet * 2) + "gp to bet the pot!");
