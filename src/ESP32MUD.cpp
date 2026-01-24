@@ -5864,7 +5864,7 @@ String renderCard(const Card &card) {
     String rank = card.isAce ? "A" : ranks[card.value];
     String suit = suitSymbols[card.suit];
     
-    // Calculate visual width of rank string (accounting for UTF-8 multi-byte characters)
+    // Calculate visual width of a string (accounting for UTF-8 multi-byte characters)
     auto visualWidth = [](const String &s) -> int {
         int width = 0;
         for (size_t i = 0; i < s.length(); i++) {
@@ -5874,27 +5874,20 @@ String renderCard(const Card &card) {
         return width;
     };
     
-    // For rank: rank is 1 or 2 chars visual width, needs padding to 9 total
-    // For suit: suit is 1 visual char (unicode), needs padding around it
+    // Rank needs 9 visual spaces total (11 chars - 2 borders)
     int rankVisualLen = visualWidth(rank);
-    int byteLen = rank.length();  // This is how many bytes the rank takes
-    int padNeeded = 9 - rankVisualLen;  // 9 is the card width (11 chars - 2 borders)
+    int padNeeded = 9 - rankVisualLen;
     
-    // Build padding strings
-    String topPadding = "";
-    String bottomPadding = "";
+    // Build padding string
+    String padding = "";
     for (int i = 0; i < padNeeded; i++) {
-        topPadding += " ";
-        bottomPadding += " ";
+        padding += " ";
     }
-    // For rank displayed at top-right, put spaces before it
-    String topRankPadding = String(padNeeded, ' ');
-    String bottomRankPadding = topRankPadding;
     
     String result = "┌─────────┐\n";
-    result += "│" + rank + topRankPadding + "│\n";
+    result += "│" + rank + padding + "│\n";
     result += "│    " + suit + "    │\n";
-    result += "│" + bottomRankPadding + rank + "│\n";
+    result += "│" + padding + rank + "│\n";
     result += "└─────────┘";
     
     return result;
@@ -5918,29 +5911,33 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
         return width;
     };
     
-    auto getPadding = [&](const String &rank) -> String {
+    auto buildPadding = [&](const String &rank) -> String {
         int rankVisualLen = visualWidth(rank);
         int padNeeded = 9 - rankVisualLen;
-        return String(padNeeded, ' ');
+        String padding = "";
+        for (int i = 0; i < padNeeded; i++) {
+            padding += " ";
+        }
+        return padding;
     };
     
-    String r1 = getRank(card1), s1 = getSuit(card1), p1top = getPadding(r1), p1bot = getPadding(r1);
-    String r2 = getRank(card2), s2 = getSuit(card2), p2top = getPadding(r2), p2bot = getPadding(r2);
-    String r3 = getRank(card3), s3 = getSuit(card3), p3top = getPadding(r3), p3bot = getPadding(r3);
+    String r1 = getRank(card1), s1 = getSuit(card1), p1 = buildPadding(r1);
+    String r2 = getRank(card2), s2 = getSuit(card2), p2 = buildPadding(r2);
+    String r3 = getRank(card3), s3 = getSuit(card3), p3 = buildPadding(r3);
     
     // Top row: 1st and 2nd cards
     p.client.println("┌─────────┐          ┌─────────┐");
-    p.client.println("│" + r1 + p1top + "│          │" + r2 + p2top + "│");
+    p.client.println("│" + r1 + p1 + "│          │" + r2 + p2 + "│");
     p.client.println("│    " + s1 + "    │          │    " + s2 + "    │");
-    p.client.println("│" + p1bot + r1 + "│          │" + p2bot + r2 + "│");
+    p.client.println("│" + p1 + r1 + "│          │" + p2 + r2 + "│");
     p.client.println("└─────────┘          └─────────┘");
     
     // Bottom row: 3rd card centered
     p.client.println("");
     p.client.println("        ┌─────────┐");
-    p.client.println("        │" + r3 + p3top + "│");
+    p.client.println("        │" + r3 + p3 + "│");
     p.client.println("        │    " + s3 + "    │");
-    p.client.println("        │" + p3bot + r3 + "│");
+    p.client.println("        │" + p3 + r3 + "│");
     p.client.println("        └─────────┘");
 }
 
