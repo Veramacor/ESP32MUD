@@ -118,6 +118,7 @@ struct HighLowSession {
     int card1Value, card2Value;  // may differ from card.value if Ace is involved
     bool gameActive;             // true if player is actively playing
     bool awaitingAceDeclaration; // waiting for player to declare Ace high/low
+    int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
 };
 
 // Letter system for mail retrieval
@@ -12249,7 +12250,20 @@ void debugPrint(Player &p, const String &msg) {
 // =============================
 void handleCommand(Player &p, int index, const String &rawLine) {
     // -----------------------------------------
+    // Check if player left the game room (end game if so)
+    // -----------------------------------------
+    if (index >= 0 && index < MAX_PLAYERS && highLowSessions[index].gameActive) {
+        if (p.roomX != highLowSessions[index].gameRoomX || 
+            p.roomY != highLowSessions[index].gameRoomY || 
+            p.roomZ != highLowSessions[index].gameRoomZ) {
+            // Player moved out of the game room - end game
+            endHighLowGame(p, index);
+            p.client.println("Your High-Low game has ended because you left the room.");
+            p.client.println("");
+        }
+    }
 
+    // -----------------------------------------
     // Clean and split input
     // -----------------------------------------
     String line = cleanInput(rawLine);
@@ -12677,6 +12691,9 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             if (!session.gameActive) {
                 initializeHighLowSession(playerIndex);
                 session.gameActive = true;
+                session.gameRoomX = p.roomX;
+                session.gameRoomY = p.roomY;
+                session.gameRoomZ = p.roomZ;
                 dealHighLowHand(p, playerIndex);
             } else {
                 p.client.println("You are already in a game. Use commands like a number or 'pot' to bet.");
@@ -12819,6 +12836,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
     if (cmd == "q" || cmd == "quit") {
+        // End any active High-Low game
+        if (index >= 0 && index < MAX_PLAYERS && highLowSessions[index].gameActive) {
+            highLowSessions[index].gameActive = false;
+            highLowSessions[index].awaitingAceDeclaration = false;
+        }
+        
         // Set spawn room before saving
         p.roomX = 250;
         p.roomY = 250;
@@ -13638,13 +13661,13 @@ if (cmd == "debug") {
             } else if (cmd == "2") {
                 declareAceValue(p, playerIndex, 2);  // High
                 return;
-            } else if (cmd == "end") {
+            } else if (cmd == "end" || cmd == "quit") {
                 endHighLowGame(p, playerIndex);
                 return;
             }
         } else {
             // Process betting input
-            if (cmd == "end") {
+            if (cmd == "end" || cmd == "quit") {
                 endHighLowGame(p, playerIndex);
                 return;
             } else if (cmd == "pot") {
