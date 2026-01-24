@@ -6039,18 +6039,18 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // Always show both cards side-by-side
-    printTwoCardsSideBySide(p, session.card1, session.card2);
-    p.client.println("");
-    
-    // Check if first card is an Ace - if so, wait for declaration
+    // Check if first card is an Ace - if so, show ONLY first card and wait for declaration
     if (session.card1.isAce) {
+        printCard(p, session.card1);
+        p.client.println("");
         session.awaitingAceDeclaration = true;
         p.client.println("High or Low?  Enter '1' for Low and '2' for High");
         return;
     }
     
-    // 1st card not an Ace - prompt for bet
+    // 1st card not an Ace - show both cards side-by-side and prompt for bet
+    printTwoCardsSideBySide(p, session.card1, session.card2);
+    p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
 }
 
