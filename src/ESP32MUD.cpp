@@ -6042,8 +6042,12 @@ void dealHighLowHand(Player &p, int playerIndex) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // Non-blocking delay before next round
+        // Non-blocking delay - ignore further input for 2 seconds
         session.delayUntil = millis() + 2000;
+        
+        // Deal new hand immediately
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
         return;
     }
     
@@ -6145,8 +6149,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         if (globalHighLowPot < 50) globalHighLowPot = 50;
         savePlayerToFS(p);
         
-        // Non-blocking delay before next round
+        // Non-blocking delay - ignore further input for 2 seconds
         session.delayUntil = millis() + 2000;
+        
+        // Deal next hand immediately
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
         return;
     }
     // Check for post hit (3rd card equals one of first two)
@@ -6164,8 +6172,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         globalHighLowPot += loss;
         savePlayerToFS(p);
         
-        // Non-blocking delay before next round
+        // Non-blocking delay - ignore further input for 2 seconds
         session.delayUntil = millis() + 2000;
+        
+        // Deal next hand immediately
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
         return;
     }
     // Check for win (card inside range)
@@ -6194,8 +6206,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount) {
         globalHighLowPot += betAmount;
         savePlayerToFS(p);
         
-        // Non-blocking delay before next round
+        // Non-blocking delay - ignore further input for 2 seconds
         session.delayUntil = millis() + 2000;
+        
+        // Deal next hand immediately
+        p.client.println("");
+        dealHighLowHand(p, playerIndex);
         return;
     }
 }
