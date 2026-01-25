@@ -5330,18 +5330,12 @@ void cmdReadSign(Player &p, const String &input) {
         // Find player index to get their game pot
         int potAmount = globalHighLowPot;
         
-        p.client.println("===== GAME PARLOR GAMES =====");
+        p.client.println("===== GAME PARLOR GAMES ===============");
         p.client.println("1. High-Low Card Game - Test your luck!");
-        p.client.println("   Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
-        p.client.println("   - WIN: 3rd card is INSIDE range [min, max]");
-        p.client.println("   - LOSE: 3rd card is OUTSIDE range");
-        p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
-        p.client.println("   - Bet with: pot or any amount up to half the pot");
-        p.client.println("   - Minimum bet: 10gp");
-        p.client.println("   - The current POT is at " + String(potAmount) + "gp");
         p.client.println("");
-        p.client.println("Type 'play 1' to play!");
-        p.client.println("=============================");
+        p.client.println("Type 'play [#]' to play!");
+        p.client.println("Type 'rules [#]' for game rules!");
+        p.client.println("=======================================");
         return;
     }
     
@@ -5868,7 +5862,7 @@ void clearScreen(Player &p) {
 void printCard(Player &p, const Card &card) {
     clearScreen(p);  // Clear screen before displaying card
     
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You have " + String(p.coins) + " gold coins.");
     p.client.println("");
     
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
@@ -5900,7 +5894,7 @@ void printCard(Player &p, const Card &card) {
 void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     clearScreen(p);  // Clear screen before displaying cards
     
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You have " + String(p.coins) + " gold coins.");
     p.client.println("");
     
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
@@ -5936,7 +5930,7 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
 void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
     clearScreen(p);  // Clear screen before displaying cards
     
-    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You currently have " + String(p.coins) + " gold coins to bet with.");
+    p.client.println("Pot is at " + String(globalHighLowPot) + "gp.  You have " + String(p.coins) + " gold coins.");
     p.client.println("");
     
     String suitSymbols[] = {"♥", "♠", "♦", "♣"};
@@ -6033,33 +6027,27 @@ void dealHighLowHand(Player &p, int playerIndex) {
     session.card2 = session.deck.back();
     session.deck.pop_back();
     
+    // Ensure card2 creates a valid betting range with card1
+    // Keep redrawing card2 until it creates a valid range
+    // Invalid: same value OR difference of 1 (no number can fit between them)
+    // Exception: Two Aces are always allowed (1 to 14 range)
+    while ((session.card1.value == session.card2.value || 
+            abs(session.card1.value - session.card2.value) == 1) &&
+           !(session.card1.isAce && session.card2.isAce)) {
+        // card2 creates invalid range - need to redraw
+        
+        // If deck is depleted, reshuffle
+        if (session.deck.size() < 1) {
+            initializeHighLowSession(playerIndex);
+        }
+        
+        session.card2 = session.deck.back();
+        session.deck.pop_back();
+    }
+    
     // Set card values (handle Aces later if needed)
     session.card1Value = session.card1.isAce ? 1 : session.card1.value;
     session.card2Value = session.card2.isAce ? 1 : session.card2.value;
-    
-    // AUTOMATIC POST: Both cards are Aces
-    if (session.card1.isAce && session.card2.isAce) {
-        printTwoCardsSideBySide(p, session.card1, session.card2);
-        p.client.println("");
-        p.client.println("DOUBLE ACE - AUTOMATIC POST!");
-        
-        // Player loses double the pot
-        int loss = globalHighLowPot * 2;
-        if (p.coins < loss) {
-            p.client.println("You don't have enough gold to cover the loss! Game over.");
-            endHighLowGame(p, playerIndex);
-            return;
-        }
-        p.coins -= loss;
-        p.client.println("You LOSE " + String(loss) + "gp! (double the pot)");
-        globalHighLowPot += loss;
-        savePlayerToFS(p);
-        
-        // Prompt for continue
-        p.client.println("");
-        promptHighLowContinue(p, playerIndex);
-        return;
-    }
     
     // Check if first card is an Ace - if so, show ONLY first card and wait for declaration
     if (session.card1.isAce) {
@@ -6247,15 +6235,8 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     bool card1IsAce = session.card1.isAce;
     bool card2IsAce = session.card2.isAce;
     
-    // If BOTH cards are Aces, ignore player's declaration and force LOW-HIGH
-    if (card1IsAce && card2IsAce) {
-        session.card1Value = 1;   // Always LOW
-        session.card2Value = 14;  // Always HIGH
-        p.client.println("Ace is LOW.");
-        p.client.println("Second card is also an Ace - automatically set to HIGH.");
-    }
     // Only card1 is Ace - use player's declaration
-    else if (card1IsAce) {
+    if (card1IsAce && !card2IsAce) {
         if (aceValue == 1) {
             session.card1Value = 1;
             p.client.println("Ace is LOW.");
@@ -6267,8 +6248,25 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
             return;
         }
     }
+    // BOTH cards are Aces - set first to declaration, second to opposite
+    else if (card1IsAce && card2IsAce) {
+        if (aceValue == 1) {
+            session.card1Value = 1;   // First Ace is LOW
+            session.card2Value = 14;  // Second Ace is HIGH (opposite)
+            p.client.println("First Ace is LOW.");
+            p.client.println("Second card is also an Ace - automatically set to HIGH.");
+        } else if (aceValue == 2) {
+            session.card1Value = 14;  // First Ace is HIGH
+            session.card2Value = 1;   // Second Ace is LOW (opposite)
+            p.client.println("First Ace is HIGH.");
+            p.client.println("Second card is also an Ace - automatically set to LOW.");
+        } else {
+            p.client.println("Invalid choice. Enter '1' for Low or '2' for High.");
+            return;
+        }
+    }
     // Only card2 is Ace - use player's declaration
-    else if (card2IsAce) {
+    else if (!card1IsAce && card2IsAce) {
         if (aceValue == 1) {
             session.card2Value = 1;
             p.client.println("Ace is LOW.");
@@ -6314,15 +6312,9 @@ void endHighLowGame(Player &p, int playerIndex) {
     // Show the Game Parlor sign
     p.client.println("===== GAME PARLOR GAMES =====");
     p.client.println("1. High-Low Card Game - Test your luck!");
-    p.client.println("   Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
-    p.client.println("   - WIN: 3rd card is INSIDE range [min, max]");
-    p.client.println("   - LOSE: 3rd card is OUTSIDE range");
-    p.client.println("   - POST: 3rd card matches 1st or 2nd card (lose 2x bet)");
-    p.client.println("   - Bet with: pot, 0, or any amount up to half the pot");
-    p.client.println("   - Minimum bet: 10gp");
-    p.client.println("   - The current POT is at " + String(globalHighLowPot) + "gp");
     p.client.println("");
-    p.client.println("Type 'play 1' to play!");
+    p.client.println("Type 'play [#]' to play!");
+    p.client.println("Type 'rules [#]' for game rules!");
     p.client.println("=============================");
     p.client.println("");
 }
@@ -12918,6 +12910,60 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             }
         } else {
             p.client.println("Unknown game number. Use 'play' to see available games.");
+        }
+        return;
+    }
+
+    if (cmd == "rules") {
+        // Check if player is in Game Parlor
+        if (!(p.roomX == 247 && p.roomY == 248 && p.roomZ == 50)) {
+            p.client.println("You can only view game rules in the Game Parlor!");
+            return;
+        }
+        
+        // If no game specified, show available games
+        if (args.length() == 0) {
+            p.client.println("Available games:");
+            p.client.println("  1. High-Low Card Game");
+            p.client.println("Usage: rules 1");
+            return;
+        }
+        
+        int gameNum = args.toInt();
+        
+        // Game 1: High-Low Rules
+        if (gameNum == 1) {
+            p.client.println("===== RULES FOR High-Low Card Game =====================");
+            p.client.println("Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
+            p.client.println("");
+            p.client.println("OUTCOMES:");
+            p.client.println("- WIN: 3rd card is STRICTLY INSIDE range [card1, card2]");
+            p.client.println("- LOSE: 3rd card is OUTSIDE range");
+            p.client.println("- POST: 3rd card equals 1st or 2nd card (lose 2x bet)");
+            p.client.println("");
+            p.client.println("BETTING:");
+            p.client.println("- Minimum bet: 10gp");
+            p.client.println("- Maximum bet: up to half your coins (to afford 2x loss)");
+            p.client.println("- Special: Type 'pot' to bet the entire pot amount");
+            p.client.println("");
+            p.client.println("CARD RULES:");
+            p.client.println("- First Ace: Player declares HIGH (2) or LOW (1)");
+            p.client.println("- Two Aces: 2nd Ace auto-set to opposite (e.g., 1st=LOW, 2nd=HIGH)");
+            p.client.println("- Same Value: 2nd card automatically redrawn (e.g., 4♥ and 4♠)");
+            p.client.println("- No Gap: 2nd card redrawn if gap of 1 (e.g., 4 and 5, 10 and J)");
+            p.client.println("");
+            p.client.println("POT: Current POT is at " + String(globalHighLowPot) + "gp");
+            p.client.println("");
+            p.client.println("NOTE:");
+            p.client.println("  * Dealer uses a DOUBLE DECK (104 cards) to draw from");
+            p.client.println("  * The deck is shuffled before every game starts");
+            p.client.println("  * Dealer draws from deck until depleted,");
+            p.client.println("    then shuffles a new deck and continues");
+            p.client.println("");
+            p.client.println("  *** If you are good at COUNTING CARDS, take advantage! ***");
+            p.client.println("========================================================");
+        } else {
+            p.client.println("Unknown game number. Use 'rules' to see available games.");
         }
         return;
     }
