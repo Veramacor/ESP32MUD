@@ -6415,6 +6415,92 @@ void initChessGame(ChessSession &session, bool playerIsWhite) {
     initializeChessBoard(session.board);
 }
 
+// Opening Book Functions
+// Returns true if an opening book move is found, fills in fromR, fromC, toR, toC
+bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, int &fromC, int &toR, int &toC, bool isWhiteToMove) {
+    // Only use opening book for first 10 plies (5 moves)
+    if (plyCount > 10) return false;
+    
+    // Read from SPIFFS/data file - simplified version picks strong moves
+    // Since move counting is tracked as plyCount, we can hardcode strong responses
+    
+    // Ply 0: White's first move
+    if (plyCount == 0) {
+        // 1.e4 (e2-e4) - most popular, controls center
+        fromR = 1; fromC = 4; toR = 3; toC = 4;
+        return true;
+    }
+    
+    // Ply 1: Black's response (after white's first move)
+    // This depends on white's move, but we'll pick strong moves
+    if (plyCount == 1) {
+        // If white played e4, respond with c5 (Sicilian, most popular)
+        // Try to detect what white played (simplified heuristic)
+        if (board[3 * 8 + 4] == 1) {  // White pawn on e4
+            // Play 1...c5 (c7-c5)
+            fromR = 1; fromC = 2; toR = 3; toC = 2;
+            return true;
+        }
+        // If white played d4, respond with d5 (symmetric, solid)
+        else if (board[3 * 8 + 3] == 1) {  // White pawn on d4
+            // Play 1...d5 (d7-d5)
+            fromR = 1; fromC = 3; toR = 3; toC = 3;
+            return true;
+        }
+        return false;
+    }
+    
+    // Ply 2: White's second move
+    if (plyCount == 2) {
+        // After 1.e4 c5, play 2.Nf3 (g1-f3) - most popular Sicilian
+        if (board[1 * 8 + 2] == 7) {  // Black pawn on c5
+            // Play 2.Nf3 (g1-f3)
+            fromR = 0; fromC = 6; toR = 2; toC = 5;
+            return true;
+        }
+        // After 1.d4 d5, play 2.c4 (c2-c4) - Queen's Gambit
+        else if (board[3 * 8 + 3] == 7) {  // Black pawn on d5
+            // Play 2.c4 (c2-c4)
+            fromR = 1; fromC = 2; toR = 3; toC = 2;
+            return true;
+        }
+        return false;
+    }
+    
+    // Ply 3: Black's second move
+    if (plyCount == 3) {
+        // After 1.e4 c5 2.Nf3, play 2...d6 (d7-d6) - Sicilian main line
+        if (board[2 * 8 + 5] == 2) {  // White knight on f3
+            fromR = 1; fromC = 3; toR = 2; toC = 3;
+            return true;
+        }
+        // After 1.d4 d5 2.c4, play 2...e6 (e7-e6) - QGD main line
+        else if (board[3 * 8 + 2] == 1) {  // White pawn on c4
+            fromR = 1; fromC = 4; toR = 2; toC = 4;
+            return true;
+        }
+        return false;
+    }
+    
+    // Ply 4: White's third move
+    if (plyCount == 4) {
+        // After Sicilian 2...d6, play 3.d4 (d2-d4) - main line
+        if (board[2 * 8 + 3] == 7) {  // Black pawn on d6
+            fromR = 1; fromC = 3; toR = 3; toC = 3;
+            return true;
+        }
+        // After QGD 2...e6, play 3.Nc3 (b1-c3) - solid development
+        else if (board[2 * 8 + 4] == 7) {  // Black pawn on e6
+            fromR = 0; fromC = 1; toR = 2; toC = 2;
+            return true;
+        }
+        return false;
+    }
+    
+    // Ply 5+: Exit opening book and let engine play
+    return false;
+}
+
 // Get piece character for display
 char getPieceChar(unsigned char piece) {
     switch(piece) {
@@ -7058,8 +7144,14 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     String engineMove = "";
     int bestFromR = -1, bestFromC = -1, bestToR = -1, bestToC = -1;
     
+    // Check opening book first (for first 10 plies / 5 moves)
+    // moveCount represents plies (half-moves), so ply = moveCount
+    if (getOpeningBookMove(session.board, session.moveCount, bestFromR, bestFromC, bestToR, bestToC, !isPlayerWhite)) {
+        foundEngineMove = true;
+    }
+    
     // Greedy engine: prioritize captures, then checks, then any legal move
-    // First pass: look for captures
+    // First pass: look for captures (only if opening book didn't provide a move)
     for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
         for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
             unsigned char piece = session.board[fromR * 8 + fromC];

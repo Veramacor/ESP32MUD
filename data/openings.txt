@@ -1,0 +1,95 @@
+// Chess Opening Book - Strong Moves for First 10 Plies (5 moves)
+// Format: ply_count|move1 move2 move3...|strategy_name
+// Ply 0 (White's first move) - Most popular and strong moves
+0|e2e4|Italian Game / Open Games (classical center control)
+0|d2d4|Queen's Gambit / Closed Games (solid positional)
+0|c2c4|English Opening (flexible control)
+0|g1f3|Flank Opening / Reti (flexible, prepares transposition)
+
+// Ply 1 (Black's response to 1.e4) - Against e4
+1e2e4|c7c5|Sicilian Defense (most popular, fighting chance)
+1e2e4|e7e5|Open Game (classical, symmetric)
+1e2e4|c7c6|Caro-Kann Defense (solid, reliable)
+1e2e4|e7e6|French Defense (sound, positional)
+
+// Ply 1 (Black's response to 1.d4) - Against d4
+1d2d4|d7d5|Closed Game (symmetric, solid)
+1d2d4|g8f6|Indian Defense (flexible, hypermodern)
+1d2d4|c7c6|Slav Defense (solid, sound)
+
+// Ply 1 (Black's response to 1.c4) - Against c4
+1c2c4|e7e5|English vs e5 (symmetric counterplay)
+1c2c4|g8f6|Indian-like structures (flexible)
+
+// Ply 1 (Black's response to 1.Nf3) - Against Nf3
+1g1f3|d7d5|Normal defense against Nf3
+1g1f3|g8f6|Hypermodern approach
+
+// Ply 2 (White's response to e4 e5) - After 1.e4 e5
+2e2e4 e7e5|g1f3|Two Knights / Spanish (most popular)
+2e2e4 e7e5|g1f3|Attacking the e5 pawn
+
+// Ply 2 (White's response to e4 c5) - After 1.e4 c5 (Sicilian)
+2e2e4 c7c5|g1f3|Sicilian Open (classical, avoiding complications)
+2e2e4 c7c5|d2d4|Strong attacking try
+
+// Ply 2 (White's response to e4 c6) - After 1.e4 c6 (Caro-Kann)
+2e2e4 c7c6|d2d4|Main line (centralizing, strong)
+
+// Ply 2 (White's response to e4 e6) - After 1.e4 e6 (French)
+2e2e4 e7e6|d2d4|Main line (classical center)
+
+// Ply 2 (White's response to d4 d5) - After 1.d4 d5 (Closed Game)
+2d2d4 d7d5|c2c4|Queen's Gambit (most popular d4 response)
+2d2d4 d7d5|c2c4|Classical and strong
+
+// Ply 2 (White's response to d4 Nf6) - After 1.d4 Nf6 (Indian)
+2d2d4 g8f6|c2c4|Indian systems, center control
+
+// Ply 3 (Black's response to 1.e4 e5 2.Nf3) - After 1.e4 e5 2.Nf3
+3e2e4 e7e5 g1f3|b8c6|Two Knights Defense (most common, fighting)
+3e2e4 e7e5 g1f3|g8f6|Petrov Defense (symmetric, solid)
+
+// Ply 3 (Black's response to 1.e4 c5 2.Nf3) - After 1.e4 c5 2.Nf3
+3e2e4 c7c5 g1f3|d7d6|Sicilian Najdorf structure
+3e2e4 c7c5 g1f3|b8c6|Sicilian Taimanov
+
+// Ply 3 (Black's response to 1.e4 c5 2.d4) - After 1.e4 c5 2.d4
+3e2e4 c7c5 d2d4|c5d4|Accept and develop
+
+// Ply 3 (Black's response to 1.e4 c6 2.d4) - After 1.e4 c6 2.d4
+3e2e4 c7c6 d2d4|d7d5|Main line Caro-Kann
+
+// Ply 3 (Black's response to 1.e4 e6 2.d4) - After 1.e4 e6 2.d4
+3e2e4 e7e6 d2d4|d7d5|Classical French
+3e2e4 e7e6 d2d4|c7c5|Flexible, counterattacking
+
+// Ply 3 (Black's response to 1.d4 d5 2.c4) - After 1.d4 d5 2.c4
+3d2d4 d7d5 c2c4|e7e6|Queen's Gambit Declined (most solid)
+3d2d4 d7d5 c2c4|c7c6|Slav Defense (strong, sound)
+
+// Ply 3 (Black's response to 1.d4 Nf6 2.c4) - After 1.d4 Nf6 2.c4
+3d2d4 g8f6 c2c4|e7e6|Nimzo-Indian / Queen's Gambit Declined structure
+3d2d4 g8f6 c2c4|g7g6|King's Indian Defense
+
+// Ply 4 (White's response to 1.e4 e5 2.Nf3 Nc6) - After 1.e4 e5 2.Nf3 Nc6
+4e2e4 e7e5 g1f3 b8c6|f1b5|Ruy Lopez / Spanish Opening (most popular, best)
+4e2e4 e7e5 g1f3 b8c6|d2d4|Scotch Game (sharp, active)
+
+// Ply 4 (White's response to 1.e4 c5 2.Nf3 d6) - After 1.e4 c5 2.Nf3 d6
+4e2e4 c7c5 g1f3 d7d6|d2d4|Sicilian Open, main line
+4e2e4 c7c5 g1f3 d7d6|b1c3|Supporting center control
+
+// Ply 4 (Black's response to 1.e4 c5 2.d4 cxd4 3.Qxd4) - Move black knights
+4e2e4 c7c5 d2d4 c5d4|g8f6|Sicilian Open, develop
+4e2e4 c7c5 d2d4 c5d4|b8c6|Natural development
+
+// Ply 5 - Mid-opening transitions (staying out of greedy/bad moves)
+// These prevent the engine from making random weak moves by ensuring good development
+
+// Summary of Opening Strategy:
+// 1. White prefers: e4 (33%), d4 (25%), c4 (20%), Nf3 (20%)
+// 2. Black vs e4 prefers: c5 (Sicilian, 40%), e5 (Open, 30%), c6 (Caro, 15%), e6 (French, 15%)
+// 3. Black vs d4 prefers: d5 (Closed, 40%), Nf6 (Indian, 50%), c6 (Slav, 10%)
+// 4. Principles: Control center, Develop pieces, Castling for safety, Avoid weak moves
+// 5. Engine should never play a ply beyond what's listed to avoid bad moves
