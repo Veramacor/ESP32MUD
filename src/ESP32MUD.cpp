@@ -6545,6 +6545,52 @@ bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int 
         return true;
     }
     
+    // Piece shorthand notation: Rh4, Nf3, Bf5, Qd4, Ke2 (piece letter + destination)
+    if (moveStr.length() == 3) {
+        char pieceLetter = moveStr[0];
+        if ((pieceLetter != 'R' && pieceLetter != 'N' && pieceLetter != 'B' && 
+             pieceLetter != 'Q' && pieceLetter != 'K') ||
+            !isalpha(moveStr[1]) || !isdigit(moveStr[2])) {
+            // Not piece shorthand, might be 2-char shorthand below
+            if (moveStr.length() == 2) {
+                if (!isalpha(moveStr[0]) || !isdigit(moveStr[1])) {
+                    return false;
+                }
+                toCol = moveStr[0] - 'a';
+                toRow = moveStr[1] - '1';
+                if (toCol < 0 || toCol > 7 || toRow < 0 || toRow > 7) {
+                    return false;
+                }
+                fromCol = -1;
+                fromRow = -1;
+                return true;
+            }
+            return false;
+        }
+        
+        toCol = moveStr[1] - 'a';
+        toRow = moveStr[2] - '1';
+        
+        // Validate ranges
+        if (toCol < 0 || toCol > 7 || toRow < 0 || toRow > 7) {
+            return false;
+        }
+        
+        // Use special markers to indicate piece shorthand: fromCol = piece code
+        // fromCol: 0=Rook, 1=Knight, 2=Bishop, 3=Queen, 4=King
+        // fromRow = -1 to distinguish from 2-char shorthand
+        switch(pieceLetter) {
+            case 'R': fromCol = 0; break;
+            case 'N': fromCol = 1; break;
+            case 'B': fromCol = 2; break;
+            case 'Q': fromCol = 3; break;
+            case 'K': fromCol = 4; break;
+        }
+        fromRow = -1;
+        
+        return true;
+    }
+    
     // Shorthand notation: d4, e5 (just destination square)
     if (moveStr.length() == 2) {
         if (!isalpha(moveStr[0]) || !isdigit(moveStr[1])) {
@@ -6860,12 +6906,13 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     int fromCol, fromRow, toCol, toRow;
     
     if (!parseChessMove(moveStr, fromCol, fromRow, toCol, toRow)) {
-        p.client.println("Invalid move format. Use: d2d4 or d4");
+        p.client.println("Invalid move format. Use: d2d4 (full) or d4 (pawn) or Rh4 (piece shorthand)");
         return;
     }
     
-    // Handle shorthand notation (e.g., "d4")
+    // Handle shorthand notation (e.g., "d4" or "Rh4")
     if (fromCol == -1 && fromRow == -1) {
+        // 2-character pawn shorthand (d4, e5, etc.)
         // Find which piece can move to this square
         bool isPlayerWhite = session.playerIsWhite;
         bool foundMove = false;
@@ -6896,6 +6943,52 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         
         if (!foundMove) {
             p.client.println("No legal move to that square!");
+            return;
+        }
+    }
+    // Handle piece shorthand notation (e.g., "Rh4", "Nf3")
+    else if (fromRow == -1 && fromCol >= 0 && fromCol <= 4) {
+        // fromCol contains piece code: 0=Rook, 1=Knight, 2=Bishop, 3=Queen, 4=King
+        int pieceCode = fromCol;
+        unsigned char targetPiece = 0;
+        bool isPlayerWhite = session.playerIsWhite;
+        
+        // Determine which piece to search for
+        switch(pieceCode) {
+            case 0: targetPiece = isPlayerWhite ? 4 : 10; break;  // Rook
+            case 1: targetPiece = isPlayerWhite ? 2 : 8; break;   // Knight
+            case 2: targetPiece = isPlayerWhite ? 3 : 9; break;   // Bishop
+            case 3: targetPiece = isPlayerWhite ? 5 : 11; break;  // Queen
+            case 4: targetPiece = isPlayerWhite ? 6 : 12; break;  // King
+        }
+        
+        bool foundMove = false;
+        
+        // Find a piece of the specified type that can move to the destination
+        for (int r = 0; r < 8 && !foundMove; r++) {
+            for (int c = 0; c < 8 && !foundMove; c++) {
+                unsigned char piece = session.board[r * 8 + c];
+                
+                // Check if this is the piece we're looking for
+                if (piece != targetPiece) continue;
+                
+                // Check if this piece can legally move to toRow, toCol
+                if (isLegalMove(session.board, r, c, toRow, toCol, isPlayerWhite)) {
+                    unsigned char testBoard[64];
+                    memcpy(testBoard, session.board, 64);
+                    applyMove(testBoard, r, c, toRow, toCol);
+                    
+                    if (!isInCheck(testBoard, isPlayerWhite)) {
+                        fromRow = r;
+                        fromCol = c;
+                        foundMove = true;
+                    }
+                }
+            }
+        }
+        
+        if (!foundMove) {
+            p.client.println("No legal move for that piece to that square!");
             return;
         }
     }
@@ -7054,8 +7147,8 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
     }
     
-    // Allow 2 seconds for the search (all other players will see this delay)
-    delay(2000);
+    // Allow 5 seconds for the search (all other players will see this delay)
+    delay(5000);
     
     // Apply the move found
     if (foundEngineMove) {
