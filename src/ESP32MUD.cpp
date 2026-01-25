@@ -7426,6 +7426,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     }
     
     session.isBlackToMove = !session.isBlackToMove;
+    session.moveCount++;  // Increment for engine's move
     
     // Check if engine move ends the game
     if (checkGameEnd(session.board, isPlayerWhite, endReason)) {
@@ -14137,9 +14138,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             p.client.println("- Enter move: d2d4");
             p.client.println("- 'resign' : Give up the game");
             p.client.println("- 'end'    : Quit and return to Game Parlor");
-            p.client.println("");
-            p.client.println("ENGINE STRENGTH: ~1800 ELO rating");
-            p.client.println("===========================================================");
+             p.client.println("===========================================================");
         } else {
             p.client.println("Unknown game number. Use 'rules' to see available games.");
         }
