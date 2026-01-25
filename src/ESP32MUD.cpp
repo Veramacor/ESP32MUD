@@ -6514,6 +6514,27 @@ bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int 
         return true;
     }
     
+    // Shorthand notation: d4, e5 (just destination square)
+    if (moveStr.length() == 2) {
+        if (!isalpha(moveStr[0]) || !isdigit(moveStr[1])) {
+            return false;
+        }
+        
+        toCol = moveStr[0] - 'a';
+        toRow = moveStr[1] - '1';
+        
+        // Validate ranges
+        if (toCol < 0 || toCol > 7 || toRow < 0 || toRow > 7) {
+            return false;
+        }
+        
+        // Return special markers in fromCol/fromRow to indicate shorthand
+        fromCol = -1;
+        fromRow = -1;
+        
+        return true;
+    }
+    
     return false;
 }
 
@@ -6747,12 +6768,105 @@ void startChessGame(Player &p, int playerIndex, ChessSession &session) {
     renderChessBoard(p, session);
 }
 
+String formatChessMove(unsigned char board[64], int fromR, int fromC, int toR, int toC, bool isPlayerWhite) {
+    unsigned char movingPiece = board[fromR * 8 + fromC];
+    unsigned char targetPiece = board[toR * 8 + toC];
+    
+    // Get piece name
+    String pieceName = "";
+    bool isPawn = false;
+    switch(movingPiece) {
+        case 1: case 7: pieceName = "Pawn"; isPawn = true; break;
+        case 2: case 8: pieceName = "Knight"; break;
+        case 3: case 9: pieceName = "Bishop"; break;
+        case 4: case 10: pieceName = "Rook"; break;
+        case 5: case 11: pieceName = "Queen"; break;
+        case 6: case 12: pieceName = "King"; break;
+    }
+    
+    // Get target square notation
+    char toColChar = 'a' + (7 - toC);
+    char toRowChar = '1' + toR;
+    String toSquare = String(toColChar) + String(toRowChar);
+    
+    // Check for castling
+    if ((movingPiece == 6 || movingPiece == 12) && abs(fromC - toC) == 2) {
+        // King moved 2 squares = castling
+        if (toC > fromC) {
+            return "Castles King Side";
+        } else {
+            return "Castles Queen Side";
+        }
+    }
+    
+    // Check for capture
+    if (targetPiece != 0) {
+        String targetName = "";
+        switch(targetPiece) {
+            case 1: case 7: targetName = "Pawn"; break;
+            case 2: case 8: targetName = "Knight"; break;
+            case 3: case 9: targetName = "Bishop"; break;
+            case 4: case 10: targetName = "Rook"; break;
+            case 5: case 11: targetName = "Queen"; break;
+            case 6: case 12: targetName = "King"; break;
+        }
+        // For pawn captures, use shorthand: "exd4" style notation
+        if (isPawn) {
+            char fromColChar = 'a' + (7 - fromC);
+            return String(fromColChar) + "x" + toSquare;
+        }
+        return pieceName + " takes " + targetName + " on " + toSquare;
+    }
+    
+    // Regular move - shorthand for pawns, full notation for other pieces
+    if (isPawn) {
+        return toSquare;
+    }
+    return pieceName + " to " + toSquare;
+}
+
 void processChessMove(Player &p, int playerIndex, ChessSession &session, String moveStr) {
     int fromCol, fromRow, toCol, toRow;
     
     if (!parseChessMove(moveStr, fromCol, fromRow, toCol, toRow)) {
-        p.client.println("Invalid move format. Use: d2d4");
+        p.client.println("Invalid move format. Use: d2d4 or d4");
         return;
+    }
+    
+    // Handle shorthand notation (e.g., "d4")
+    if (fromCol == -1 && fromRow == -1) {
+        // Find which piece can move to this square
+        bool isPlayerWhite = session.playerIsWhite;
+        bool foundMove = false;
+        
+        for (int r = 0; r < 8 && !foundMove; r++) {
+            for (int c = 0; c < 8 && !foundMove; c++) {
+                unsigned char piece = session.board[r * 8 + c];
+                if (piece == 0) continue;
+                
+                // Check if it's player's piece
+                if (isPlayerWhite && !isWhitePiece(piece)) continue;
+                if (!isPlayerWhite && !isBlackPiece(piece)) continue;
+                
+                // Check if this piece can legally move to toRow, toCol
+                if (isLegalMove(session.board, r, c, toRow, toCol, isPlayerWhite)) {
+                    unsigned char testBoard[64];
+                    memcpy(testBoard, session.board, 64);
+                    applyMove(testBoard, r, c, toRow, toCol);
+                    
+                    if (!isInCheck(testBoard, isPlayerWhite)) {
+                        fromRow = r;
+                        fromCol = c;
+                        foundMove = true;
+                    }
+                }
+            }
+        }
+        
+        if (!foundMove) {
+            p.client.println("No legal move to that square!");
+            return;
+        }
     }
     
     // Check if game is already over
@@ -6786,12 +6900,22 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         return;
     }
     
+    // Save info about the move before applying it
+    unsigned char movedPiece = session.board[fromRow * 8 + fromCol];
+    unsigned char capturedPiece = session.board[toRow * 8 + toCol];
+    
     // Move is valid - apply it
     applyMove(session.board, fromRow, fromCol, toRow, toCol);
     session.lastPlayerMove = moveStr;
     session.isBlackToMove = !session.isBlackToMove;
+    session.moveCount++;
     
-    p.client.println("Your move: " + moveStr);
+    // Display formatted move
+    p.client.println("Your move: " + formatChessMove(session.board, fromRow, fromCol, toRow, toCol, isPlayerWhite));
+    p.client.println("");
+    
+    // Render the board showing the player's move
+    renderChessBoard(p, session);
     p.client.println("");
     
     // Check if player's move ended the game
@@ -6799,44 +6923,40 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     if (checkGameEnd(session.board, !isPlayerWhite, endReason)) {
         session.gameEnded = true;
         session.endReason = endReason;
-        renderChessBoard(p, session);
         p.client.println(endReason);
         return;
     }
     
-    // Engine's turn - use simple random move generator as placeholder for mcu-max
-    // TODO: Replace with actual mcu-max engine call
+    // Engine's turn
+    p.client.println("Local Game Parlor local thinking about his move...");
+    
     bool foundEngineMove = false;
     String engineMove = "";
+    int bestFromR = -1, bestFromC = -1, bestToR = -1, bestToC = -1;
     
+    // Greedy engine: prioritize captures, then checks, then any legal move
+    // First pass: look for captures
     for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
         for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
             unsigned char piece = session.board[fromR * 8 + fromC];
-            bool isEnginePiece = !isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+            bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
             
             if (!isEnginePiece) continue;
             
             for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
                 for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
+                    unsigned char target = session.board[toR * 8 + toC];
+                    if (target == 0) continue;  // Skip non-captures
+                    
                     if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
-                        // Test if move leaves engine's king safe
                         memcpy(testBoard, session.board, 64);
                         applyMove(testBoard, fromR, fromC, toR, toC);
                         
                         if (!isInCheck(testBoard, !isPlayerWhite)) {
-                            // Found a legal move - prefer captures and checks
-                            unsigned char target = session.board[toR * 8 + toC];
-                            bool isCapture = target != 0;
-                            
-                            // For now, just take the first legal move (simple strategy)
-                            char fromColChar = 'a' + (7 - fromC);
-                            char fromRowChar = '1' + fromR;
-                            char toColChar = 'a' + (7 - toC);
-                            char toRowChar = '1' + toR;
-                            
-                            engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar) + String(toRowChar);
-                            applyMove(session.board, fromR, fromC, toR, toC);
-                            session.lastEngineMove = engineMove;
+                            bestFromR = fromR;
+                            bestFromC = fromC;
+                            bestToR = toR;
+                            bestToC = toC;
                             foundEngineMove = true;
                         }
                     }
@@ -6845,31 +6965,110 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
     }
     
-    session.isBlackToMove = !session.isBlackToMove;
-    session.moveCount++;
+    // Second pass: look for checks if no capture found
+    if (!foundEngineMove) {
+        for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
+            for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
+                unsigned char piece = session.board[fromR * 8 + fromC];
+                bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+                
+                if (!isEnginePiece) continue;
+                
+                for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
+                    for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
+                        if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
+                            memcpy(testBoard, session.board, 64);
+                            applyMove(testBoard, fromR, fromC, toR, toC);
+                            
+                            if (!isInCheck(testBoard, !isPlayerWhite) && isInCheck(testBoard, isPlayerWhite)) {
+                                bestFromR = fromR;
+                                bestFromC = fromC;
+                                bestToR = toR;
+                                bestToC = toC;
+                                foundEngineMove = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
+    // Third pass: take any legal move if no capture or check found
+    if (!foundEngineMove) {
+        for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
+            for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
+                unsigned char piece = session.board[fromR * 8 + fromC];
+                bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+                
+                if (!isEnginePiece) continue;
+                
+                for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
+                    for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
+                        if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
+                            memcpy(testBoard, session.board, 64);
+                            applyMove(testBoard, fromR, fromC, toR, toC);
+                            
+                            if (!isInCheck(testBoard, !isPlayerWhite)) {
+                                bestFromR = fromR;
+                                bestFromC = fromC;
+                                bestToR = toR;
+                                bestToC = toC;
+                                foundEngineMove = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Allow 2 seconds for the search (all other players will see this delay)
+    delay(2000);
+    
+    // Apply the move found
     if (foundEngineMove) {
-        p.client.println("Engine's move: " + engineMove);
+        // Save move info before applying
+        unsigned char enginePiece = session.board[bestFromR * 8 + bestFromC];
+        unsigned char engineCaptured = session.board[bestToR * 8 + bestToC];
+        
+        applyMove(session.board, bestFromR, bestFromC, bestToR, bestToC);
+        
+        char fromColChar = 'a' + (7 - bestFromC);
+        char fromRowChar = '1' + bestFromR;
+        char toColChar = 'a' + (7 - bestToC);
+        char toRowChar = '1' + bestToR;
+        
+        engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar) + String(toRowChar);
+        session.lastEngineMove = engineMove;
+        
+        // Render the board with the engine's move applied
+        renderChessBoard(p, session);
+        p.client.println("");
+        p.client.println("Engine's move: " + formatChessMove(session.board, bestFromR, bestFromC, bestToR, bestToC, isPlayerWhite));
     } else {
-        // No legal moves - engine is either checkmated or stalemated
+        // No legal moves found - check for game end
+        p.client.println("ERROR: Engine could not find a legal move!");
         String engineEndReason = "";
         if (checkGameEnd(session.board, !isPlayerWhite, engineEndReason)) {
             session.gameEnded = true;
             session.endReason = engineEndReason;
             renderChessBoard(p, session);
+            p.client.println("");
             p.client.println(engineEndReason);
             return;
         }
     }
     
+    session.isBlackToMove = !session.isBlackToMove;
+    
     // Check if engine move ends the game
-    endReason = "";
     if (checkGameEnd(session.board, isPlayerWhite, endReason)) {
         session.gameEnded = true;
         session.endReason = endReason;
     }
     
-    renderChessBoard(p, session);
+    p.client.println("");
 }
 
 void endChessGame(Player &p, int playerIndex) {

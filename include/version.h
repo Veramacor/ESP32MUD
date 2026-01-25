@@ -3,8 +3,8 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#define ESP32MUD_VERSION "26.01.24"
-#define COMPILE_DATE "Jan 24 2026"
-#define COMPILE_TIME "23:48:59"
+#define ESP32MUD_VERSION "26.01.25"
+#define COMPILE_DATE "Jan 25 2026"
+#define COMPILE_TIME "00:33:27"
 
 #endif // VERSION_H
