@@ -4391,6 +4391,14 @@ void movePlayer(Player &p, int index, const char *dir) {
     int ty = oldY + dy;
     int tz = oldZ + dz;
 
+    // If player leaves the Game Parlor, end any active chess game
+    if (oldX == 247 && oldY == 248 && oldZ == 50 && index >= 0 && index < MAX_PLAYERS) {
+        if (chessSessions[index].gameActive) {
+            chessSessions[index].gameActive = false;
+            p.client.println("Your chess game has been abandoned due to leaving the Game Parlor.");
+        }
+    }
+
     // -----------------------------
     // DEPARTURE MESSAGE
     // -----------------------------
@@ -13941,6 +13949,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             highLowSessions[index].gameActive = false;
             highLowSessions[index].awaitingAceDeclaration = false;
             highLowSessions[index].awaitingContinue = false;
+        }
+        
+        // End any active Chess game
+        if (index >= 0 && index < MAX_PLAYERS && chessSessions[index].gameActive) {
+            chessSessions[index].gameActive = false;
         }
         
         // Set spawn room before saving
