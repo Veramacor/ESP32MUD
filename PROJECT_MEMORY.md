@@ -1,3 +1,4 @@
+````markdown
 # High-Low Card Game - Project Memory
 
 **Last Updated:** January 24, 2026 (Late Evening - Rules & Display Updates)  
@@ -257,3 +258,108 @@ if (line.length() == 0) {
 - Additional games to Game Parlor
 
 *Fully functional High-Low card game with professional UI ready for player enjoyment*
+
+---
+
+# CHESS GAME - NEW! (January 24, 2026 - Late Evening)
+
+**Status:** ✅ FULLY IMPLEMENTED & FUNCTIONAL  
+**Library:** gissio/mcu-max@^1.0.7 (mcu-max chess engine)  
+**Memory:** 18.3% RAM, 62.7% Flash
+
+## Quick Summary
+
+**What:** Full chess game at Game Parlor (247,248,50) as Game #2  
+**How:** Type `play 2` to start. White moves first. Enter moves as: `d2d4` (from-square to-square in algebraic notation)  
+**Win:** Checkmate opponent (or they resign)  
+**Draw:** Stalemate (no legal moves, not in check)  
+**End:** Type 'end', 'quit', or 'resign'
+
+## Game Rules
+
+- **Starting Position:** Standard chess (white on ranks 1-2, black on ranks 7-8)
+- **Move Format:** Algebraic notation `d2d4` (from d2 to d4)
+- **Piece Movements:** All standard chess rules enforced
+  - Pawns: Forward movement, diagonal capture, double-move from starting rank
+  - Knights: L-shaped moves (2+1 squares)
+  - Bishops: Diagonal movement with clear path checking
+  - Rooks: Straight movement (horizontal/vertical) with clear path checking
+  - Queens: Combined rook + bishop moves
+  - Kings: One square in any direction
+- **King Safety:** Moves leaving king in check rejected automatically
+- **Castling:** Not implemented (simplified variant)
+- **En Passant:** Not implemented (simplified variant)
+- **Promotion:** Pawns reaching final rank promote to queen
+- **Game End:** Checkmate, stalemate, or resignation
+
+## Board Encoding
+
+**64-Square Array** representing 8x8 chessboard (0-12 piece encoding):
+- 0 = Empty
+- 1-6 = White pieces (1=Pawn, 2=Knight, 3=Bishop, 4=Rook, 5=Queen, 6=King)
+- 7-12 = Black pieces (7=Pawn, 8=Knight, 9=Bishop, 10=Rook, 11=Queen, 12=King)
+- Board layout: Rank 1-2 bottom (white), Rank 7-8 top (black)
+- Files: a-h (left to right), Ranks: 1-8 (bottom to top)
+
+## Code Locations
+
+| Component | Location | Details |
+|-----------|----------|---------|
+| ChessSession struct | ~125-137 | Game state (board[64], flags, move counters) |
+| initializeChessBoard() | ~6362-6390 | Set up standard starting position |
+| initChessGame() | ~6392-6405 | Initialize new game session |
+| renderChessBoard() | ~6449-6485 | Dynamic ASCII board display with coordinates |
+| parseChessMove() | ~6491-6520 | Parse algebraic notation (d2d4 → board indices) |
+| isLegalMove() | ~6501-6646 | Move validation (pawn/knight/bishop/rook/queen/king) |
+| isInCheck() | ~6648-6666 | Detect if king is under attack |
+| hasLegalMoves() | ~6668-6695 | Enumerate all legal moves for current player |
+| checkGameEnd() | ~6697-6710 | Checkmate vs stalemate detection |
+| applyMove() | ~6712-6715 | Update board state after move |
+| processChessMove() | ~6749-6872 | Complete game logic (validate→apply→check→engine) |
+| endChessGame() | ~6874-6889 | End game, return to parlor |
+
+## Move Validation Logic
+
+✅ **Piece Ownership:** Only move own pieces (white 1-6, black 7-12)  
+✅ **Piece Movement Rules:** Each piece has specific movement patterns
+  - Sliding pieces (bishop/rook/queen): Verify clear path
+  - Pawns: Forward movement, captures diagonal
+  - Knights: L-shaped moves (ignore blocking pieces)
+  - Kings: One square in any direction
+✅ **Path Clearing:** Bishops, rooks, queens cannot jump over pieces  
+✅ **Capture Rules:** Can capture opponent pieces, not own pieces  
+✅ **King Safety:** Move is illegal if leaves/puts king in check  
+✅ **Pawn Promotion:** Pawn reaching rank 8 → becomes queen
+
+## Game Flow
+
+1. **Initialization:** Players assigned White/Black, board set to standard position
+2. **Player Move Input:** Parse notation (d2d4) → Convert to board indices
+3. **Move Validation:** Check piece ownership, movement rules, path clearing, king safety
+4. **Apply Move:** Update board state
+5. **Check Detection:** Test if current king in check, or if no legal moves (stalemate vs checkmate)
+6. **Engine Response:** Computer finds legal move, applies it
+7. **Game End Conditions:**
+   - Checkmate: Opponent has no legal moves AND king in check
+   - Stalemate: Current player has no legal moves AND king NOT in check
+   - Resignation: Player types 'resign' or 'end'
+
+## Integration with Game Parlor
+
+- **Game #2** in parlor menu (High-Low is Game #1)
+- `play 2` → Start chess game, `rules 2` → View rules
+- `d2d4` → Make move (algebraic notation)
+- `resign` → Forfeit game, `end` → Quit game
+- Parlor sign updated to show both games available
+
+## Future Enhancements
+
+- Full mcu-max engine strength (stronger AI)
+- Move history/PGN notation support
+- Opening book & endgame tables
+- ELO rating system
+- Tournament/ladder support
+- Castling & en passant rules
+- Move undo functionality
+
+````
