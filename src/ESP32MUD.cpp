@@ -11,6 +11,7 @@
 #include <ESP_Mail_Client.h>
 #include "YmodemBootloader.h"
 #include "version.h"  // Auto-generated at build time  VERSION INFO Auto generated version Number
+#include "chess_game.h"
 
 
 
@@ -123,6 +124,19 @@ struct HighLowSession {
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
 };
 
+struct ChessSession {
+    bool gameActive;             // true if player is actively playing
+    char board[64];              // FEN board state (simplified representation)
+    bool playerIsWhite;          // true if player plays white
+    int moveCount;               // moves made
+    unsigned long blackClock;    // milliseconds remaining
+    unsigned long whiteClock;    // milliseconds remaining
+    bool isBlackToMove;          // whose turn it is
+    int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
+    String lastEngineMove;       // last move made by engine
+    String lastPlayerMove;       // last move made by player
+};
+
 // Letter system for mail retrieval
 struct Letter {
     String to;               // recipient email
@@ -154,6 +168,9 @@ std::vector<PostOffice> postOffices;
 
 // High-Low game sessions (one per player)
 HighLowSession highLowSessions[MAX_PLAYERS];
+
+// Chess game sessions (one per player)
+ChessSession chessSessions[MAX_PLAYERS];
 
 // Global High-Low pot (shared by all players)
 int globalHighLowPot = 50;
@@ -358,6 +375,16 @@ void declareAceValue(Player &p, int playerIndex, int aceValue);
 void promptHighLowContinue(Player &p, int playerIndex);
 void endHighLowGame(Player &p, int playerIndex);
 String getCardName(const Card &card);
+
+// Chess game function declarations
+void initChessGame(ChessSession &session, bool playerIsWhite);
+void renderChessBoard(Player &p, ChessSession &session);
+String formatTime(unsigned long ms);
+bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int &toRow);
+void startChessGame(Player &p, int playerIndex, ChessSession &session);
+void processChessMove(Player &p, int playerIndex, ChessSession &session, String moveStr);
+void endChessGame(Player &p, int playerIndex);
+
 bool checkAndSpawnMailLetters(Player &p);  // Returns true if mail was found and letters spawned
 bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters);
 String extractPlayerNameFromEmail(const String &emailBody);
@@ -6165,7 +6192,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         p.coins -= loss;
         
         String card3Name = getCardName(session.card3);
-        p.client.println("YOU HIT A POST! ... PAY DOUBLE!");
+        p.client.println("POST! ... PAY DOUBLE!");
         p.client.println("You pay the dealer " + String(loss) + " gold coins.");
         
         globalHighLowPot += loss;
@@ -6317,6 +6344,145 @@ void endHighLowGame(Player &p, int playerIndex) {
     // Show the Game Parlor sign
     p.client.println("===== GAME PARLOR GAMES =====");
     p.client.println("1. High-Low Card Game - Test your luck!");
+    p.client.println("2. Chess - Challenge the engine!");
+    p.client.println("");
+    p.client.println("Type 'play [#]' to play!");
+    p.client.println("Type 'rules [#]' for game rules!");
+    p.client.println("=============================");
+    p.client.println("");
+}
+
+// =============================
+// CHESS GAME FUNCTIONS
+// =============================
+
+void initChessGame(ChessSession &session, bool playerIsWhite) {
+    session.gameActive = true;
+    session.playerIsWhite = playerIsWhite;
+    session.moveCount = 0;
+    session.blackClock = 5 * 60 * 1000;  // 5 minutes in milliseconds
+    session.whiteClock = 5 * 60 * 1000;
+    session.isBlackToMove = false;  // White always moves first
+    session.lastEngineMove = "";
+    session.lastPlayerMove = "";
+    
+    // Initialize board to standard starting position
+    memset(session.board, 0, 64);
+}
+
+void renderChessBoard(Player &p, ChessSession &session) {
+    p.client.println("\x1B[2J\x1B[H");  // Clear screen
+    
+    // Standard starting position display
+    p.client.println("       ---------------------------------");
+    p.client.println("    1  | R | N | B | K | Q | B | N | R |     Move # : " + String(session.moveCount) + 
+                     " (" + String(session.isBlackToMove ? "Black" : "White") + ")");
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    2  | P | P | P | P |   | P | P | P |     " + 
+                     (session.lastEngineMove.length() > 0 ? "White Moves : '" + session.lastEngineMove + "'" : "White Moves : '--'"));
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    3  |   |   |   |   |   |   |   |   |");
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    4  |   |   |   |   | P |   |   |   |     Black Clock : " + formatTime(session.blackClock));
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    5  |   |   |   |   |   |   |   |   |     White Clock : " + formatTime(session.whiteClock));
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    6  |   |   |   |   |   |   |   |   |     Black Strength : 1800");
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    7  | *P| *P| *P| *P| *P| *P| *P| *P|     White Strength : 1800");
+    p.client.println("       |---+---+---+---+---+---+---+---|");
+    p.client.println("    8  | *R| *N| *B| *K| *Q| *B| *N| *R|");
+    p.client.println("       ---------------------------------");
+    p.client.println("         h   g   f   e   d   c   b   a");
+    p.client.println("");
+}
+
+String formatTime(unsigned long ms) {
+    int minutes = ms / 60000;
+    int seconds = (ms % 60000) / 1000;
+    String result = "";
+    if (minutes < 10) result += "0";
+    result += String(minutes) + ":";
+    if (seconds < 10) result += "0";
+    result += String(seconds);
+    return result;
+}
+
+bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int &toRow) {
+    moveStr.toLowerCase();
+    moveStr.trim();
+    
+    // Standard algebraic notation: d2d4 (from d-file 2nd rank to d-file 4th rank)
+    if (moveStr.length() == 4) {
+        if (!isalpha(moveStr[0]) || !isdigit(moveStr[1]) || 
+            !isalpha(moveStr[2]) || !isdigit(moveStr[3])) {
+            return false;
+        }
+        
+        fromCol = moveStr[0] - 'a';  // a=0, h=7
+        fromRow = moveStr[1] - '1';  // 1=0, 8=7
+        toCol = moveStr[2] - 'a';
+        toRow = moveStr[3] - '1';
+        
+        // Validate ranges
+        if (fromCol < 0 || fromCol > 7 || fromRow < 0 || fromRow > 7 ||
+            toCol < 0 || toCol > 7 || toRow < 0 || toRow > 7) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    return false;
+}
+
+void startChessGame(Player &p, int playerIndex, ChessSession &session) {
+    bool playerIsWhite = (playerIndex % 2 == 0);
+    
+    initChessGame(session, playerIsWhite);
+    session.gameRoomX = p.roomX;
+    session.gameRoomY = p.roomY;
+    session.gameRoomZ = p.roomZ;
+    
+    p.client.println("Welcome to Chess!");
+    p.client.println("You are playing as " + String(playerIsWhite ? "WHITE" : "BLACK") + ".");
+    p.client.println("");
+    p.client.println("Enter moves in format: d2d4 (from d2 to d4)");
+    p.client.println("Type 'resign' to give up, 'end' to quit.");
+    p.client.println("");
+    
+    renderChessBoard(p, session);
+}
+
+void processChessMove(Player &p, int playerIndex, ChessSession &session, String moveStr) {
+    int fromCol, fromRow, toCol, toRow;
+    
+    if (!parseChessMove(moveStr, fromCol, fromRow, toCol, toRow)) {
+        p.client.println("Invalid move format. Use: d2d4");
+        return;
+    }
+    
+    // TODO: Validate move legality with mcu-max engine
+    // TODO: Update board state
+    // TODO: Call engine for response move
+    
+    p.client.println("Move received: " + moveStr);
+    p.client.println("[Chess engine would respond here - integration pending]");
+    
+    renderChessBoard(p, session);
+}
+
+void endChessGame(Player &p, int playerIndex) {
+    ChessSession &session = chessSessions[playerIndex];
+    session.gameActive = false;
+    
+    p.client.println("Game ended. Returning to Game Parlor...");
+    p.client.println("");
+    
+    // Show the Game Parlor sign
+    p.client.println("===== GAME PARLOR GAMES =====");
+    p.client.println("1. High-Low Card Game - Test your luck!");
+    p.client.println("2. Chess - Challenge the engine!");
     p.client.println("");
     p.client.println("Type 'play [#]' to play!");
     p.client.println("Type 'rules [#]' for game rules!");
@@ -12878,6 +13044,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         if (args.length() == 0) {
             p.client.println("Available games:");
             p.client.println("  1. High-Low Card Game (bet on whether 3rd card is inside/outside range)");
+            p.client.println("  2. Chess (challenge the engine)");
             p.client.println("Usage: play 1");
             return;
         }
@@ -12913,7 +13080,19 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             } else {
                 p.client.println("You are already in a game. Use commands like a number or 'pot' to bet.");
             }
-        } else {
+        }
+        // Game 2: Chess
+        else if (gameNum == 2) {
+            ChessSession &session = chessSessions[playerIndex];
+            
+            // If not playing, start a new game
+            if (!session.gameActive) {
+                startChessGame(p, playerIndex, session);
+            } else {
+                p.client.println("You are already in a chess game.");
+            }
+        }
+        else {
             p.client.println("Unknown game number. Use 'play' to see available games.");
         }
         return;
@@ -12930,6 +13109,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         if (args.length() == 0) {
             p.client.println("Available games:");
             p.client.println("  1. High-Low Card Game");
+            p.client.println("  2. Chess");
             p.client.println("Usage: rules 1");
             return;
         }
@@ -12938,8 +13118,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         
         // Game 1: High-Low Rules
         if (gameNum == 1) {
-            p.client.println("===== RULES FOR High-Low Card Game =====================");
-            p.client.println("Start with 2 cards, bet whether 3rd card is HIGH or LOW.");
+            p.client.println("===================== RULES FOR High-Low Card Game =====================");
+            p.client.println("The game starts with the dealer dealing you 2 cards.");
+            p.client.println("");
+            p.client.println("OBJECT:");
+            p.client.println("- You are betting if the 3rd card dealt value is between");
+            p.client.println("  the first two card values.");
             p.client.println("");
             p.client.println("OUTCOMES:");
             p.client.println("- WIN: 3rd card is STRICTLY INSIDE range [card1, card2]");
@@ -12966,7 +13150,32 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             p.client.println("    then shuffles a new deck and continues");
             p.client.println("");
             p.client.println("  *** If you are good at COUNTING CARDS, take advantage! ***");
-            p.client.println("========================================================");
+            p.client.println("========================================================================");
+        }
+        // Game 2: Chess Rules
+        else if (gameNum == 2) {
+            p.client.println("===================== RULES FOR CHESS =====================");
+            p.client.println("OBJECT:");
+            p.client.println("- Defeat the chess engine by checkmating the king");
+            p.client.println("- The player is assigned Black or White alternately");
+            p.client.println("");
+            p.client.println("GAMEPLAY:");
+            p.client.println("- Enter moves in algebraic notation: d2d4 (from d2 to d4)");
+            p.client.println("- White moves first");
+            p.client.println("- Each player has 5 minutes per game");
+            p.client.println("");
+            p.client.println("BOARD:");
+            p.client.println("- Standard 8x8 chess board");
+            p.client.println("- Columns: a-h (left to right)");
+            p.client.println("- Rows: 1-8 (bottom to top for White, top to bottom for Black)");
+            p.client.println("");
+            p.client.println("COMMANDS:");
+            p.client.println("- Enter move: d2d4");
+            p.client.println("- 'resign' : Give up the game");
+            p.client.println("- 'end'    : Quit and return to Game Parlor");
+            p.client.println("");
+            p.client.println("ENGINE STRENGTH: ~1800 ELO rating");
+            p.client.println("===========================================================");
         } else {
             p.client.println("Unknown game number. Use 'rules' to see available games.");
         }
@@ -13978,6 +14187,27 @@ if (cmd == "debug") {
                     return;
                 }
             }
+        }
+    }
+    
+    // Check if player is in an active Chess game session
+    if (playerIndex >= 0 && chessSessions[playerIndex].gameActive) {
+        ChessSession &session = chessSessions[playerIndex];
+        
+        if (cmd == "resign") {
+            endChessGame(p, playerIndex);
+            return;
+        } else if (cmd == "end" || cmd == "quit") {
+            endChessGame(p, playerIndex);
+            return;
+        } else {
+            // Try to process as a chess move (combine cmd and args for full move notation)
+            String moveStr = cmd;
+            if (args.length() > 0) {
+                moveStr += args;
+            }
+            processChessMove(p, playerIndex, session, moveStr);
+            return;
         }
     }
 
