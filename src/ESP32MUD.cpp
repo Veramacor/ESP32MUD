@@ -126,15 +126,17 @@ struct HighLowSession {
 
 struct ChessSession {
     bool gameActive;             // true if player is actively playing
-    char board[64];              // FEN board state (simplified representation)
+    unsigned char board[64];     // 64 squares: 0=empty, 1-6=white pieces, 7-12=black pieces
+                                 // Piece encoding: 1=P(pawn), 2=N(knight), 3=B(bishop), 4=R(rook), 5=Q(queen), 6=K(king)
+                                 // Add 6 for black pieces
     bool playerIsWhite;          // true if player plays white
-    int moveCount;               // moves made
-    unsigned long blackClock;    // milliseconds remaining
-    unsigned long whiteClock;    // milliseconds remaining
+    int moveCount;               // moves made (increments after both sides move)
     bool isBlackToMove;          // whose turn it is
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
     String lastEngineMove;       // last move made by engine
     String lastPlayerMove;       // last move made by player
+    bool gameEnded;              // true if game has ended
+    String endReason;            // why game ended (checkmate, stalemate, resignation)
 };
 
 // Letter system for mail retrieval
@@ -6356,43 +6358,121 @@ void endHighLowGame(Player &p, int playerIndex) {
 // CHESS GAME FUNCTIONS
 // =============================
 
+
+// Helper: Initialize board to starting position
+void initializeChessBoard(unsigned char board[64]) {
+    // Clear board
+    memset(board, 0, 64);
+    
+    // Set up pawns
+    for (int i = 0; i < 8; i++) {
+        board[8 + i] = 1;        // White pawns on rank 2
+        board[48 + i] = 7;       // Black pawns on rank 7
+    }
+    
+    // Set up pieces
+    // Rank 1 (White): a1=R, b1=N, c1=B, d1=Q, e1=K, f1=B, g1=N, h1=R
+    board[0] = 4;   // a1: White Rook
+    board[1] = 2;   // b1: White Knight
+    board[2] = 3;   // c1: White Bishop
+    board[3] = 5;   // d1: White Queen
+    board[4] = 6;   // e1: White King
+    board[5] = 3;   // f1: White Bishop
+    board[6] = 2;   // g1: White Knight
+    board[7] = 4;   // h1: White Rook
+    
+    // Rank 8 (Black)
+    board[56] = 10; // a8: Black Rook
+    board[57] = 8;  // b8: Black Knight
+    board[58] = 9;  // c8: Black Bishop
+    board[59] = 11; // d8: Black Queen
+    board[60] = 12; // e8: Black King
+    board[61] = 9;  // f8: Black Bishop
+    board[62] = 8;  // g8: Black Knight
+    board[63] = 10; // h8: Black Rook
+}
+
 void initChessGame(ChessSession &session, bool playerIsWhite) {
     session.gameActive = true;
     session.playerIsWhite = playerIsWhite;
     session.moveCount = 0;
-    session.blackClock = 5 * 60 * 1000;  // 5 minutes in milliseconds
-    session.whiteClock = 5 * 60 * 1000;
     session.isBlackToMove = false;  // White always moves first
     session.lastEngineMove = "";
     session.lastPlayerMove = "";
+    session.gameEnded = false;
+    session.endReason = "";
     
     // Initialize board to standard starting position
-    memset(session.board, 0, 64);
+    initializeChessBoard(session.board);
+}
+
+// Get piece character for display
+char getPieceChar(unsigned char piece) {
+    switch(piece) {
+        case 0: return ' ';
+        case 1: return 'P'; // White Pawn
+        case 2: return 'N'; // White Knight
+        case 3: return 'B'; // White Bishop
+        case 4: return 'R'; // White Rook
+        case 5: return 'Q'; // White Queen
+        case 6: return 'K'; // White King
+        case 7: return 'P'; // Black Pawn
+        case 8: return 'N'; // Black Knight
+        case 9: return 'B'; // Black Bishop
+        case 10: return 'R'; // Black Rook
+        case 11: return 'Q'; // Black Queen
+        case 12: return 'K'; // Black King
+        default: return '?';
+    }
+}
+
+// Check if piece is white (1-6)
+bool isWhitePiece(unsigned char piece) {
+    return piece > 0 && piece < 7;
+}
+
+// Check if piece is black (7-12)
+bool isBlackPiece(unsigned char piece) {
+    return piece > 6 && piece < 13;
 }
 
 void renderChessBoard(Player &p, ChessSession &session) {
     p.client.println("\x1B[2J\x1B[H");  // Clear screen
     
-    // Standard starting position display
+    // Render from rank 8 down to rank 1 (top to bottom)
     p.client.println("       ---------------------------------");
-    p.client.println("    1  | R | N | B | K | Q | B | N | R |     Move # : " + String(session.moveCount) + 
-                     " (" + String(session.isBlackToMove ? "Black" : "White") + ")");
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    2  | P | P | P | P |   | P | P | P |     " + 
-                     (session.lastEngineMove.length() > 0 ? "White Moves : '" + session.lastEngineMove + "'" : "White Moves : '--'"));
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    3  |   |   |   |   |   |   |   |   |");
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    4  |   |   |   |   | P |   |   |   |     Black Clock : " + formatTime(session.blackClock));
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    5  |   |   |   |   |   |   |   |   |     White Clock : " + formatTime(session.whiteClock));
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    6  |   |   |   |   |   |   |   |   |     Black Strength : 1800");
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    7  | *P| *P| *P| *P| *P| *P| *P| *P|     White Strength : 1800");
-    p.client.println("       |---+---+---+---+---+---+---+---|");
-    p.client.println("    8  | *R| *N| *B| *K| *Q| *B| *N| *R|");
-    p.client.println("       ---------------------------------");
+    for (int rank = 7; rank >= 0; rank--) {
+        p.client.print("    " + String(rank + 1) + "  |");
+        for (int file = 7; file >= 0; file--) {
+            unsigned char piece = session.board[rank * 8 + file];
+            char pieceChar = getPieceChar(piece);
+            bool isBlack = isBlackPiece(piece);
+            
+            if (isBlack) {
+                p.client.print(" *" + String(pieceChar) + "|");
+            } else {
+                p.client.print("  " + String(pieceChar) + "|");
+            }
+        }
+        
+        // Right side info
+        if (rank == 7) {
+            p.client.println("     Move # : " + String(session.moveCount) + " (" + 
+                           String(session.isBlackToMove ? "Black" : "White") + ")");
+        } else if (rank == 6) {
+            p.client.println("     " + 
+                           (session.lastEngineMove.length() > 0 ? 
+                            "White Moves : '" + session.lastEngineMove + "'" : 
+                            "White Moves : '--'"));
+        } else if (rank == 4) {
+            p.client.println("     Black to move: " + String(session.isBlackToMove ? "YES" : "NO"));
+        } else {
+            p.client.println("");
+        }
+        
+        p.client.println("       |---+---+---+---+---+---+---+---|");
+    }
+    
     p.client.println("         h   g   f   e   d   c   b   a");
     p.client.println("");
 }
@@ -6436,6 +6516,218 @@ bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int 
     return false;
 }
 
+// Check if a move is legally possible for the piece at fromSquare
+bool isLegalMove(unsigned char board[64], int fromRow, int fromCol, int toRow, int toCol, bool isWhiteMove) {
+    unsigned char piece = board[fromRow * 8 + fromCol];
+    unsigned char target = board[toRow * 8 + toCol];
+    
+    // Can't move empty square
+    if (piece == 0) return false;
+    
+    // Can't move opponent's piece
+    if (isWhiteMove && !isWhitePiece(piece)) return false;
+    if (!isWhiteMove && !isBlackPiece(piece)) return false;
+    
+    // Can't capture own piece
+    if (isWhiteMove && isWhitePiece(target)) return false;
+    if (!isWhiteMove && isBlackPiece(target)) return false;
+    
+    // Can't move to same square
+    if (fromRow == toRow && fromCol == toCol) return false;
+    
+    unsigned char baseType = piece > 6 ? piece - 6 : piece;
+    
+    // Pawn (1)
+    if (baseType == 1) {
+        int direction = isWhiteMove ? 1 : -1;
+        int startRow = isWhiteMove ? 1 : 6;
+        
+        // Forward move
+        if (toCol == fromCol) {
+            // One square forward
+            if (toRow == fromRow + direction && board[toRow * 8 + toCol] == 0) {
+                return true;
+            }
+            // Two squares forward from starting position
+            if (fromRow == startRow && toRow == fromRow + 2 * direction && 
+                board[toRow * 8 + toCol] == 0 && 
+                board[(fromRow + direction) * 8 + fromCol] == 0) {
+                return true;
+            }
+        }
+        // Capture diagonally
+        if (abs(toCol - fromCol) == 1 && toRow == fromRow + direction && target != 0) {
+            return true;
+        }
+        return false;
+    }
+    
+    // Knight (2)
+    if (baseType == 2) {
+        int dRow = abs(toRow - fromRow);
+        int dCol = abs(toCol - fromCol);
+        return (dRow == 2 && dCol == 1) || (dRow == 1 && dCol == 2);
+    }
+    
+    // Bishop (3) - diagonal
+    if (baseType == 3) {
+        if (abs(toRow - fromRow) != abs(toCol - fromCol)) return false;
+        int dRow = (toRow > fromRow) ? 1 : -1;
+        int dCol = (toCol > fromCol) ? 1 : -1;
+        int r = fromRow + dRow;
+        int c = fromCol + dCol;
+        while (r != toRow) {
+            if (board[r * 8 + c] != 0) return false;
+            r += dRow;
+            c += dCol;
+        }
+        return true;
+    }
+    
+    // Rook (4) - straight
+    if (baseType == 4) {
+        if (toRow != fromRow && toCol != fromCol) return false;
+        if (toRow == fromRow) {
+            int dir = (toCol > fromCol) ? 1 : -1;
+            for (int c = fromCol + dir; c != toCol; c += dir) {
+                if (board[fromRow * 8 + c] != 0) return false;
+            }
+        } else {
+            int dir = (toRow > fromRow) ? 1 : -1;
+            for (int r = fromRow + dir; r != toRow; r += dir) {
+                if (board[r * 8 + fromCol] != 0) return false;
+            }
+        }
+        return true;
+    }
+    
+    // Queen (5) - rook + bishop
+    if (baseType == 5) {
+        // Rook-like move
+        if (toRow == fromRow || toCol == fromCol) {
+            if (toRow == fromRow) {
+                int dir = (toCol > fromCol) ? 1 : -1;
+                for (int c = fromCol + dir; c != toCol; c += dir) {
+                    if (board[fromRow * 8 + c] != 0) return false;
+                }
+            } else {
+                int dir = (toRow > fromRow) ? 1 : -1;
+                for (int r = fromRow + dir; r != toRow; r += dir) {
+                    if (board[r * 8 + fromCol] != 0) return false;
+                }
+            }
+            return true;
+        }
+        // Bishop-like move
+        if (abs(toRow - fromRow) == abs(toCol - fromCol)) {
+            int dRow = (toRow > fromRow) ? 1 : -1;
+            int dCol = (toCol > fromCol) ? 1 : -1;
+            int r = fromRow + dRow;
+            int c = fromCol + dCol;
+            while (r != toRow) {
+                if (board[r * 8 + c] != 0) return false;
+                r += dRow;
+                c += dCol;
+            }
+            return true;
+        }
+        return false;
+    }
+    
+    // King (6)
+    if (baseType == 6) {
+        return abs(toRow - fromRow) <= 1 && abs(toCol - fromCol) <= 1;
+    }
+    
+    return false;
+}
+
+// Apply a move to the board
+void applyMove(unsigned char board[64], int fromRow, int fromCol, int toRow, int toCol) {
+    board[toRow * 8 + toCol] = board[fromRow * 8 + fromCol];
+    board[fromRow * 8 + fromCol] = 0;
+}
+
+// Find king position for a side
+bool findKing(unsigned char board[64], bool isWhite, int &kingRow, int &kingCol) {
+    unsigned char kingPiece = isWhite ? 6 : 12;
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            if (board[r * 8 + c] == kingPiece) {
+                kingRow = r;
+                kingCol = c;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Check if a side is in check
+bool isInCheck(unsigned char board[64], bool isWhite) {
+    int kingRow, kingCol;
+    if (!findKing(board, isWhite, kingRow, kingCol)) return false;
+    
+    // Check if any opponent piece can attack the king
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            unsigned char piece = board[r * 8 + c];
+            bool isOpponentPiece = isWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+            
+            if (isOpponentPiece && isLegalMove(board, r, c, kingRow, kingCol, !isWhite)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Check if a side has any legal moves
+bool hasLegalMoves(unsigned char board[64], bool isWhite) {
+    for (int fromR = 0; fromR < 8; fromR++) {
+        for (int fromC = 0; fromC < 8; fromC++) {
+            unsigned char piece = board[fromR * 8 + fromC];
+            bool isPiece = isWhite ? isWhitePiece(piece) : isBlackPiece(piece);
+            
+            if (!isPiece) continue;
+            
+            for (int toR = 0; toR < 8; toR++) {
+                for (int toC = 0; toC < 8; toC++) {
+                    if (isLegalMove(board, fromR, fromC, toR, toC, isWhite)) {
+                        // Test if move leaves king in check
+                        unsigned char testBoard[64];
+                        memcpy(testBoard, board, 64);
+                        applyMove(testBoard, fromR, fromC, toR, toC);
+                        
+                        if (!isInCheck(testBoard, isWhite)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Check for checkmate or stalemate
+bool checkGameEnd(unsigned char board[64], bool isWhite, String &reason) {
+    bool inCheck = isInCheck(board, isWhite);
+    bool hasLegals = hasLegalMoves(board, isWhite);
+    
+    if (!hasLegals) {
+        if (inCheck) {
+            reason = isWhite ? "White is checkmated!" : "Black is checkmated!";
+            return true;
+        } else {
+            reason = "Stalemate! The game is a draw.";
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 void startChessGame(Player &p, int playerIndex, ChessSession &session) {
     bool playerIsWhite = (playerIndex % 2 == 0);
     
@@ -6462,12 +6754,119 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         return;
     }
     
-    // TODO: Validate move legality with mcu-max engine
-    // TODO: Update board state
-    // TODO: Call engine for response move
+    // Check if game is already over
+    if (session.gameEnded) {
+        p.client.println("Game has ended: " + session.endReason);
+        return;
+    }
     
-    p.client.println("Move received: " + moveStr);
-    p.client.println("[Chess engine would respond here - integration pending]");
+    // Check if it's the player's turn
+    bool isPlayerWhite = session.playerIsWhite;
+    bool isPlayerTurn = (isPlayerWhite && !session.isBlackToMove) || (!isPlayerWhite && session.isBlackToMove);
+    
+    if (!isPlayerTurn) {
+        p.client.println("It's not your turn!");
+        return;
+    }
+    
+    // Validate the move
+    if (!isLegalMove(session.board, fromRow, fromCol, toRow, toCol, isPlayerWhite)) {
+        p.client.println("Illegal move! That piece cannot move there.");
+        return;
+    }
+    
+    // Test if move leaves player's king in check
+    unsigned char testBoard[64];
+    memcpy(testBoard, session.board, 64);
+    applyMove(testBoard, fromRow, fromCol, toRow, toCol);
+    
+    if (isInCheck(testBoard, isPlayerWhite)) {
+        p.client.println("Illegal move! Your king would be in check.");
+        return;
+    }
+    
+    // Move is valid - apply it
+    applyMove(session.board, fromRow, fromCol, toRow, toCol);
+    session.lastPlayerMove = moveStr;
+    session.isBlackToMove = !session.isBlackToMove;
+    
+    p.client.println("Your move: " + moveStr);
+    p.client.println("");
+    
+    // Check if player's move ended the game
+    String endReason = "";
+    if (checkGameEnd(session.board, !isPlayerWhite, endReason)) {
+        session.gameEnded = true;
+        session.endReason = endReason;
+        renderChessBoard(p, session);
+        p.client.println(endReason);
+        return;
+    }
+    
+    // Engine's turn - use simple random move generator as placeholder for mcu-max
+    // TODO: Replace with actual mcu-max engine call
+    bool foundEngineMove = false;
+    String engineMove = "";
+    
+    for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
+        for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
+            unsigned char piece = session.board[fromR * 8 + fromC];
+            bool isEnginePiece = !isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+            
+            if (!isEnginePiece) continue;
+            
+            for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
+                for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
+                    if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
+                        // Test if move leaves engine's king safe
+                        memcpy(testBoard, session.board, 64);
+                        applyMove(testBoard, fromR, fromC, toR, toC);
+                        
+                        if (!isInCheck(testBoard, !isPlayerWhite)) {
+                            // Found a legal move - prefer captures and checks
+                            unsigned char target = session.board[toR * 8 + toC];
+                            bool isCapture = target != 0;
+                            
+                            // For now, just take the first legal move (simple strategy)
+                            char fromColChar = 'a' + (7 - fromC);
+                            char fromRowChar = '1' + fromR;
+                            char toColChar = 'a' + (7 - toC);
+                            char toRowChar = '1' + toR;
+                            
+                            engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar) + String(toRowChar);
+                            applyMove(session.board, fromR, fromC, toR, toC);
+                            session.lastEngineMove = engineMove;
+                            foundEngineMove = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    session.isBlackToMove = !session.isBlackToMove;
+    session.moveCount++;
+    
+    if (foundEngineMove) {
+        p.client.println("Engine's move: " + engineMove);
+    } else {
+        // No legal moves - engine is either checkmated or stalemated
+        String engineEndReason = "";
+        if (checkGameEnd(session.board, !isPlayerWhite, engineEndReason)) {
+            session.gameEnded = true;
+            session.endReason = engineEndReason;
+            renderChessBoard(p, session);
+            p.client.println(engineEndReason);
+            return;
+        }
+    }
+    
+    // Check if engine move ends the game
+    endReason = "";
+    if (checkGameEnd(session.board, isPlayerWhite, endReason)) {
+        session.gameEnded = true;
+        session.endReason = endReason;
+    }
     
     renderChessBoard(p, session);
 }
