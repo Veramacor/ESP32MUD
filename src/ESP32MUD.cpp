@@ -7020,7 +7020,7 @@ bool checkGameEnd(unsigned char board[64], bool isWhite, String &reason) {
 }
 
 void startChessGame(Player &p, int playerIndex, ChessSession &session) {
-    bool playerIsWhite = (playerIndex % 2 == 0);
+    bool playerIsWhite = true;  // Player is always White and moves first
     
     initChessGame(session, playerIsWhite);
     session.gameRoomX = p.roomX;
