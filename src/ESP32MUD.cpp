@@ -12,6 +12,7 @@
 #include "YmodemBootloader.h"
 #include "version.h"  // Auto-generated at build time  VERSION INFO Auto generated version Number
 #include "chess_game.h"
+#include <mcu-max.h>  // Strong chess engine library
 
 
 
@@ -96,6 +97,40 @@ struct Tavern {
     Drink* findDrink(const String &target);
     void displayMenu();
 };
+
+// =====================================================
+// MUD ACTIVITY MONITORING - For engine thinking time
+// =====================================================
+unsigned long lastActivityTime = 0;  // millis() of last player activity
+unsigned long mudActivityStartTime = 0;  // when current quiet period started
+
+// Function to get current MUD activity duration in milliseconds
+unsigned long getMUDActivityDuration() {
+    if (lastActivityTime == 0) return 0;
+    return millis() - lastActivityTime;
+}
+
+// Function to reset activity timer (called when player does something)
+void resetMUDActivityTimer() {
+    lastActivityTime = millis();
+    mudActivityStartTime = millis();
+}
+
+// Function to get engine thinking time based on current activity (1-5 seconds)
+int getEngineThinkingTimeMs() {
+    unsigned long activityMs = getMUDActivityDuration();
+    
+    // 0-1 second of inactivity: give engine 1 second
+    if (activityMs < 1000) return 1000;
+    // 1-2 seconds: give engine 2 seconds
+    else if (activityMs < 2000) return 2000;
+    // 2-3 seconds: give engine 3 seconds
+    else if (activityMs < 3000) return 3000;
+    // 3-4 seconds: give engine 4 seconds
+    else if (activityMs < 4000) return 4000;
+    // 4+ seconds: give engine full 5 seconds
+    else return 5000;
+}
 
 // =============================================================
 // POST OFFICE SYSTEM
@@ -383,6 +418,7 @@ void initChessGame(ChessSession &session, bool playerIsWhite);
 void renderChessBoard(Player &p, ChessSession &session);
 String formatTime(unsigned long ms);
 bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int &toRow);
+String formatChessMoveWithPieces(int fromR, int fromC, int toR, int toC, unsigned char movingPiece, unsigned char targetPiece);
 void startChessGame(Player &p, int playerIndex, ChessSession &session);
 void processChessMove(Player &p, int playerIndex, ChessSession &session, String moveStr);
 void endChessGame(Player &p, int playerIndex);
@@ -6456,6 +6492,8 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
     bool whitePlayedC4 = (board[3 * 8 + 2] == 1);  // Pawn on c4
     bool whitePlayedNf3 = (board[2 * 8 + 5] == 2); // Knight on f3
     
+    bool moveFound = false;  // Track if we found a book move
+    
     // Ply 1: Black's response
     if (plyCount == 1) {
         int choice = random(1, 100);
@@ -6475,7 +6513,7 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
                 // 1...e6 French
                 fromR = 1; fromC = 4; toR = 2; toC = 4;
             }
-            return true;
+            moveFound = true;
         } else if (whitePlayedD4) {
             // Response to 1.d4: d5 (40%), Nf6 (40%), c6 (20%)
             if (choice <= 40) {
@@ -6488,7 +6526,7 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
                 // 1...c6 Slav
                 fromR = 1; fromC = 2; toR = 2; toC = 2;
             }
-            return true;
+            moveFound = true;
         } else if (whitePlayedC4) {
             // Response to 1.c4: 50/50 e5 or Nf6
             if (choice <= 50) {
@@ -6496,7 +6534,7 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
             } else {
                 fromR = 0; fromC = 6; toR = 2; toC = 5;  // Nf6
             }
-            return true;
+            moveFound = true;
         } else if (whitePlayedNf3) {
             // Response to 1.Nf3: 50/50 d5 or Nf6
             if (choice <= 50) {
@@ -6504,12 +6542,19 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
             } else {
                 fromR = 0; fromC = 6; toR = 2; toC = 5;  // Nf6
             }
+            moveFound = true;
+        }
+        
+        // For Black's moves (odd ply), flip the rank coordinates
+        if (moveFound) {
+            fromR = 7 - fromR;  // Convert from White's perspective to Black's
+            toR = 7 - toR;
             return true;
         }
         return false;
     }
     
-    // Ply 2: White's second move
+    // Ply 2: White's second move (no flip needed for White)
     if (plyCount == 2) {
         bool blackPlayedC5 = (board[3 * 8 + 2] == 7);  // Black pawn on c5
         bool blackPlayedE5 = (board[3 * 8 + 4] == 7);  // Black pawn on e5
@@ -6740,8 +6785,8 @@ bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int 
     // Piece shorthand notation: Rh4, Nf3, Bf5, Qd4, Ke2 (piece letter + destination)
     if (moveStr.length() == 3) {
         char pieceLetter = moveStr[0];
-        if ((pieceLetter != 'R' && pieceLetter != 'N' && pieceLetter != 'B' && 
-             pieceLetter != 'Q' && pieceLetter != 'K') ||
+        if ((pieceLetter != 'r' && pieceLetter != 'n' && pieceLetter != 'b' && 
+             pieceLetter != 'q' && pieceLetter != 'k') ||
             !isalpha(moveStr[1]) || !isdigit(moveStr[2])) {
             // Not piece shorthand, might be 2-char shorthand below
             if (moveStr.length() == 2) {
@@ -6772,11 +6817,11 @@ bool parseChessMove(String moveStr, int &fromCol, int &fromRow, int &toCol, int 
         // fromCol: 0=Rook, 1=Knight, 2=Bishop, 3=Queen, 4=King
         // fromRow = -1 to distinguish from 2-char shorthand
         switch(pieceLetter) {
-            case 'R': fromCol = 0; break;
-            case 'N': fromCol = 1; break;
-            case 'B': fromCol = 2; break;
-            case 'Q': fromCol = 3; break;
-            case 'K': fromCol = 4; break;
+            case 'r': fromCol = 0; break;
+            case 'n': fromCol = 1; break;
+            case 'b': fromCol = 2; break;
+            case 'q': fromCol = 3; break;
+            case 'k': fromCol = 4; break;
         }
         fromRow = -1;
         
@@ -6927,7 +6972,27 @@ bool isLegalMove(unsigned char board[64], int fromRow, int fromCol, int toRow, i
     
     // King (6)
     if (baseType == 6) {
-        return abs(toRow - fromRow) <= 1 && abs(toCol - fromCol) <= 1;
+        // Normal king move: 1 square in any direction
+        if (abs(toRow - fromRow) <= 1 && abs(toCol - fromCol) <= 1) {
+            return true;
+        }
+        // Castling: King moves 2 squares horizontally on back rank
+        // King-side castling: e1g1 (white) or e8g8 (black)
+        // Queen-side castling: e1c1 (white) or e8c8 (black)
+        if (fromRow == toRow && abs(toCol - fromCol) == 2) {
+            // Must be on back rank (row 0 for White or row 7 for Black)
+            if ((isWhiteMove && fromRow == 0) || (!isWhiteMove && fromRow == 7)) {
+                // Check if path is clear
+                int minCol = (toCol < fromCol) ? toCol : fromCol;
+                int maxCol = (toCol > fromCol) ? toCol : fromCol;
+                for (int c = minCol + 1; c < maxCol; c++) {
+                    if (board[fromRow * 8 + c] != 0) return false;
+                }
+                // Path is clear - castling is allowed (actual rook move will be handled separately)
+                return true;
+            }
+        }
+        return false;
     }
     
     return false;
@@ -6935,8 +7000,28 @@ bool isLegalMove(unsigned char board[64], int fromRow, int fromCol, int toRow, i
 
 // Apply a move to the board
 void applyMove(unsigned char board[64], int fromRow, int fromCol, int toRow, int toCol) {
-    board[toRow * 8 + toCol] = board[fromRow * 8 + fromCol];
+    unsigned char piece = board[fromRow * 8 + fromCol];
+    board[toRow * 8 + toCol] = piece;
     board[fromRow * 8 + fromCol] = 0;
+    
+    // Handle castling: if King moved 2 squares, also move the rook
+    unsigned char baseType = piece > 6 ? piece - 6 : piece;
+    if (baseType == 6 && abs(toCol - fromCol) == 2) {
+        // King-side castling (king moves right)
+        if (toCol > fromCol) {
+            // Move rook from h-file to f-file
+            unsigned char rook = board[fromRow * 8 + 7];  // Rook at h-file
+            board[fromRow * 8 + 5] = rook;  // Move to f-file
+            board[fromRow * 8 + 7] = 0;    // Clear h-file
+        }
+        // Queen-side castling (king moves left)
+        else {
+            // Move rook from a-file to d-file
+            unsigned char rook = board[fromRow * 8 + 0];  // Rook at a-file
+            board[fromRow * 8 + 3] = rook;  // Move to d-file
+            board[fromRow * 8 + 0] = 0;    // Clear a-file
+        }
+    }
 }
 
 // Find king position for a side
@@ -7037,6 +7122,52 @@ void startChessGame(Player &p, int playerIndex, ChessSession &session) {
     renderChessBoard(p, session);
 }
 
+// Format move notation using pieces captured before the move was applied
+String formatChessMoveWithPieces(int fromR, int fromC, int toR, int toC, unsigned char movingPiece, unsigned char targetPiece) {
+    // Get piece name
+    String pieceName = "";
+    bool isPawn = false;
+    switch(movingPiece) {
+        case 1: case 7: pieceName = "Pawn"; isPawn = true; break;
+        case 2: case 8: pieceName = "Knight"; break;
+        case 3: case 9: pieceName = "Bishop"; break;
+        case 4: case 10: pieceName = "Rook"; break;
+        case 5: case 11: pieceName = "Queen"; break;
+        case 6: case 12: pieceName = "King"; break;
+    }
+    
+    // Get target square notation
+    char toColChar = 'a' + toC;
+    char toRowChar = '1' + toR;
+    String toSquare = String(toColChar) + String(toRowChar);
+    
+    // Check for castling
+    if ((movingPiece == 6 || movingPiece == 12) && abs(fromC - toC) == 2) {
+        if (toC > fromC) {
+            return "Castles King Side";
+        } else {
+            return "Castles Queen Side";
+        }
+    }
+    
+    // Check for capture
+    if (targetPiece != 0) {
+        String targetName = "";
+        switch(targetPiece) {
+            case 1: case 7: targetName = "Pawn"; break;
+            case 2: case 8: targetName = "Knight"; break;
+            case 3: case 9: targetName = "Bishop"; break;
+            case 4: case 10: targetName = "Rook"; break;
+            case 5: case 11: targetName = "Queen"; break;
+            case 6: case 12: targetName = "King"; break;
+        }
+        return pieceName + " takes " + targetName + " on " + toSquare;
+    }
+    
+    // Regular move
+    return pieceName + " moves to " + toSquare;
+}
+
 String formatChessMove(unsigned char board[64], int fromR, int fromC, int toR, int toC, bool isPlayerWhite) {
     unsigned char movingPiece = board[fromR * 8 + fromC];
     unsigned char targetPiece = board[toR * 8 + toC];
@@ -7104,29 +7235,90 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     
     // Handle shorthand notation (e.g., "d4" or "Rh4")
     if (fromCol == -1 && fromRow == -1) {
-        // 2-character pawn shorthand (d4, e5, etc.)
-        // Find which piece can move to this square
+        // 2-character shorthand: could be pawn move "d4" or pawn capture "ed"
+        // If first char and second char are both letters, it's pawn capture (e.g., "ed")
+        // Otherwise it's pawn to square (e.g., "d4")
         bool isPlayerWhite = session.playerIsWhite;
         bool foundMove = false;
         
-        for (int r = 0; r < 8 && !foundMove; r++) {
-            for (int c = 0; c < 8 && !foundMove; c++) {
-                unsigned char piece = session.board[r * 8 + c];
+        bool isPawnCapture = isalpha(moveStr[1]);  // Both chars are letters = pawn capture
+        
+        if (isPawnCapture) {
+            // Pawn capture notation: "ed" means pawn from e-file captures on d-file
+            // fromCol is the pawn's file, toCol is where it captures
+            // We need to find the rank (try both diagonals)
+            int pawnFile = moveStr[0] - 'a';  // Source file (e = 4)
+            int captureFile = moveStr[1] - 'a';  // Destination file (d = 3)
+            
+            if (pawnFile < 0 || pawnFile > 7 || captureFile < 0 || captureFile > 7) {
+                p.client.println("Invalid pawn capture notation!");
+                return;
+            }
+            
+            // Search for a pawn on pawnFile that can capture on captureFile
+            for (int r = 0; r < 8 && !foundMove; r++) {
+                unsigned char piece = session.board[r * 8 + pawnFile];
                 if (piece == 0) continue;
+                
+                // Check if it's a pawn and belongs to the player
+                unsigned char baseType = piece > 6 ? piece - 6 : piece;
+                if (baseType != 1) continue;  // Not a pawn, skip
                 
                 // Check if it's player's piece
                 if (isPlayerWhite && !isWhitePiece(piece)) continue;
                 if (!isPlayerWhite && !isBlackPiece(piece)) continue;
                 
-                // Check if this piece can legally move to toRow, toCol
-                if (isLegalMove(session.board, r, c, toRow, toCol, isPlayerWhite)) {
+                // Try capturing one rank forward diagonally
+                int direction = isPlayerWhite ? 1 : -1;
+                int captureRow = r + direction;
+                
+                // Check both possible captures (left and right)
+                for (int tryCol = 0; tryCol < 8 && !foundMove; tryCol++) {
+                    if (tryCol != captureFile) continue;  // Must be on the target file
+                    
+                    unsigned char target = session.board[captureRow * 8 + tryCol];
+                    if (target == 0) continue;  // No piece to capture
+                    
+                    // Check if legal pawn capture
+                    if (abs(tryCol - pawnFile) == 1 && isLegalMove(session.board, r, pawnFile, captureRow, tryCol, isPlayerWhite)) {
+                        unsigned char testBoard[64];
+                        memcpy(testBoard, session.board, 64);
+                        applyMove(testBoard, r, pawnFile, captureRow, tryCol);
+                        
+                        if (!isInCheck(testBoard, isPlayerWhite)) {
+                            fromRow = r;
+                            fromCol = pawnFile;
+                            toRow = captureRow;
+                            toCol = tryCol;
+                            foundMove = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Pawn forward move notation: "d4" means pawn to d4
+            // Find a PAWN on the toCol file that can move to this square
+            for (int r = 0; r < 8 && !foundMove; r++) {
+                unsigned char piece = session.board[r * 8 + toCol];
+                if (piece == 0) continue;
+                
+                // Check if it's a pawn and belongs to the player
+                unsigned char baseType = piece > 6 ? piece - 6 : piece;
+                if (baseType != 1) continue;  // Not a pawn, skip
+                
+                // Check if it's player's piece
+                if (isPlayerWhite && !isWhitePiece(piece)) continue;
+                if (!isPlayerWhite && !isBlackPiece(piece)) continue;
+                
+                // Check if this pawn can legally move to toRow, toCol
+                if (isLegalMove(session.board, r, toCol, toRow, toCol, isPlayerWhite)) {
                     unsigned char testBoard[64];
                     memcpy(testBoard, session.board, 64);
-                    applyMove(testBoard, r, c, toRow, toCol);
+                    applyMove(testBoard, r, toCol, toRow, toCol);
                     
                     if (!isInCheck(testBoard, isPlayerWhite)) {
                         fromRow = r;
-                        fromCol = c;
+                        fromCol = toCol;
                         foundMove = true;
                     }
                 }
@@ -7134,7 +7326,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
         
         if (!foundMove) {
-            p.client.println("No legal move to that square!");
+            p.client.println("No legal pawn move to that square!");
             return;
         }
     }
@@ -7226,8 +7418,27 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     session.isBlackToMove = !session.isBlackToMove;
     session.moveCount++;
     
-    // Display formatted move
-    p.client.println("Your move: " + formatChessMove(session.board, fromRow, fromCol, toRow, toCol, isPlayerWhite));
+    // Display formatted move (use movedPiece and capturedPiece saved before the move)
+    String moveNotation = formatChessMoveWithPieces(fromRow, fromCol, toRow, toCol, movedPiece, capturedPiece);
+    
+    // Check for checkmate or check against engine
+    bool playerIsCheckmate = false;
+    bool engineInCheck = isInCheck(session.board, !isPlayerWhite);
+    
+    if (engineInCheck) {
+        // Check if engine has any legal moves - if not, it's checkmate
+        if (!hasLegalMoves(session.board, !isPlayerWhite)) {
+            playerIsCheckmate = true;
+        }
+    }
+    
+    if (playerIsCheckmate) {
+        p.client.println("Your move: " + moveNotation + " CHECKMATE! You Win!");
+    } else if (engineInCheck) {
+        p.client.println("Your move: " + moveNotation + " CHECK!");
+    } else {
+        p.client.println("Your move: " + moveNotation);
+    }
     p.client.println("");
     
     // Render the board showing the player's move
@@ -7243,113 +7454,162 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         return;
     }
     
-    // Engine's turn
+    // Engine's turn - using minimax with alpha-beta pruning
     p.client.println("Local Game Parlor local thinking about his move...");
     
     bool foundEngineMove = false;
-    bool moveFromOpeningBook = false;  // Track if move came from opening book
+    bool moveFromOpeningBook = false;
     String engineMove = "";
     int bestFromR = -1, bestFromC = -1, bestToR = -1, bestToC = -1;
     
     // Check opening book first (for first 10 plies / 5 moves)
-    // moveCount represents plies (half-moves), so ply = moveCount
     if (getOpeningBookMove(session.board, session.moveCount, bestFromR, bestFromC, bestToR, bestToC, !isPlayerWhite)) {
         foundEngineMove = true;
-        moveFromOpeningBook = true;  // Mark that this is a book move
+        moveFromOpeningBook = true;
     }
     
-    // Greedy engine: prioritize captures, then checks, then any legal move
-    // First pass: look for captures (only if opening book didn't provide a move)
-    for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
-        for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
-            unsigned char piece = session.board[fromR * 8 + fromC];
-            bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
-            
-            if (!isEnginePiece) continue;
-            
-            for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
-                for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
-                    unsigned char target = session.board[toR * 8 + toC];
-                    if (target == 0) continue;  // Skip non-captures
+    // If no opening book move, use mcu-max search
+    if (!foundEngineMove) {
+        mcumax_init();  // Reset mcu-max engine
+        
+        // Build FEN string from our board representation
+        // Our board: r=0 is rank 8 (Black's back rank), r=7 is rank 1 (White's back rank)
+        // FEN: starts with rank 8 (rnbqkbnr), ends with rank 1 (RNBQKBNR)
+        // mcu-max FEN reader expects: rank 8 first, rank 1 last
+        String fen = "";
+        
+        // Build FEN from our board
+        // ACTUAL board storage: r=0 is rank 1 (WHITE), r=7 is rank 8 (BLACK)
+        // FEN format: rank 8 first (BLACK), rank 1 last (WHITE)
+        // So iterate BACKWARDS: r=7 down to r=0 to get correct FEN order
+        for (int r = 7; r >= 0; r--) {
+            int emptyCount = 0;
+            for (int c = 0; c < 8; c++) {
+                unsigned char piece = session.board[r * 8 + c];
+                if (piece == 0) {
+                    emptyCount++;
+                } else {
+                    if (emptyCount > 0) {
+                        fen += String(emptyCount);
+                        emptyCount = 0;
+                    }
                     
-                    if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
-                        memcpy(testBoard, session.board, 64);
-                        applyMove(testBoard, fromR, fromC, toR, toC);
-                        
-                        if (!isInCheck(testBoard, !isPlayerWhite)) {
-                            bestFromR = fromR;
-                            bestFromC = fromC;
-                            bestToR = toR;
-                            bestToC = toC;
-                            foundEngineMove = true;
+                    unsigned char pieceType = piece > 6 ? piece - 6 : piece;
+                    bool isWhite = piece <= 6;
+                    char fenPiece = ' ';
+                    
+                    if (isWhite) {
+                        switch(pieceType) {
+                            case 1: fenPiece = 'P'; break;
+                            case 2: fenPiece = 'N'; break;
+                            case 3: fenPiece = 'B'; break;
+                            case 4: fenPiece = 'R'; break;
+                            case 5: fenPiece = 'Q'; break;
+                            case 6: fenPiece = 'K'; break;
+                        }
+                    } else {
+                        switch(pieceType) {
+                            case 1: fenPiece = 'p'; break;
+                            case 2: fenPiece = 'n'; break;
+                            case 3: fenPiece = 'b'; break;
+                            case 4: fenPiece = 'r'; break;
+                            case 5: fenPiece = 'q'; break;
+                            case 6: fenPiece = 'k'; break;
+                        }
+                    }
+                    fen += fenPiece;
+                }
+            }
+            if (emptyCount > 0) {
+                fen += String(emptyCount);
+            }
+            if (r > 0) fen += "/";
+        }
+        
+        // Side to move: engine just played, so it's opponent's turn NOW
+        // But we want the ENGINE to move, so we need to set to the engine's side
+        // isPlayerWhite means player is White, so engine is Black
+        // After player moves, it should be Black's (engine's) turn
+        fen += " ";
+        char sideToMove = isPlayerWhite ? 'b' : 'w';  // Engine's side to move
+        fen += sideToMove;
+        fen += " KQkq - 0 1";
+        
+        // Load position into mcu-max
+        mcumax_set_fen_position(fen.c_str());
+        
+        // Determine search depth based on position criticality
+        // Default depth 4, increase if we're in attacking position
+        int searchDepth = 4;
+        
+        // Check if opponent king is in check - increase depth for forcing moves
+        if (isInCheck(session.board, isPlayerWhite)) {
+            searchDepth = 6;  // Deeper search when we're already giving check
+        }
+        // Check if we can give check this move - increase for aggressive positions
+        else {
+            // Quick evaluation: look for checks available
+            bool canGiveCheck = false;
+            for (int r = 0; r < 8 && !canGiveCheck; r++) {
+                for (int c = 0; c < 8 && !canGiveCheck; c++) {
+                    unsigned char piece = session.board[r * 8 + c];
+                    bool isPiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
+                    
+                    if (!isPiece) continue;
+                    
+                    int kingRow, kingCol;
+                    if (findKing(session.board, isPlayerWhite, kingRow, kingCol)) {
+                        if (isLegalMove(session.board, r, c, kingRow, kingCol, !isPlayerWhite)) {
+                            canGiveCheck = true;
+                            searchDepth = 5;  // Increase depth if we can give check
                         }
                     }
                 }
             }
         }
-    }
-    
-    // Second pass: look for checks if no capture found
-    if (!foundEngineMove) {
-        for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
-            for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
-                unsigned char piece = session.board[fromR * 8 + fromC];
-                bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
-                
-                if (!isEnginePiece) continue;
-                
-                for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
-                    for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
-                        if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
-                            memcpy(testBoard, session.board, 64);
-                            applyMove(testBoard, fromR, fromC, toR, toC);
-                            
-                            if (!isInCheck(testBoard, !isPlayerWhite) && isInCheck(testBoard, isPlayerWhite)) {
-                                bestFromR = fromR;
-                                bestFromC = fromC;
-                                bestToR = toR;
-                                bestToC = toC;
-                                foundEngineMove = true;
-                            }
-                        }
-                    }
-                }
-            }
+        
+        // Search for best move using mcu-max with dynamic depth
+        // Engine thinking time is based on MUD activity:
+        // - 1 second if player has been quiet for 0-1 seconds
+        // - 2 seconds for 1-2 seconds quiet
+        // - 3 seconds for 2-3 seconds quiet
+        // - 4 seconds for 3-4 seconds quiet
+        // - 5 seconds for 4+ seconds quiet
+        int thinkTimeMs = getEngineThinkingTimeMs();
+        mcumax_move bestMove = mcumax_search_best_move(thinkTimeMs, searchDepth);
+        
+        if (bestMove.from != MCUMAX_SQUARE_INVALID && bestMove.to != MCUMAX_SQUARE_INVALID) {
+            // Convert mcu-max coordinates back to our board
+            // mcu-max rank 0-7 maps to our ranks 7-0 (flip)
+            // mcu-max files 0-7 map directly to our files 0-7 (no flip)
+            int mcuFromRank = (bestMove.from >> 4) & 0x7;
+            int mcuToRank = (bestMove.to >> 4) & 0x7;
+            int mcuFromFile = bestMove.from & 0x7;
+            int mcuToFile = bestMove.to & 0x7;
+            
+            // Convert ranks (flip because mcu-max rank 0 = our rank 7)
+            bestFromR = 7 - mcuFromRank;
+            bestToR = 7 - mcuToRank;
+            
+            // Files: no flip - they're the same in both systems (a=0, h=7)
+            bestFromC = mcuFromFile;
+            bestToC = mcuToFile;
+            
+            // Convert to algebraic notation
+            String fromSquare = "";
+            fromSquare += char('a' + bestFromC);
+            fromSquare += char('1' + bestFromR);
+            String toSquare = "";
+            toSquare += char('a' + bestToC);
+            toSquare += char('1' + bestToR);
+            
+            foundEngineMove = true;
         }
     }
     
-    // Third pass: take any legal move if no capture or check found
-    if (!foundEngineMove) {
-        for (int fromR = 0; fromR < 8 && !foundEngineMove; fromR++) {
-            for (int fromC = 0; fromC < 8 && !foundEngineMove; fromC++) {
-                unsigned char piece = session.board[fromR * 8 + fromC];
-                bool isEnginePiece = isPlayerWhite ? isBlackPiece(piece) : isWhitePiece(piece);
-                
-                if (!isEnginePiece) continue;
-                
-                for (int toR = 0; toR < 8 && !foundEngineMove; toR++) {
-                    for (int toC = 0; toC < 8 && !foundEngineMove; toC++) {
-                        if (isLegalMove(session.board, fromR, fromC, toR, toC, !isPlayerWhite)) {
-                            memcpy(testBoard, session.board, 64);
-                            applyMove(testBoard, fromR, fromC, toR, toC);
-                            
-                            if (!isInCheck(testBoard, !isPlayerWhite)) {
-                                bestFromR = fromR;
-                                bestFromC = fromC;
-                                bestToR = toR;
-                                bestToC = toC;
-                                foundEngineMove = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Allow 1 second for the search (skip delay for opening book moves - play instantly)
-    if (!moveFromOpeningBook) {
-        delay(1000);  // 1 second think time for greedy engine
+    // Play instantly from opening book, add think delay otherwise
+    if (!moveFromOpeningBook && foundEngineMove) {
+        delay(getEngineThinkingTimeMs());  // Dynamic think time based on activity
     }
     
     // Apply the move found
@@ -7410,7 +7670,27 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         // Render the board with the engine's move applied
         renderChessBoard(p, session);
         p.client.println("");
-        p.client.println("Engine's move: " + engineMoveNotation + ".");
+        
+        // Check for checkmate or check
+        bool isCheckmate = false;
+        bool isCheck = isInCheck(session.board, isPlayerWhite);
+        
+        if (isCheck) {
+            // Check if opponent has any legal moves - if not, it's checkmate
+            if (!hasLegalMoves(session.board, isPlayerWhite)) {
+                isCheckmate = true;
+            }
+        }
+        
+        if (isCheckmate) {
+            p.client.println("Engine's move: " + engineMoveNotation + ". CHECKMATE! Engine Wins!");
+            session.gameEnded = true;
+            session.endReason = "Checkmate! Engine wins!";
+        } else if (isCheck) {
+            p.client.println("Engine's move: " + engineMoveNotation + ". CHECK!");
+        } else {
+            p.client.println("Engine's move: " + engineMoveNotation + ".");
+        }
     } else {
         // No legal moves found - check for game end
         p.client.println("ERROR: Engine could not find a legal move!");
@@ -7453,6 +7733,9 @@ void endChessGame(Player &p, int playerIndex) {
     p.client.println("Type 'rules [#]' for game rules!");
     p.client.println("=======================================");
     p.client.println("");
+    
+    // Reset activity timer when exiting game
+    resetMUDActivityTimer();
 }
 
 // =============================
@@ -13558,8 +13841,9 @@ void debugPrint(Player &p, const String &msg) {
 // =============================
 void handleCommand(Player &p, int index, const String &rawLine) {
     // -----------------------------------------
-    // Check if player left the game room (end game if so)
+    // Check if player left a game room (end games if so)
     // -----------------------------------------
+    // Check High-Low game room
     if (index >= 0 && index < MAX_PLAYERS && highLowSessions[index].gameActive) {
         if (p.roomX != highLowSessions[index].gameRoomX || 
             p.roomY != highLowSessions[index].gameRoomY || 
@@ -13567,6 +13851,16 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             // Player moved out of the game room - end game
             endHighLowGame(p, index);
             p.client.println("Your High-Low game has ended because you left the room.");
+            p.client.println("");
+        }
+    }
+    
+    // Check Chess game room
+    if (index >= 0 && index < MAX_PLAYERS && chessSessions[index].gameActive) {
+        if (p.roomX != 247 || p.roomY != 248 || p.roomZ != 50) {
+            // Player moved out of Game Parlor - end chess game
+            endChessGame(p, index);
+            p.client.println("Your Chess game has ended because you left the Game Parlor.");
             p.client.println("");
         }
     }
@@ -13621,6 +13915,29 @@ void handleCommand(Player &p, int index, const String &rawLine) {
 
     cmd.toLowerCase();
     args.trim();
+
+    // -----------------------------------------
+    // ACTIVITY MONITORING: Reset timer for non-chess commands
+    // (Chess moves in Game Parlor don't reset the timer)
+    // -----------------------------------------
+    bool isChessMove = false;
+    if (index >= 0 && index < MAX_PLAYERS && chessSessions[index].gameActive) {
+        // Check if this looks like a chess move (e.g., "e4", "e2e4", "Nf3")
+        // or chess-related command
+        if (cmd == "board" || cmd == "help" || cmd == "status" || cmd == "end" || cmd == "quit") {
+            isChessMove = false;  // These commands WILL reset the timer
+        } else if (cmd.length() <= 4 && (cmd[0] >= 'a' && cmd[0] <= 'h')) {
+            // Likely a chess move like "e4" or "e2e4"
+            isChessMove = true;
+        } else if (cmd.length() == 2 && (cmd[0] >= 'A' && cmd[0] <= 'Z') && (cmd[1] >= 'a' && cmd[1] <= 'h')) {
+            // Likely a chess move like "Ne4" or "Ke1"
+            isChessMove = true;
+        }
+    }
+    
+    if (!isChessMove) {
+        resetMUDActivityTimer();
+    }
 
     // -----------------------------------------
     // LOOK / READ
