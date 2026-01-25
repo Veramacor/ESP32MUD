@@ -6444,15 +6444,33 @@ void renderChessBoard(Player &p, ChessSession &session) {
     p.client.println("       ---------------------------------");
     for (int rank = 7; rank >= 0; rank--) {
         p.client.print("    " + String(rank + 1) + "  |");
-        for (int file = 7; file >= 0; file--) {
-            unsigned char piece = session.board[rank * 8 + file];
-            char pieceChar = getPieceChar(piece);
-            bool isBlack = isBlackPiece(piece);
-            
-            if (isBlack) {
-                p.client.print(" *" + String(pieceChar) + "|");
-            } else {
-                p.client.print("  " + String(pieceChar) + "|");
+        
+        // Determine file order based on player color
+        if (session.playerIsWhite) {
+            // White: files go a-h (left to right) = 0-7
+            for (int file = 0; file <= 7; file++) {
+                unsigned char piece = session.board[rank * 8 + file];
+                char pieceChar = getPieceChar(piece);
+                bool isBlack = isBlackPiece(piece);
+                
+                if (isBlack) {
+                    p.client.print(" *" + String(pieceChar) + "|");
+                } else {
+                    p.client.print("  " + String(pieceChar) + "|");
+                }
+            }
+        } else {
+            // Black: files go h-a (left to right) = 7-0 (flipped)
+            for (int file = 7; file >= 0; file--) {
+                unsigned char piece = session.board[rank * 8 + file];
+                char pieceChar = getPieceChar(piece);
+                bool isBlack = isBlackPiece(piece);
+                
+                if (isBlack) {
+                    p.client.print(" *" + String(pieceChar) + "|");
+                } else {
+                    p.client.print("  " + String(pieceChar) + "|");
+                }
             }
         }
         
@@ -6474,7 +6492,12 @@ void renderChessBoard(Player &p, ChessSession &session) {
         p.client.println("       |---+---+---+---+---+---+---+---|");
     }
     
-    p.client.println("         h   g   f   e   d   c   b   a");
+    // Show file notation based on player's perspective
+    if (session.playerIsWhite) {
+        p.client.println("         a   b   c   d   e   f   g   h");
+    } else {
+        p.client.println("         h   g   f   e   d   c   b   a");
+    }
     p.client.println("");
 }
 
@@ -14800,6 +14823,11 @@ if (cmd == "debug") {
             endChessGame(p, playerIndex);
             return;
         } else {
+            // Chess moves only allowed in the Game Parlor!
+            if (!(p.roomX == 247 && p.roomY == 248 && p.roomZ == 50)) {
+                p.client.println("Chess moves can only be made in the Game Parlor!");
+                return;
+            }
             // Try to process as a chess move (combine cmd and args for full move notation)
             String moveStr = cmd;
             if (args.length() > 0) {
