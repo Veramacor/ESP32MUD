@@ -6165,7 +6165,8 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         p.coins -= loss;
         
         String card3Name = getCardName(session.card3);
-        p.client.println(card3Name + " - YOU HIT A POST! ... PAY DOUBLE! (" + String(loss) + "gp)");
+        p.client.println("YOU HIT A POST! ... PAY DOUBLE!");
+        p.client.println("You pay the dealer " + String(loss) + " gold coins.");
         
         globalHighLowPot += loss;
         savePlayerToFS(p);
@@ -6182,9 +6183,11 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         
         String card3Name = getCardName(session.card3);
         if (session.betWasPot) {
-            p.client.println(card3Name + " - WIN... TAKE IT!");
+            p.client.println("WIN... TAKE IT!");
+            p.client.println("The dealer gives you the entire pot!");
         } else {
-            p.client.println(card3Name + " - WIN... TAKE IT! (" + String(betAmount) + "gp)");
+            p.client.println("WIN... TAKE IT!");
+            p.client.println("The dealer gives you " + String(betAmount) + " gold coins.");
         }
         
         globalHighLowPot -= betAmount;
@@ -6214,9 +6217,11 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         
         String card3Name = getCardName(session.card3);
         if (session.betWasPot) {
-            p.client.println(card3Name + " - MISS... YOU PAY THE WHOLE POT!");
+            p.client.println("MISS... YOU PAY THE WHOLE POT!");
+            p.client.println("You pay the dealer " + String(betAmount) + " gold coins.");
         } else {
-            p.client.println(card3Name + " - MISS... PAY IT! (" + String(betAmount) + "gp)");
+            p.client.println("MISS... PAY IT!");
+            p.client.println("You pay the dealer " + String(betAmount) + " gold coins.");
         }
         
         globalHighLowPot += betAmount;
