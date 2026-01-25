@@ -7063,17 +7063,53 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         unsigned char enginePiece = session.board[bestFromR * 8 + bestFromC];
         unsigned char engineCaptured = session.board[bestToR * 8 + bestToC];
         
-        // Format the move BEFORE applying it (so we can see what was captured)
-        String engineMoveNotation = formatChessMove(session.board, bestFromR, bestFromC, bestToR, bestToC, isPlayerWhite);
+        // Build engine move notation (always with full piece names, no shorthand)
+        String pieceName = "";
+        switch(enginePiece) {
+            case 1: case 7: pieceName = "Pawn"; break;
+            case 2: case 8: pieceName = "Knight"; break;
+            case 3: case 9: pieceName = "Bishop"; break;
+            case 4: case 10: pieceName = "Rook"; break;
+            case 5: case 11: pieceName = "Queen"; break;
+            case 6: case 12: pieceName = "King"; break;
+        }
+        
+        char toColChar = 'a' + bestToC;
+        char toRowChar = '1' + bestToR;
+        String toSquare = String(toColChar) + String(toRowChar);
+        
+        String engineMoveNotation = "";
+        
+        // Check for castling
+        if ((enginePiece == 6 || enginePiece == 12) && abs(bestFromC - bestToC) == 2) {
+            engineMoveNotation = (bestToC > bestFromC) ? "Castles King Side" : "Castles Queen Side";
+        }
+        // Check for capture
+        else if (engineCaptured != 0) {
+            String capturedName = "";
+            switch(engineCaptured) {
+                case 1: case 7: capturedName = "Pawn"; break;
+                case 2: case 8: capturedName = "Knight"; break;
+                case 3: case 9: capturedName = "Bishop"; break;
+                case 4: case 10: capturedName = "Rook"; break;
+                case 5: case 11: capturedName = "Queen"; break;
+                case 6: case 12: capturedName = "King"; break;
+            }
+            engineMoveNotation = pieceName + " takes " + capturedName + " on " + toSquare;
+        }
+        // Regular move
+        else {
+            engineMoveNotation = pieceName + " moves to " + toSquare;
+        }
         
         applyMove(session.board, bestFromR, bestFromC, bestToR, bestToC);
         
         char fromColChar = 'a' + bestFromC;
         char fromRowChar = '1' + bestFromR;
-        char toColChar = 'a' + bestToC;
-        char toRowChar = '1' + bestToR;
+        char toColChar2 = 'a' + bestToC;
+        char toRowChar2 = '1' + bestToR;
         
-        engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar) + String(toRowChar);
+        engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar2) + String(toRowChar2);
         session.lastEngineMove = engineMove;
         
         // Render the board with the engine's move applied
