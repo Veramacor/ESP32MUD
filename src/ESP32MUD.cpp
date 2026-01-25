@@ -5361,6 +5361,7 @@ void cmdReadSign(Player &p, const String &input) {
         
         p.client.println("===== GAME PARLOR GAMES ===============");
         p.client.println("1. High-Low Card Game - Test your luck!");
+        p.client.println("2. Chess - match wits against a local!");
         p.client.println("");
         p.client.println("Type 'play [#]' to play!");
         p.client.println("Type 'rules [#]' for game rules!");
@@ -6344,13 +6345,13 @@ void endHighLowGame(Player &p, int playerIndex) {
     p.client.println("");
     
     // Show the Game Parlor sign
-    p.client.println("===== GAME PARLOR GAMES =====");
+    p.client.println("===== GAME PARLOR GAMES ===============");
     p.client.println("1. High-Low Card Game - Test your luck!");
-    p.client.println("2. Chess - Challenge the engine!");
+    p.client.println("2. Chess - match wits against a local!");
     p.client.println("");
     p.client.println("Type 'play [#]' to play!");
     p.client.println("Type 'rules [#]' for game rules!");
-    p.client.println("=============================");
+    p.client.println("=======================================");
     p.client.println("");
 }
 
@@ -6879,13 +6880,13 @@ void endChessGame(Player &p, int playerIndex) {
     p.client.println("");
     
     // Show the Game Parlor sign
-    p.client.println("===== GAME PARLOR GAMES =====");
+    p.client.println("===== GAME PARLOR GAMES ===============");
     p.client.println("1. High-Low Card Game - Test your luck!");
-    p.client.println("2. Chess - Challenge the engine!");
+    p.client.println("2. Chess - match wits against a local!");
     p.client.println("");
     p.client.println("Type 'play [#]' to play!");
     p.client.println("Type 'rules [#]' for game rules!");
-    p.client.println("=============================");
+    p.client.println("=======================================");
     p.client.println("");
 }
 
