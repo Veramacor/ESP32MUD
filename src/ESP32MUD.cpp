@@ -7063,11 +7063,14 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         unsigned char enginePiece = session.board[bestFromR * 8 + bestFromC];
         unsigned char engineCaptured = session.board[bestToR * 8 + bestToC];
         
+        // Format the move BEFORE applying it (so we can see what was captured)
+        String engineMoveNotation = formatChessMove(session.board, bestFromR, bestFromC, bestToR, bestToC, isPlayerWhite);
+        
         applyMove(session.board, bestFromR, bestFromC, bestToR, bestToC);
         
-        char fromColChar = 'a' + (7 - bestFromC);
+        char fromColChar = 'a' + bestFromC;
         char fromRowChar = '1' + bestFromR;
-        char toColChar = 'a' + (7 - bestToC);
+        char toColChar = 'a' + bestToC;
         char toRowChar = '1' + bestToR;
         
         engineMove = String(fromColChar) + String(fromRowChar) + String(toColChar) + String(toRowChar);
@@ -7076,7 +7079,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         // Render the board with the engine's move applied
         renderChessBoard(p, session);
         p.client.println("");
-        p.client.println("Engine's move: " + formatChessMove(session.board, bestFromR, bestFromC, bestToR, bestToC, isPlayerWhite));
+        p.client.println("Engine's move: " + engineMoveNotation + ".");
     } else {
         // No legal moves found - check for game end
         p.client.println("ERROR: Engine could not find a legal move!");
