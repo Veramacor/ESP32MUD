@@ -6816,7 +6816,7 @@ String formatChessMove(unsigned char board[64], int fromR, int fromC, int toR, i
     }
     
     // Get target square notation
-    char toColChar = 'a' + (7 - toC);
+    char toColChar = 'a' + toC;
     char toRowChar = '1' + toR;
     String toSquare = String(toColChar) + String(toRowChar);
     
@@ -6843,7 +6843,7 @@ String formatChessMove(unsigned char board[64], int fromR, int fromC, int toR, i
         }
         // For pawn captures, use shorthand: "exd4" style notation
         if (isPawn) {
-            char fromColChar = 'a' + (7 - fromC);
+            char fromColChar = 'a' + fromC;
             return String(fromColChar) + "x" + toSquare;
         }
         return pieceName + " takes " + targetName + " on " + toSquare;
