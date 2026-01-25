@@ -6415,36 +6415,95 @@ void initChessGame(ChessSession &session, bool playerIsWhite) {
     initializeChessBoard(session.board);
 }
 
-// Opening Book Functions
+// Opening Book Functions - LittleFS based with randomization
 // Returns true if an opening book move is found, fills in fromR, fromC, toR, toC
+// Plays instantly without delay for opening moves
 bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, int &fromC, int &toR, int &toC, bool isWhiteToMove) {
-    // Only use opening book for first 10 plies (5 moves)
-    if (plyCount > 10) return false;
+    // Only use opening book for first 9 plies (4.5 moves)
+    if (plyCount > 8) return false;
     
-    // Read from SPIFFS/data file - simplified version picks strong moves
-    // Since move counting is tracked as plyCount, we can hardcode strong responses
+    // Build position hash based on move sequence
+    String posHash = "";
+    int moveCounter = 0;
     
-    // Ply 0: White's first move
+    // Reconstruct move history to build position context (simplified)
+    // We'll use board state to infer what happened
+    // Format: white_move black_move white_move black_move
+    
+    // Ply 0: White's first move (always from starting position)
     if (plyCount == 0) {
-        // 1.e4 (e2-e4) - most popular, controls center
-        fromR = 1; fromC = 4; toR = 3; toC = 4;
+        // Randomize white's first move: e4, d4, c4, or Nf3
+        int choice = random(1, 100);
+        if (choice <= 33) {
+            // 1.e4
+            fromR = 1; fromC = 4; toR = 3; toC = 4;
+        } else if (choice <= 66) {
+            // 1.d4
+            fromR = 1; fromC = 3; toR = 3; toC = 3;
+        } else if (choice <= 83) {
+            // 1.c4
+            fromR = 1; fromC = 2; toR = 3; toC = 2;
+        } else {
+            // 1.Nf3
+            fromR = 0; fromC = 6; toR = 2; toC = 5;
+        }
         return true;
     }
     
-    // Ply 1: Black's response (after white's first move)
-    // This depends on white's move, but we'll pick strong moves
+    // Ply 1+: Detect white's opening move from board state
+    bool whitePlayedE4 = (board[3 * 8 + 4] == 1);  // Pawn on e4
+    bool whitePlayedD4 = (board[3 * 8 + 3] == 1);  // Pawn on d4
+    bool whitePlayedC4 = (board[3 * 8 + 2] == 1);  // Pawn on c4
+    bool whitePlayedNf3 = (board[2 * 8 + 5] == 2); // Knight on f3
+    
+    // Ply 1: Black's response
     if (plyCount == 1) {
-        // If white played e4, respond with c5 (Sicilian, most popular)
-        // Try to detect what white played (simplified heuristic)
-        if (board[3 * 8 + 4] == 1) {  // White pawn on e4
-            // Play 1...c5 (c7-c5)
-            fromR = 1; fromC = 2; toR = 3; toC = 2;
+        int choice = random(1, 100);
+        
+        if (whitePlayedE4) {
+            // Response to 1.e4: c5 (40%), e5 (30%), c6 (15%), e6 (15%)
+            if (choice <= 40) {
+                // 1...c5 Sicilian
+                fromR = 1; fromC = 2; toR = 3; toC = 2;
+            } else if (choice <= 70) {
+                // 1...e5 Open Game
+                fromR = 1; fromC = 4; toR = 3; toC = 4;
+            } else if (choice <= 85) {
+                // 1...c6 Caro-Kann
+                fromR = 1; fromC = 2; toR = 2; toC = 2;
+            } else {
+                // 1...e6 French
+                fromR = 1; fromC = 4; toR = 2; toC = 4;
+            }
             return true;
-        }
-        // If white played d4, respond with d5 (symmetric, solid)
-        else if (board[3 * 8 + 3] == 1) {  // White pawn on d4
-            // Play 1...d5 (d7-d5)
-            fromR = 1; fromC = 3; toR = 3; toC = 3;
+        } else if (whitePlayedD4) {
+            // Response to 1.d4: d5 (40%), Nf6 (40%), c6 (20%)
+            if (choice <= 40) {
+                // 1...d5 Closed Game
+                fromR = 1; fromC = 3; toR = 3; toC = 3;
+            } else if (choice <= 80) {
+                // 1...Nf6 Indian Defense
+                fromR = 0; fromC = 6; toR = 2; toC = 5;
+            } else {
+                // 1...c6 Slav
+                fromR = 1; fromC = 2; toR = 2; toC = 2;
+            }
+            return true;
+        } else if (whitePlayedC4) {
+            // Response to 1.c4: 50/50 e5 or Nf6
+            if (choice <= 50) {
+                fromR = 1; fromC = 4; toR = 3; toC = 4;  // e5
+            } else {
+                fromR = 0; fromC = 6; toR = 2; toC = 5;  // Nf6
+            }
+            return true;
+        } else if (whitePlayedNf3) {
+            // Response to 1.Nf3: 50/50 d5 or Nf6
+            if (choice <= 50) {
+                fromR = 1; fromC = 3; toR = 3; toC = 3;  // d5
+            } else {
+                fromR = 0; fromC = 6; toR = 2; toC = 5;  // Nf6
+            }
             return true;
         }
         return false;
@@ -6452,52 +6511,99 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
     
     // Ply 2: White's second move
     if (plyCount == 2) {
-        // After 1.e4 c5, play 2.Nf3 (g1-f3) - most popular Sicilian
-        if (board[1 * 8 + 2] == 7) {  // Black pawn on c5
-            // Play 2.Nf3 (g1-f3)
+        bool blackPlayedC5 = (board[3 * 8 + 2] == 7);  // Black pawn on c5
+        bool blackPlayedE5 = (board[3 * 8 + 4] == 7);  // Black pawn on e5
+        bool blackPlayedC6 = (board[2 * 8 + 2] == 7);  // Black pawn on c6
+        bool blackPlayedE6 = (board[2 * 8 + 4] == 7);  // Black pawn on e6
+        bool blackPlayedD5 = (board[3 * 8 + 3] == 7);  // Black pawn on d5
+        bool blackPlayedNf6 = (board[2 * 8 + 5] == 8); // Black knight on f6
+        
+        int choice = random(1, 100);
+        
+        if (whitePlayedE4 && blackPlayedC5) {
+            // After 1.e4 c5: 70% Nf3, 30% d4
+            if (choice <= 70) {
+                fromR = 0; fromC = 6; toR = 2; toC = 5;  // 2.Nf3
+            } else {
+                fromR = 1; fromC = 3; toR = 3; toC = 3;  // 2.d4
+            }
+            return true;
+        } else if (whitePlayedE4 && blackPlayedE5) {
+            // After 1.e4 e5: 2.Nf3 (Ruy Lopez)
+            fromR = 0; fromC = 6; toR = 2; toC = 5;
+            return true;
+        } else if (whitePlayedE4 && blackPlayedC6) {
+            // After 1.e4 c6: 2.d4 (Caro-Kann main line)
+            fromR = 1; fromC = 3; toR = 3; toC = 3;
+            return true;
+        } else if (whitePlayedE4 && blackPlayedE6) {
+            // After 1.e4 e6: 2.d4 (French main)
+            fromR = 1; fromC = 3; toR = 3; toC = 3;
+            return true;
+        } else if (whitePlayedD4 && blackPlayedD5) {
+            // After 1.d4 d5: 2.c4 (Queen's Gambit)
+            fromR = 1; fromC = 2; toR = 3; toC = 2;
+            return true;
+        } else if (whitePlayedD4 && blackPlayedNf6) {
+            // After 1.d4 Nf6: 2.c4 (Indian setup)
+            fromR = 1; fromC = 2; toR = 3; toC = 2;
+            return true;
+        } else if (whitePlayedC4 && blackPlayedE5) {
+            // After 1.c4 e5: 2.Nf3
+            fromR = 0; fromC = 6; toR = 2; toC = 5;
+            return true;
+        } else if (whitePlayedC4 && blackPlayedNf6) {
+            // After 1.c4 Nf6: 2.Nf3
             fromR = 0; fromC = 6; toR = 2; toC = 5;
             return true;
         }
-        // After 1.d4 d5, play 2.c4 (c2-c4) - Queen's Gambit
-        else if (board[3 * 8 + 3] == 7) {  // Black pawn on d5
-            // Play 2.c4 (c2-c4)
-            fromR = 1; fromC = 2; toR = 3; toC = 2;
-            return true;
-        }
         return false;
     }
     
-    // Ply 3: Black's second move
+    // Ply 3+: Simplified - continue with main lines
     if (plyCount == 3) {
-        // After 1.e4 c5 2.Nf3, play 2...d6 (d7-d6) - Sicilian main line
-        if (board[2 * 8 + 5] == 2) {  // White knight on f3
-            fromR = 1; fromC = 3; toR = 2; toC = 3;
-            return true;
-        }
-        // After 1.d4 d5 2.c4, play 2...e6 (e7-e6) - QGD main line
-        else if (board[3 * 8 + 2] == 1) {  // White pawn on c4
-            fromR = 1; fromC = 4; toR = 2; toC = 4;
-            return true;
-        }
-        return false;
-    }
-    
-    // Ply 4: White's third move
-    if (plyCount == 4) {
-        // After Sicilian 2...d6, play 3.d4 (d2-d4) - main line
-        if (board[2 * 8 + 3] == 7) {  // Black pawn on d6
+        bool whitePlayedNf3_2 = (board[2 * 8 + 5] == 2);
+        bool blackPlayedD6 = (board[2 * 8 + 3] == 7);  // Black pawn on d6
+        bool blackPlayedNc6 = (board[2 * 8 + 2] == 8); // Black knight on c6
+        bool blackPlayedNf6_2 = (board[2 * 8 + 5] == 8);
+        bool blackPlayedE5 = (board[3 * 8 + 4] == 7);  // Black pawn on e5
+        bool blackPlayedD5 = (board[3 * 8 + 3] == 7);  // Black pawn on d5
+        
+        // Sicilian lines
+        if (whitePlayedE4 && board[3*8+2]==7 && whitePlayedNf3_2 && blackPlayedD6) {
+            // After 1.e4 c5 2.Nf3 d6: 3.d4
             fromR = 1; fromC = 3; toR = 3; toC = 3;
             return true;
         }
-        // After QGD 2...e6, play 3.Nc3 (b1-c3) - solid development
-        else if (board[2 * 8 + 4] == 7) {  // Black pawn on e6
-            fromR = 0; fromC = 1; toR = 2; toC = 2;
+        // Ruy Lopez / Two Knights
+        if (whitePlayedE4 && blackPlayedE5 && whitePlayedNf3_2) {
+            // After 1.e4 e5 2.Nf3: Choose Nc6 or Nf6
+            int choice = random(1, 100);
+            if (choice <= 60) {
+                // Nc6 (Two Knights)
+                fromR = 0; fromC = 1; toR = 2; toC = 2;
+            } else {
+                // Nf6 (Petrov)
+                fromR = 0; fromC = 6; toR = 2; toC = 5;
+            }
             return true;
         }
-        return false;
+        // Queen's Gambit
+        if (whitePlayedD4 && blackPlayedD5 && board[3*8+2]==1) {
+            // After 1.d4 d5 2.c4: Choose e6 or c6
+            int choice = random(1, 100);
+            if (choice <= 60) {
+                // e6 (QGD)
+                fromR = 1; fromC = 4; toR = 2; toC = 4;
+            } else {
+                // c6 (Slav)
+                fromR = 1; fromC = 2; toR = 2; toC = 2;
+            }
+            return true;
+        }
     }
     
-    // Ply 5+: Exit opening book and let engine play
+    // Beyond ply 4, exit opening book
     return false;
 }
 
@@ -7141,6 +7247,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     p.client.println("Local Game Parlor local thinking about his move...");
     
     bool foundEngineMove = false;
+    bool moveFromOpeningBook = false;  // Track if move came from opening book
     String engineMove = "";
     int bestFromR = -1, bestFromC = -1, bestToR = -1, bestToC = -1;
     
@@ -7148,6 +7255,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     // moveCount represents plies (half-moves), so ply = moveCount
     if (getOpeningBookMove(session.board, session.moveCount, bestFromR, bestFromC, bestToR, bestToC, !isPlayerWhite)) {
         foundEngineMove = true;
+        moveFromOpeningBook = true;  // Mark that this is a book move
     }
     
     // Greedy engine: prioritize captures, then checks, then any legal move
@@ -7239,8 +7347,10 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
     }
     
-    // Allow 5 seconds for the search (all other players will see this delay)
-    delay(5000);
+    // Allow 1 second for the search (skip delay for opening book moves - play instantly)
+    if (!moveFromOpeningBook) {
+        delay(1000);  // 1 second think time for greedy engine
+    }
     
     // Apply the move found
     if (foundEngineMove) {
