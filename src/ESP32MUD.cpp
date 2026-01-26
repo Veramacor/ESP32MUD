@@ -8253,6 +8253,7 @@ char getLocationCode(int x, int y) {
     // Map coordinates to location codes
     if (x == 250 && y == 205) return 'C';  // Church
     if (x == 249 && y == 248) return 'E';  // Esperthertu Inn
+    if (x == 247 && y == 248) return 'G';  // Game Parlor
     if (x == 246 && y == 246) return 'D';  // Doctor's Office
     if (x == 246 && y == 244) return 'L';  // Lawyer's Office
     if (x == 248 && y == 242) return 'W';  // Weather Station
@@ -8538,11 +8539,12 @@ void cmdTownMap(Player &p) {
     p.client.println("═══════════════════════════════════════════════════════════════════");
     p.client.println("");
 
-    // Legend data - 15 items total (14 locations + YOU ARE HERE)
-    const char* legendCodes[] = {"C", "E", "D", "L", "W", "A", "R", "P", "B", "$", "O", "M", "p", "S", "X"};
+    // Legend data - 16 items total (15 locations + YOU ARE HERE)
+    const char* legendCodes[] = {"C", "E", "G", "D", "L", "W", "A", "R", "P", "B", "$", "O", "M", "p", "S", "X"};
     const char* legendDescs[] = {
         "Church",
         "Esperthertu Inn",
+        "Game Parlor",
         "Doctor's Office",
         "Lawyer's Office",
         "Weather Station",
@@ -8557,7 +8559,7 @@ void cmdTownMap(Player &p) {
         "Esperthertu Shop",
         "YOU ARE HERE"
     };
-    const int legendCount = 15;
+    const int legendCount = 16;
 
     // Print each row of voxels - each voxel becomes a 3-character wide, 3-line tall block
     // Map has 10 rows (gridHeight), 3 output lines per map row = 30 lines total
@@ -8624,22 +8626,23 @@ void cmdTownMap(Player &p) {
             String legendDesc = "";
             
             // Build legend based on output line number
+            // Legend: line 2 = header, line 3 = empty, lines 4-20 = items 0-14, line 21 = empty, line 22 = item 15
             if (outputLineNum == 2) {
                 legendCode = "----------Legend:----------";
             } else if (outputLineNum == 3) {
                 legendCode = "";  // Empty spacing line
-            } else if (outputLineNum >= 4 && outputLineNum <= 17) {
+            } else if (outputLineNum >= 4 && outputLineNum <= 20) {
                 int itemIdx = outputLineNum - 4;
                 legendCode = String(legendCodes[itemIdx]);
                 legendDesc = String(legendDescs[itemIdx]);
-            } else if (outputLineNum == 18) {
+            } else if (outputLineNum == 21) {
                 legendCode = "";  // Empty spacing line
-            } else if (outputLineNum == 19) {
-                legendCode = String(legendCodes[14]);
-                legendDesc = String(legendDescs[14]);
+            } else if (outputLineNum == 22) {
+                legendCode = String(legendCodes[15]);
+                legendDesc = String(legendDescs[15]);
             }
             
-            if (outputLineNum >= 2 && outputLineNum <= 19) {
+            if (outputLineNum >= 2 && outputLineNum <= 22) {
                 String outputLine = mapLine;
                 
                 // Pad to exactly 31 visual characters (position 32 is where legend starts)
@@ -8652,7 +8655,7 @@ void cmdTownMap(Player &p) {
                 if (outputLineNum == 2) {
                     // Full header line
                     outputLine += legendCode;
-                } else if (outputLineNum == 3 || outputLineNum == 18) {
+                } else if (outputLineNum == 3 || outputLineNum == 21) {
                     // Empty spacing lines - nothing added
                 } else if (legendCode.length() > 0) {
                     // Regular legend item: code (C:, E:, etc) + description
