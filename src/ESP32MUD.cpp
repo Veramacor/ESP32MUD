@@ -9559,6 +9559,16 @@ void cmdDoctorHeal(Player &p, const String &input) {
         return;
     }
 
+    // Define service prices
+    int servicePrices[] = {100, 500, 1000, 2000, 5000, 7000, 10000};
+    int price = servicePrices[service - 1];
+
+    // Check if player has enough gold
+    if (p.coins < price) {
+        p.client.println("This service requires " + String(price) + " gold coins to purchase, which you do not have.");
+        return;
+    }
+
     // Process service
     if (service == 1 || service == 2 || service == 3) {
         // Check if player is at max health for healing services
@@ -9573,6 +9583,7 @@ void cmdDoctorHeal(Player &p, const String &input) {
         int healAmount = p.maxHp / 4;
         p.hp += healAmount;
         if (p.hp > p.maxHp) p.hp = p.maxHp;
+        p.coins -= price;
         p.client.println("You have been treated for minor cuts and bruises. You feel much better!");
     }
     else if (service == 2) {
@@ -9580,26 +9591,32 @@ void cmdDoctorHeal(Player &p, const String &input) {
         int healAmount = p.maxHp / 2;
         p.hp += healAmount;
         if (p.hp > p.maxHp) p.hp = p.maxHp;
+        p.coins -= price;
         p.client.println("Your major wounds have been tended to. The pain fades significantly.");
     }
     else if (service == 3) {
         // Full heal
         p.hp = p.maxHp;
+        p.coins -= price;
         p.client.println("The healing magic washes over you. You feel completely restored!");
     }
     else if (service == 4) {
+        p.coins -= price;
         p.client.println("This service is currently unavailable.");
         return;
     }
     else if (service == 5) {
+        p.coins -= price;
         p.client.println("This service is currently unavailable.");
         return;
     }
     else if (service == 6) {
+        p.coins -= price;
         p.client.println("This service is currently unavailable.");
         return;
     }
     else if (service == 7) {
+        p.coins -= price;
         p.client.println("The Healthcare Plan is currently unavailable.");
         return;
     }
