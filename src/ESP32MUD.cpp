@@ -412,6 +412,8 @@ void declareAceValue(Player &p, int playerIndex, int aceValue);
 void promptHighLowContinue(Player &p, int playerIndex);
 void endHighLowGame(Player &p, int playerIndex);
 String getCardName(const Card &card);
+void saveHighLowPot();
+void loadHighLowPot();
 
 // Chess game function declarations
 void initChessGame(ChessSession &session, bool playerIsWhite);
@@ -6119,7 +6121,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
         session.deck.pop_back();
     }
     
-    // Set card values (handle Aces later if needed)
+    // Set default card values (will be overridden if Ace declaration needed)
     session.card1Value = session.card1.isAce ? 1 : session.card1.value;
     session.card2Value = session.card2.isAce ? 1 : session.card2.value;
     
@@ -6132,7 +6134,17 @@ void dealHighLowHand(Player &p, int playerIndex) {
         return;
     }
     
-    // 1st card not an Ace - show both cards side-by-side and prompt for bet
+    // First card is NOT an Ace - check if second card is an Ace
+    if (session.card2.isAce) {
+        printTwoCardsSideBySide(p, session.card1, session.card2);
+        p.client.println("");
+        session.awaitingAceDeclaration = true;
+        p.client.println("The second card is an Ace!");
+        p.client.println("High or Low?  Enter '1' for Low and '2' for High");
+        return;
+    }
+    
+    // Neither card is an Ace - show both cards side-by-side and prompt for bet
     printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
@@ -6208,10 +6220,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         p.coins += betAmount;
         p.client.println("Double Ace! You WIN " + String(betAmount) + "gp!");
         globalHighLowPot -= betAmount;
+        saveHighLowPot();  // Save pot after win
         
         // Check if pot is depleted (player won the game)
         if (globalHighLowPot <= 0) {
             globalHighLowPot = 50;  // Reset pot for next player
+            saveHighLowPot();  // Save reset pot
             p.client.println("The pot is depleted! YOU WIN THE GAME!");
             savePlayerToFS(p);
             endHighLowGame(p, playerIndex);
@@ -6243,6 +6257,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         p.client.println("You pay the dealer " + String(loss) + " gold coins.");
         
         globalHighLowPot += loss;
+        saveHighLowPot();  // Save pot after POST loss
         savePlayerToFS(p);
         
         // Prompt for continue
@@ -6265,10 +6280,12 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         }
         
         globalHighLowPot -= betAmount;
+        saveHighLowPot();  // Save pot after win
         
         // Check if pot is depleted (player won the game!)
         if (globalHighLowPot <= 0) {
             globalHighLowPot = 50;  // Reset pot for next player
+            saveHighLowPot();  // Save reset pot
             p.client.println("The pot is depleted! YOU WIN THE GAME!");
             savePlayerToFS(p);
             endHighLowGame(p, playerIndex);
@@ -6299,6 +6316,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         }
         
         globalHighLowPot += betAmount;
+        saveHighLowPot();  // Save pot after loss
         savePlayerToFS(p);
         
         // Prompt for continue
@@ -6397,6 +6415,46 @@ void endHighLowGame(Player &p, int playerIndex) {
     p.client.println("Type 'rules [#]' for game rules!");
     p.client.println("=======================================");
     p.client.println("");
+}
+
+// =============================
+// HIGH-LOW POT PERSISTENCE
+// =============================
+
+void saveHighLowPot() {
+    File f = LittleFS.open("/data/high_low_pot.txt", "w");
+    if (!f) {
+        Serial.println("Failed to save high-low pot file.");
+        return;
+    }
+    
+    f.println(globalHighLowPot);
+    f.close();
+    Serial.println("High-Low pot saved: " + String(globalHighLowPot) + "gp");
+}
+
+void loadHighLowPot() {
+    if (!LittleFS.exists("/data/high_low_pot.txt")) {
+        Serial.println("No saved high-low pot found. Using default: 50gp");
+        globalHighLowPot = 50;
+        return;
+    }
+    
+    File f = LittleFS.open("/data/high_low_pot.txt", "r");
+    if (!f) {
+        Serial.println("Failed to load high-low pot file. Using default: 50gp");
+        globalHighLowPot = 50;
+        return;
+    }
+    
+    String potStr = f.readStringUntil('\n');
+    f.close();
+    
+    globalHighLowPot = potStr.toInt();
+    if (globalHighLowPot <= 0) {
+        globalHighLowPot = 50;  // Safety check
+    }
+    Serial.println("High-Low pot loaded: " + String(globalHighLowPot) + "gp");
 }
 
 // =============================
@@ -6652,23 +6710,25 @@ bool getOpeningBookMove(const unsigned char *board, int plyCount, int &fromR, in
     return false;
 }
 
-// Get piece character for display
-char getPieceChar(unsigned char piece) {
+// Get piece character for display (using Unicode chess symbols)
+// INVERTED COLORS: White pieces are filled/solid, Black pieces are hollow
+// This allows visibility on both black and white terminal backgrounds
+String getPieceChar(unsigned char piece) {
     switch(piece) {
-        case 0: return ' ';
-        case 1: return 'P'; // White Pawn
-        case 2: return 'N'; // White Knight
-        case 3: return 'B'; // White Bishop
-        case 4: return 'R'; // White Rook
-        case 5: return 'Q'; // White Queen
-        case 6: return 'K'; // White King
-        case 7: return 'P'; // Black Pawn
-        case 8: return 'N'; // Black Knight
-        case 9: return 'B'; // Black Bishop
-        case 10: return 'R'; // Black Rook
-        case 11: return 'Q'; // Black Queen
-        case 12: return 'K'; // Black King
-        default: return '?';
+        case 0: return " ";           // Empty square
+        case 1: return "♟";           // White Pawn - FILLED (U+265F)
+        case 2: return "♞";           // White Knight - FILLED (U+265E)
+        case 3: return "♝";           // White Bishop - FILLED (U+265D)
+        case 4: return "♜";           // White Rook - FILLED (U+265C)
+        case 5: return "♛";           // White Queen - FILLED (U+265B)
+        case 6: return "♚";           // White King - FILLED (U+265A)
+        case 7: return "♙";           // Black Pawn - HOLLOW (U+2659)
+        case 8: return "♘";           // Black Knight - HOLLOW (U+2658)
+        case 9: return "♗";           // Black Bishop - HOLLOW (U+2657)
+        case 10: return "♖";          // Black Rook - HOLLOW (U+2656)
+        case 11: return "♕";          // Black Queen - HOLLOW (U+2655)
+        case 12: return "♔";          // Black King - HOLLOW (U+2654)
+        default: return "?";
     }
 }
 
@@ -6686,35 +6746,35 @@ void renderChessBoard(Player &p, ChessSession &session) {
     p.client.println("\x1B[2J\x1B[H");  // Clear screen
     
     // Render from rank 8 down to rank 1 (top to bottom)
-    p.client.println("       ---------------------------------");
+    // Top border using Unicode box drawing: ┌─┬─┬─┬─┬─┬─┬─┬─┐
+    p.client.println("       ┌───┬───┬───┬───┬───┬───┬───┬───┐");
+    
     for (int rank = 7; rank >= 0; rank--) {
-        p.client.print("    " + String(rank + 1) + "  |");
+        p.client.print("    " + String(rank + 1) + "  │");  // Left border
         
         // Determine file order based on player color
         if (session.playerIsWhite) {
             // White: files go a-h (left to right) = 0-7
             for (int file = 0; file <= 7; file++) {
                 unsigned char piece = session.board[rank * 8 + file];
-                char pieceChar = getPieceChar(piece);
-                bool isBlack = isBlackPiece(piece);
+                String pieceChar = getPieceChar(piece);
                 
-                if (isBlack) {
-                    p.client.print(" *" + String(pieceChar) + "|");
+                if (piece == 0) {
+                    p.client.print("   │");
                 } else {
-                    p.client.print("  " + String(pieceChar) + "|");
+                    p.client.print(" " + pieceChar + " │");
                 }
             }
         } else {
             // Black: files go h-a (left to right) = 7-0 (flipped)
             for (int file = 7; file >= 0; file--) {
                 unsigned char piece = session.board[rank * 8 + file];
-                char pieceChar = getPieceChar(piece);
-                bool isBlack = isBlackPiece(piece);
+                String pieceChar = getPieceChar(piece);
                 
-                if (isBlack) {
-                    p.client.print(" *" + String(pieceChar) + "|");
+                if (piece == 0) {
+                    p.client.print("   │");
                 } else {
-                    p.client.print("  " + String(pieceChar) + "|");
+                    p.client.print(" " + pieceChar + " │");
                 }
             }
         }
@@ -6734,7 +6794,12 @@ void renderChessBoard(Player &p, ChessSession &session) {
             p.client.println("");
         }
         
-        p.client.println("       |---+---+---+---+---+---+---+---|");
+        // Middle/bottom border using Unicode box drawing: ├─┼─┼─┼─┼─┼─┼─┼─┤ or └─┴─┴─┴─┴─┴─┴─┴─┘
+        if (rank > 0) {
+            p.client.println("       ├───┼───┼───┼───┼───┼───┼───┼───┤");
+        } else {
+            p.client.println("       └───┴───┴───┴───┴───┴───┴───┴───┘");
+        }
     }
     
     // Show file notation based on player's perspective
@@ -7112,11 +7177,12 @@ void startChessGame(Player &p, int playerIndex, ChessSession &session) {
     session.gameRoomY = p.roomY;
     session.gameRoomZ = p.roomZ;
     
-    p.client.println("Welcome to Chess!");
-    p.client.println("You are playing as " + String(playerIsWhite ? "WHITE" : "BLACK") + ".");
+    p.client.println("===== ENTER THE BATTLE OF WITS =====");
+    p.client.println("You command the WHITE forces against The local parlor player.");
+    p.client.println("Your forces march forth upon the checkered battlefield...");
     p.client.println("");
-    p.client.println("Enter moves in format: d2d4 (from d2 to d4)");
-    p.client.println("Type 'resign' to give up, 'end' to quit.");
+    p.client.println("Command your forces: Enter moves as 'd2d4' or use algebraic notation");
+    p.client.println("Type 'resign' to concede, 'end' to retreat to the Parlor.");
     p.client.println("");
     
     renderChessBoard(p, session);
@@ -7683,13 +7749,13 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
         
         if (isCheckmate) {
-            p.client.println("Engine's move: " + engineMoveNotation + ". CHECKMATE! Engine Wins!");
+            p.client.println("The local parlor player: " + engineMoveNotation + ". CHECKMATE! You are defeated!");
             session.gameEnded = true;
-            session.endReason = "Checkmate! Engine wins!";
+            session.endReason = "Checkmate! Local player wins!";
         } else if (isCheck) {
-            p.client.println("Engine's move: " + engineMoveNotation + ". CHECK!");
+            p.client.println("The local parlor player: " + engineMoveNotation + ". CHECK!");
         } else {
-            p.client.println("Engine's move: " + engineMoveNotation + ".");
+            p.client.println("The local parlor player: " + engineMoveNotation + ".");
         }
     } else {
         // No legal moves found - check for game end
@@ -14436,25 +14502,40 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         }
         // Game 2: Chess Rules
         else if (gameNum == 2) {
-            p.client.println("===================== RULES FOR CHESS =====================");
-            p.client.println("OBJECT:");
-            p.client.println("- Defeat the chess engine by checkmating the king");
-            p.client.println("- The player is assigned Black or White alternately");
+            p.client.println("=============== RULES FOR THE BATTLE OF WITS ===============");
+            p.client.println("OBJECTIVE:");
+            p.client.println("- Outwit and checkmate The local parlor player's sovereign");
+            p.client.println("- Defend your own royal court or seize your opponent's throne");
+            p.client.println("- You command the WHITE forces or the BLACK forces");
             p.client.println("");
-            p.client.println("GAMEPLAY:");
-            p.client.println("- Enter moves in algebraic notation: d2d4 (from d2 to d4)");
-            p.client.println("- White moves first");
-            p.client.println("- Each player has 5 minutes per game");
+            p.client.println("THE REALM:");
+            p.client.println("- An 8x8 battlefield of stone and shadow");
+            p.client.println("- Columns: a-h (flank to flank)");
+            p.client.println("- Ranks: 1-8 (front to back of your forces)");
             p.client.println("");
-            p.client.println("BOARD:");
-            p.client.println("- Standard 8x8 chess board");
-            p.client.println("- Columns: a-h (left to right)");
-            p.client.println("- Rows: 1-8 (bottom to top for White, top to bottom for Black)");
+            p.client.println("YOUR FORCES:");
+            p.client.println("- King: The sovereign (K) - Moves one square in any direction");
+            p.client.println("- Queen: The strategist (Q) - Moves any distance diagonally/straight");
+            p.client.println("- Rooks: Siege masters (R) - Move straight any distance");
+            p.client.println("- Bishops: Mystics (B) - Move diagonally any distance");
+            p.client.println("- Knights: Cavalry (N) - Leap in an L-shaped pattern");
+            p.client.println("- Pawns: Soldiers (no letter) - Advance one step, capture diagonally");
             p.client.println("");
-            p.client.println("COMMANDS:");
-            p.client.println("- Enter move: d2d4");
-            p.client.println("- 'resign' : Give up the game");
-            p.client.println("- 'end'    : Quit and return to Game Parlor");
+            p.client.println("COMMANDS IN BATTLE:");
+            p.client.println("- Move soldier: d2d4 (from d2 to d4)");
+            p.client.println("               or e2e4 (advance pawn)");
+            p.client.println("               or Nf3 (deploy cavalry to f3)");
+            p.client.println("               or Bf4 (position mystic)");
+            p.client.println("");
+            p.client.println("MOVEMENT NOTATION:");
+            p.client.println("- Pawn moves: e4 (no letter required)");
+            p.client.println("- Other pieces: [Letter][Destination] - e.g., Nf3, Bf4, Ra1, Qd1, Kg1");
+            p.client.println("- Clarification: If ambiguous, add starting file - e.g., Nbd2 (knight from b-file)");
+            p.client.println("");
+            p.client.println("IN-BATTLE COMMANDS:");
+            p.client.println("- 'board'  : View the current battlefield");
+            p.client.println("- 'resign' : Surrender and concede defeat");
+            p.client.println("- 'end'    : Flee the fray and return to the Game Parlor");
              p.client.println("===========================================================");
         } else {
             p.client.println("Unknown game number. Use 'rules' to see available games.");
@@ -15748,6 +15829,7 @@ void setup() {
     initializeShops();              // initialize room-based shops
     initializeTaverns();            // initialize taverns with drinks
     initializePostOffices();        // initialize post offices
+    loadHighLowPot();               // load high-low pot from persistent storage
 
     // Initialize 6-hour reboot timer
     nextGlobalRespawn = millis() + GLOBAL_RESPAWN_INTERVAL;
