@@ -8626,23 +8626,18 @@ void cmdTownMap(Player &p) {
             String legendDesc = "";
             
             // Build legend based on output line number
-            // Legend: line 2 = header, line 3 = empty, lines 4-20 = items 0-14, line 21 = empty, line 22 = item 15
+            // Legend: line 2 = header, line 3 = empty, lines 4-19 = items 0-15 (16 items)
             if (outputLineNum == 2) {
                 legendCode = "----------Legend:----------";
             } else if (outputLineNum == 3) {
                 legendCode = "";  // Empty spacing line
-            } else if (outputLineNum >= 4 && outputLineNum <= 20) {
+            } else if (outputLineNum >= 4 && outputLineNum <= 19) {
                 int itemIdx = outputLineNum - 4;
                 legendCode = String(legendCodes[itemIdx]);
                 legendDesc = String(legendDescs[itemIdx]);
-            } else if (outputLineNum == 21) {
-                legendCode = "";  // Empty spacing line
-            } else if (outputLineNum == 22) {
-                legendCode = String(legendCodes[15]);
-                legendDesc = String(legendDescs[15]);
             }
             
-            if (outputLineNum >= 2 && outputLineNum <= 22) {
+            if (outputLineNum >= 2 && outputLineNum <= 19) {
                 String outputLine = mapLine;
                 
                 // Pad to exactly 31 visual characters (position 32 is where legend starts)
@@ -8655,8 +8650,8 @@ void cmdTownMap(Player &p) {
                 if (outputLineNum == 2) {
                     // Full header line
                     outputLine += legendCode;
-                } else if (outputLineNum == 3 || outputLineNum == 21) {
-                    // Empty spacing lines - nothing added
+                } else if (outputLineNum == 3) {
+                    // Empty spacing line - nothing added
                 } else if (legendCode.length() > 0) {
                     // Regular legend item: code (C:, E:, etc) + description
                     outputLine += legendCode + ":  " + legendDesc;
