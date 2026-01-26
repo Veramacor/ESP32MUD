@@ -4613,6 +4613,11 @@ void cmdLook(Player &p) {
         p.client.println("A sign is here.");
     }
     
+    // Check if this is the Doctor's Office
+    if (p.roomX == 246 && p.roomY == 246 && p.roomZ == 50) {
+        p.client.println("A sign is here.");
+    }
+    
     p.client.println("");  // blank line
 
     // Other players in the room
@@ -5412,6 +5417,38 @@ void cmdReadSign(Player &p, const String &input) {
         p.client.println("Type 'play [#]' to play!");
         p.client.println("Type 'rules [#]' for game rules!");
         p.client.println("=======================================");
+        return;
+    }
+    
+    // Check if this is the Doctor's Office
+    if (p.roomX == 246 && p.roomY == 246 && p.roomZ == 50) {
+        p.client.println("Esperthertu Doctor's Office Services");
+        p.client.println("");
+        p.client.println("BASIC SERVICES:");
+        p.client.println("1) Minor Cuts and bruises from battle:          100gp");
+        p.client.println("");
+        p.client.println("2) Major Cuts, bruises and concussions:         500gp");
+        p.client.println("");
+        p.client.println("3) Full cure from your time in battle:         1000gp");
+        p.client.println("");
+        p.client.println("");
+        p.client.println("SURGERIES:");
+        p.client.println("4) Unable to wield a weapon (Rotator cuff)     2000gp");
+        p.client.println("");
+        p.client.println("5) Hobbled (Knee, ankle, achilles)             5000gp");
+        p.client.println("");
+        p.client.println("6) Blindness                                   7000gp");
+        p.client.println("");
+        p.client.println("");
+        p.client.println("HEALTH CARE PLAN:");
+        p.client.println("For a one time fee, you can have a health care");
+        p.client.println("plan that covers you for major procedures or");
+        p.client.println("healing!  Although there is a 500gp deductable,");
+        p.client.println("you can be covered for when life gets rough!");
+        p.client.println("");
+        p.client.println("7) Lifetime Healthcare Plan (500gp deductable) 10000gp");
+        p.client.println("");
+        p.client.println("Type 'heal [#]' to receive services!");
         return;
     }
     
@@ -9497,6 +9534,78 @@ void cmdHeal(Player &p, const String &input) {
 
     // Message to wizard
     p.client.println("You restore " + String(capFirst(target->name)) + " to full health.");
+}
+
+void cmdDoctorHeal(Player &p, const String &input) {
+    // Doctor's Office heal service (only available at 246, 246, 50)
+    if (p.roomX != 246 || p.roomY != 246 || p.roomZ != 50) {
+        p.client.println("That command is not available here.");
+        return;
+    }
+
+    String arg = input;
+    arg.trim();
+
+    if (arg.length() == 0) {
+        p.client.println("Heal what service? (heal 1-7)");
+        return;
+    }
+
+    // Parse service number
+    int service = arg.toInt();
+    
+    if (service < 1 || service > 7) {
+        p.client.println("Invalid service number. Services range from 1 to 7.");
+        return;
+    }
+
+    // Process service
+    if (service == 1 || service == 2 || service == 3) {
+        // Check if player is at max health for healing services
+        if (p.hp >= p.maxHp) {
+            p.client.println("You are already at maximum health! you do not need this service.");
+            return;
+        }
+    }
+
+    if (service == 1) {
+        // Heal 1/4 of max HP
+        int healAmount = p.maxHp / 4;
+        p.hp += healAmount;
+        if (p.hp > p.maxHp) p.hp = p.maxHp;
+        p.client.println("You have been treated for minor cuts and bruises. You feel much better!");
+    }
+    else if (service == 2) {
+        // Heal 1/2 of max HP
+        int healAmount = p.maxHp / 2;
+        p.hp += healAmount;
+        if (p.hp > p.maxHp) p.hp = p.maxHp;
+        p.client.println("Your major wounds have been tended to. The pain fades significantly.");
+    }
+    else if (service == 3) {
+        // Full heal
+        p.hp = p.maxHp;
+        p.client.println("The healing magic washes over you. You feel completely restored!");
+    }
+    else if (service == 4) {
+        p.client.println("This service is currently unavailable.");
+        return;
+    }
+    else if (service == 5) {
+        p.client.println("This service is currently unavailable.");
+        return;
+    }
+    else if (service == 6) {
+        p.client.println("This service is currently unavailable.");
+        return;
+    }
+    else if (service == 7) {
+        p.client.println("The Healthcare Plan is currently unavailable.");
+        return;
+    }
+
+    // Save player after heal
+    savePlayerToFS(p);
 }
 
 void cmdGoto(Player &p, const String &args) {
@@ -14726,6 +14835,18 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
     if (cmd == "heal") {
+        // Check if in Doctor's Office and argument is a number (1-7)
+        if (p.roomX == 246 && p.roomY == 246 && p.roomZ == 50) {
+            String testArg = args;
+            testArg.trim();
+            if (testArg.length() > 0 && testArg[0] >= '0' && testArg[0] <= '9') {
+                // It's a number - Doctor's Office service
+                cmdDoctorHeal(p, args);
+                return;
+            }
+        }
+        
+        // Otherwise use wizard heal
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdHeal(p, args);
         return;
