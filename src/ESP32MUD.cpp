@@ -659,6 +659,11 @@ struct Player {
 
     // Healthcare plan flag
     bool hasHealthcarePlan = false;
+
+    // Combat injury flags
+    bool IsHeadInjured = false;      // Blindness
+    bool IsShoulderInjured = false;  // Cannot wield weapon effectively
+    bool IsLegInjured = false;       // Hobbled
 };
 
 // =============================
@@ -4581,6 +4586,12 @@ String addArticle(const String &text) {
 // =============================================================
 
 void cmdLook(Player &p) {
+    // Check for blindness first
+    if (p.IsHeadInjured) {
+        p.client.println("Your blindness prevents you from seeing and you wander aimlessly.");
+        return;
+    }
+
     // Draw map tracker if enabled
     if (p.mapTrackerEnabled) {
         drawPlayerMap(p);
@@ -4619,6 +4630,12 @@ void cmdLook(Player &p) {
     // Check if this is the Doctor's Office
     if (p.roomX == 246 && p.roomY == 246 && p.roomZ == 50) {
         p.client.println("A sign is here.");
+        
+        // Doctor's message if player is blinded
+        if (p.IsHeadInjured) {
+            p.client.println("The Doctor says: 'I see you have been blinded! We can help, for a price: 7000gp!'");
+            p.client.println("The Doctor continues: 'Type heal 7 and we will perform the surgery.'");
+        }
     }
     
     p.client.println("");  // blank line
@@ -8423,6 +8440,12 @@ void drawPlayerMap(Player &p) {
 }
 
 void cmdMap(Player &p) {
+    // Check for blindness
+    if (p.IsHeadInjured) {
+        p.client.println("Your blindness prevents you from seeing. You need to see a doctor!");
+        return;
+    }
+
     // Toggle map tracker on/off
     p.mapTrackerEnabled = !p.mapTrackerEnabled;
     
@@ -8434,6 +8457,12 @@ void cmdMap(Player &p) {
 }
 
 void cmdTownMap(Player &p) {
+    // Check for blindness
+    if (p.IsHeadInjured) {
+        p.client.println("Your blindness prevents you from seeing. You need to see a doctor!");
+        return;
+    }
+
     const int TARGET_Z = 50;
     const int TOWN_MIN_X = 246;
     const int TOWN_MIN_Y = 242;
@@ -9426,6 +9455,33 @@ void doCombatRound(Player &p) {
         }
     }
 
+    // ---------------------------------------------------------
+    // COMBAT INJURY CHECK (1 in 1000 chance if no existing injuries)
+    // ---------------------------------------------------------
+    if (npc->targetPlayer == playerIndex && !p.IsHeadInjured && !p.IsShoulderInjured && !p.IsLegInjured) {
+        int injuryRoll = random(1, 1001);
+        if (injuryRoll == 1) {
+            // Injury occurred! Determine which one
+            int injuryType = random(1, 4);  // 1 = head, 2 = shoulder, 3 = leg
+            
+            if (injuryType == 1) {
+                p.IsHeadInjured = true;
+                p.client.println("You suffer a blow to the head! You've been BLINDED!");
+                broadcastRoomExcept(p, capFirst(p.name) + " staggers, blinded!", p);
+            } else if (injuryType == 2) {
+                p.IsShoulderInjured = true;
+                p.client.println("Your shoulder is badly injured!");
+                broadcastRoomExcept(p, capFirst(p.name) + "'s shoulder is badly injured!", p);
+            } else if (injuryType == 3) {
+                p.IsLegInjured = true;
+                p.client.println("Your leg has been hobbled!");
+                broadcastRoomExcept(p, capFirst(p.name) + " is now hobbling!", p);
+            }
+            
+            savePlayerToFS(p);
+        }
+    }
+
 SKIP_DEATH_CHECK:
 
     // Player death
@@ -9564,8 +9620,38 @@ void cmdDoctorHeal(Player &p, const String &input) {
     int servicePrices[] = {100, 500, 1000, 2000, 5000, 7000, 10000};
     int price = servicePrices[service - 1];
 
-    // Service 7: Lifetime Healthcare Plan
+    // Service 7: Lifetime Healthcare Plan OR Blindness Cure
     if (service == 7) {
+        // Check if player is blind - if so, cure blindness instead of selling plan
+        if (p.IsHeadInjured) {
+            // Cure blindness procedure
+            int blindnessCost = 7000;
+            
+            // Apply deductible if they have healthcare plan
+            int playerBlindCost = blindnessCost;
+            if (p.hasHealthcarePlan) {
+                playerBlindCost = 500;  // Only deductible
+            }
+            
+            // Check if player has enough gold
+            if (p.coins < playerBlindCost) {
+                p.client.println("This service requires " + String(playerBlindCost) + " gold coins to purchase, which you do not have.");
+                return;
+            }
+            
+            p.coins -= playerBlindCost;
+            p.IsHeadInjured = false;
+            p.client.println("The Doctor performs the surgery...");
+            p.client.println("You have been cured! Now you see some light.");
+            if (p.hasHealthcarePlan && playerBlindCost == 500) {
+                p.client.println("Your Healthcare Plan has covered " + String(blindnessCost - 500) + " gold coins of this procedure.");
+            }
+            broadcastRoomExcept(p, capFirst(p.name) + " has been cured of blindness!", p);
+            savePlayerToFS(p);
+            return;
+        }
+        
+        // Otherwise, sell healthcare plan
         if (p.hasHealthcarePlan) {
             p.client.println("You have already purchased a Plan.");
             return;
@@ -13122,6 +13208,11 @@ void savePlayerToFS(Player &p) {
     // Healthcare plan flag
     f.println(p.hasHealthcarePlan ? "1" : "0");
 
+    // Combat injury flags
+    f.println(p.IsHeadInjured ? "1" : "0");
+    f.println(p.IsShoulderInjured ? "1" : "0");
+    f.println(p.IsLegInjured ? "1" : "0");
+
     f.close();
 
 
@@ -13358,6 +13449,14 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     // Healthcare plan flag
     safeRead(tmp);
     p.hasHealthcarePlan = (tmp == "1");
+
+    // Combat injury flags
+    safeRead(tmp);
+    p.IsHeadInjured = (tmp == "1");
+    safeRead(tmp);
+    p.IsShoulderInjured = (tmp == "1");
+    safeRead(tmp);
+    p.IsLegInjured = (tmp == "1");
 
     f.close();
     return true;
