@@ -141,6 +141,22 @@ struct PostOffice {
     String postOfficeName;    // e.g., "The Post Office"
 };
 
+// Weather Station Structures
+struct WeatherData {
+    String location;          // City name retrieved
+    String current;           // Current weather conditions
+    String forecast;          // 3-day forecast
+    unsigned long timestamp;  // When data was retrieved
+};
+
+struct WeatherRequest {
+    bool pending;             // Is a request in progress?
+    bool isForecast;          // true for forecast, false for current
+    String query;             // City name or empty for local
+    unsigned long startTime;  // When request started (for timeout)
+    String ipAddress;         // Player's IP for local lookup
+};
+
 // High-Low card game structures
 struct Card {
     int value;          // 2-13 (2-10 are numeric, 11=Jack, 12=Queen, 13=King)
@@ -202,6 +218,11 @@ std::vector<Tavern> taverns;
 
 // Global post office vector
 std::vector<PostOffice> postOffices;
+
+// Global weather system
+WeatherData lastWeatherData;           // Last retrieved weather
+WeatherRequest currentWeatherRequest;  // Current async request state
+const int WEATHER_REQUEST_TIMEOUT = 5000; // 5 second timeout
 
 // High-Low game sessions (one per player)
 HighLowSession highLowSessions[MAX_PLAYERS];
@@ -402,6 +423,15 @@ void initializePostOffices();
 void cmdSend(Player &p, const String &input);
 void cmdSendMail(Player &p, const String &input);
 void showPostOfficeSign(Player &p, PostOffice &po);
+
+// Weather Station functions
+void initializeWeatherStations();
+void cmdWeather(Player &p, const String &arg);
+void cmdForecast(Player &p, const String &arg);
+void showWeatherStationSign(Player &p);
+void updateWeatherRequests();
+void broadcastWeather(const String &data);
+String getPlayerIPAddress(Player &p);
 
 // High-Low card game functions
 void initializeHighLowSession(int playerIndex);
@@ -5456,6 +5486,15 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    // Check if this is the Weather Station
+    if (p.roomX == 248 && p.roomY == 242 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        showWeatherStationSign(p);
+        return;
+    }
+    
     // Check if this is the Game Parlor
     if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
         if (p.IsHeadInjured) {
@@ -5812,14 +5851,72 @@ void cmdDrink(Player &p, const String &arg) {
         return;
     }
 
-    // First try exact match
-    int idx = findItemInRoomOrInventory(p, drinkName);
+    String searchLower = drinkName;
+    searchLower.toLowerCase();
 
-    // If no exact match, try partial match for any item
-    if (idx == -1) {
-        String searchLower = drinkName;
-        searchLower.toLowerCase();
+    // Check if player is in a tavern
+    Tavern *tavern = getTavernForRoom(p);
+    
+    if (tavern) {
+        // IN TAVERN: Only drink tavern drinks
+        int drinkIdx = -1;
+        for (int i = 0; i < (int)tavern->drinks.size(); i++) {
+            String drinkFullName = tavern->drinks[i].name;
+            drinkFullName.toLowerCase();
+            
+            if (drinkFullName.indexOf(searchLower) != -1) {
+                drinkIdx = i;
+                break;
+            }
+        }
+
+        if (drinkIdx == -1) {
+            p.client.println("The tavern doesn't serve that.");
+            return;
+        }
+
+        Drink &drink = tavern->drinks[drinkIdx];
+
+        // Check drunkenness before drinking
+        if (p.drunkenness <= 0) {
+            p.client.println("You are too drunk to drink any more!");
+            return;
+        }
+
+        // Check if player has enough drunkenness units
+        if (p.drunkenness < drink.drunkennessCost) {
+            p.client.println("You are too drunk to drink any more!");
+            return;
+        }
+
+        // Deduct drunkenness units
+        p.drunkenness -= drink.drunkennessCost;
+        if (p.drunkenness < 0) p.drunkenness = 0;
+
+        // Restore HP
+        p.hp += drink.hpRestore;
+        if (p.hp > p.maxHp) p.hp = p.maxHp;
+
+        // Message to player
+        p.client.println("You drink the " + drink.name + ".");
+        p.client.println("You are feeling a good buzz... *hiccup!*");
         
+        // Drunkenness feedback
+        if (p.drunkenness == 0) {
+            p.client.println("You are now completely drunk and can't drink any more!");
+        } else if (p.drunkenness <= 2) {
+            p.client.println("You're getting quite drunk...");
+        }
+
+        broadcastRoomExcept(
+            p,
+            capFirst(p.name) + " drinks a " + drink.name + ".",
+            p
+        );
+    } else {
+        // NOT IN TAVERN: Drink world items with type=drink
+        int idx = -1;
+
         // Search inventory first
         for (int i = 0; i < p.invCount; i++) {
             int worldIndex = p.invIndices[i];
@@ -5829,17 +5926,16 @@ void cmdDrink(Player &p, const String &arg) {
             WorldItem &wi = worldItems[worldIndex];
             String id = wi.name;
             id.toLowerCase();
-            String disp = resolveDisplayName(wi);
-            disp.toLowerCase();
             
-            // Check if item matches name or display name (partial)
-            if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+            // Check if item matches name (partial) and has type=drink
+            if ((id.indexOf(searchLower) != -1) && 
+                (wi.getAttr("type", itemDefs) == "drink")) {
                 idx = (i | 0x80000000);
                 break;
             }
         }
-        
-        // If still not found, search room
+
+        // If not in inventory, search room
         if (idx == -1) {
             Room &r = p.currentRoom;
             for (int i = 0; i < (int)worldItems.size(); i++) {
@@ -5849,97 +5945,57 @@ void cmdDrink(Player &p, const String &arg) {
                 
                 String id = wi.name;
                 id.toLowerCase();
-                String disp = resolveDisplayName(wi);
-                disp.toLowerCase();
                 
-                // Check if item matches name or display name (partial)
-                if (id.indexOf(searchLower) != -1 || disp.indexOf(searchLower) != -1) {
+                // Check if item matches name (partial) and has type=drink
+                if ((id.indexOf(searchLower) != -1) && 
+                    (wi.getAttr("type", itemDefs) == "drink")) {
                     idx = i;
                     break;
                 }
             }
         }
+
+        if (idx == -1) {
+            p.client.println("You don't see that drink here.");
+            return;
+        }
+
+        bool fromInv = (idx & 0x80000000);
+        int worldIndex = fromInv ? p.invIndices[idx & 0x7FFFFFFF] : idx;
+
+        if (worldIndex < 0 || worldIndex >= (int)worldItems.size()) {
+            p.client.println("You don't see that drink here.");
+            return;
+        }
+
+        WorldItem &wi = worldItems[worldIndex];
+        String disp = wi.name;
+
+        // Get healing amount from item attributes
+        String healStr = wi.getAttr("heal", itemDefs);
+        int heal = healStr.length() > 0 ? healStr.toInt() : 0;
+
+        // Message to player
+        p.client.println("You drink the " + disp + ".");
+        if (heal > 0) {
+            p.hp += heal;
+            if (p.hp > p.maxHp) p.hp = p.maxHp;
+            p.client.println("It heals your wounds.");
+        }
+
+        broadcastRoomExcept(
+            p,
+            capFirst(p.name) + " drinks a " + disp + ".",
+            p
+        );
+
+        // Remove from inventory/room
+        if (fromInv) {
+            removeFromInventory(p, idx & 0x7FFFFFFF);
+        } else {
+            worldItems.erase(worldItems.begin() + worldIndex);
+        }
     }
-
-    if (idx == -1) {
-        p.client.println("You don't see that here.");
-        return;
-    }
-
-    bool fromInv = (idx & 0x80000000);
-    int worldIndex = fromInv
-                     ? p.invIndices[idx & 0x7FFFFFFF]
-                     : idx;
-
-    if (worldIndex < 0 || worldIndex >= (int)worldItems.size()) {
-        p.client.println("You don't see that here.");
-        return;
-    }
-
-    WorldItem &wi = worldItems[worldIndex];
-
-    // Check drunkenness before drinking
-    if (p.drunkenness <= 0) {
-        p.client.println("You are too drunk to drink any more!");
-        return;
-    }
-
-    // Determine drunkenness cost and healing based on drink name
-    String itemName = wi.name;
-    itemName.toLowerCase();
-    
-    int drunkennessCost = 0;
-    int heal = 0;
-    
-    if (itemName == "giants_beer") {
-        drunkennessCost = 3;
-        heal = 2;
-    } else if (itemName == "honeyed_mead") {
-        drunkennessCost = 2;
-        heal = 3;
-    } else if (itemName == "faery_fire") {
-        drunkennessCost = 5;
-        heal = 5;
-    } else {
-        p.client.println("You can't drink that!");
-        return;
-    }
-
-    // Check if player has enough drunkenness units
-    if (p.drunkenness < drunkennessCost) {
-        p.client.println("You are too drunk to drink any more!");
-        return;
-    }
-
-    // Deduct drunkenness units
-    p.drunkenness -= drunkennessCost;
-    if (p.drunkenness < 0) p.drunkenness = 0;
-
-    // Restore HP
-    int oldHp = p.hp;
-    p.hp += heal;
-    if (p.hp > p.maxHp) p.hp = p.maxHp;
-
-    String disp = getItemDisplayName(wi);
-
-    // Message to player
-    p.client.println("You drink the " + disp + ".");
-    p.client.println("You are feeling a good buzz... *hiccup!*");
-    
-    // Drunkenness feedback
-    if (p.drunkenness == 0) {
-        p.client.println("You are now completely drunk and can't drink any more!");
-    } else if (p.drunkenness <= 2) {
-        p.client.println("You're getting quite drunk...");
-    }
-
-    broadcastRoomExcept(
-        p,
-        capFirst(p.name) + " drinks a " + disp + ".",
-        p
-    );
-
-    consumeWorldItem(p, worldIndex);
 }
 
 // =============================================================
@@ -6010,6 +6066,268 @@ void cmdSendMail(Player &p, const String &input) {
         p.client.println("You have been charged " + String(MAIL_COST) + " gold pieces for our trouble.");
     } else {
         p.client.println("The Postal Clerk says: \"Our services are unavailable today. the scribe runner is sick!\"");
+    }
+}
+
+// =============================
+// WEATHER STATION SYSTEM
+// =============================
+
+void showWeatherStationSign(Player &p) {
+    p.client.println("");
+    p.client.println("            Esperthertu Weather Station");
+    p.client.println("");
+    p.client.println("* 'weather' to get the weather in Esperthertu.");
+    p.client.println("");
+    p.client.println("* 'forecast' to forecast the weather in Esperthertu.");
+    p.client.println("");
+    p.client.println("* 'weather [name]' to conjure the forecast for a known realm.");
+    p.client.println("");
+    p.client.println("* 'forecast [name]' to forecast the weather for a known realm.");
+    p.client.println("");
+}
+
+String getPlayerIPAddress(Player &p) {
+    // For now, return a placeholder since WiFiClient IP extraction is platform-specific
+    // TODO: Implement proper IP retrieval from WiFiClient when needed
+    return "0.0.0.0";
+}
+
+void broadcastWeather(const String &data) {
+    // Broadcast weather to all connected players
+    String message = "\n=== The weather forecast has been summoned! ===\n";
+    message += data;
+    message += "\n==========================================\n";
+    
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        players[i].client.println(message);
+    }
+}
+
+void updateWeatherRequests() {
+    if (!currentWeatherRequest.pending) {
+        return;
+    }
+    
+    unsigned long now = millis();
+    unsigned long elapsed = now - currentWeatherRequest.startTime;
+    
+    // Check for timeout
+    if (elapsed > WEATHER_REQUEST_TIMEOUT) {
+        currentWeatherRequest.pending = false;
+        broadcastWeather("The Weather Mage says: Unable to contact the weather spirits at this time.");
+        return;
+    }
+    
+    // Check if we have a WiFi connection
+    if (WiFi.status() != WL_CONNECTED) {
+        if (elapsed > 1000) {  // After 1 second, assume connection failed
+            currentWeatherRequest.pending = false;
+            broadcastWeather("The Weather Mage says: The spirits are not responding. Check your network connection.");
+        }
+        return;
+    }
+    
+    // Non-blocking check - if we've just started, wait a moment before attempting
+    if (elapsed < 100) {
+        return;
+    }
+    
+    // Attempt to fetch weather data
+    HTTPClient http;
+    http.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
+    http.setTimeout(WEATHER_REQUEST_TIMEOUT);
+    
+    String weatherData = "";
+    bool success = false;
+    
+    if (currentWeatherRequest.query.length() == 0) {
+        // Local weather - first try to get city from public IP
+        String url = "http://ip-api.com/json/?fields=city,latitude,longitude";
+        
+        if (http.begin(url)) {
+            int httpCode = http.GET();
+            if (httpCode == 200) {
+                String payload = http.getString();
+                // Parse: {"city":"...","latitude":...,"longitude":...}
+                int cityIdx = payload.indexOf("\"city\":\"");
+                int latIdx = payload.indexOf("\"latitude\":");
+                int lonIdx = payload.indexOf("\"longitude\":");
+                
+                if (cityIdx >= 0 && latIdx >= 0 && lonIdx >= 0) {
+                    cityIdx += 8;
+                    int cityEnd = payload.indexOf("\"", cityIdx);
+                    String city = payload.substring(cityIdx, cityEnd);
+                    
+                    latIdx += 11;
+                    int latEnd = payload.indexOf(",", latIdx);
+                    String latitude = payload.substring(latIdx, latEnd);
+                    
+                    lonIdx += 12;
+                    int lonEnd = payload.indexOf("}", lonIdx);
+                    String longitude = payload.substring(lonIdx, lonEnd);
+                    
+                    // Now get weather for this location
+                    String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
+                                      "&longitude=" + longitude + "&current=temperature_2m,weather_code&timezone=auto";
+                    
+                    if (http.begin(weatherUrl)) {
+                        int weatherCode = http.GET();
+                        if (weatherCode == 200) {
+                            String weatherPayload = http.getString();
+                            // Parse current temperature and weather_code
+                            int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
+                            if (tempIdx >= 0) {
+                                tempIdx += 17;
+                                int tempEnd = weatherPayload.indexOf(",", tempIdx);
+                                String temp = weatherPayload.substring(tempIdx, tempEnd);
+                                
+                                lastWeatherData.location = city;
+                                lastWeatherData.current = "Temperature: " + temp + "°C";
+                                lastWeatherData.forecast = "(Local weather data retrieved successfully)";
+                                lastWeatherData.timestamp = now;
+                                success = true;
+                            }
+                        }
+                        http.end();
+                    }
+                }
+            }
+            http.end();
+        }
+    } else {
+        // Specific location - use geocoding then forecast
+        String geoUrl = "http://geocoding-api.open-meteo.com/v1/search?name=" + currentWeatherRequest.query + "&count=1&language=en&format=json";
+        
+        if (http.begin(geoUrl)) {
+            int httpCode = http.GET();
+            if (httpCode == 200) {
+                String payload = http.getString();
+                // Parse latitude and longitude from first result
+                int latIdx = payload.indexOf("\"latitude\":");
+                int lonIdx = payload.indexOf("\"longitude\":");
+                
+                if (latIdx >= 0 && lonIdx >= 0) {
+                    latIdx += 11;
+                    int latEnd = payload.indexOf(",", latIdx);
+                    String latitude = payload.substring(latIdx, latEnd);
+                    
+                    lonIdx += 12;
+                    int lonEnd = payload.indexOf(",", lonIdx);
+                    String longitude = payload.substring(lonIdx, lonEnd);
+                    
+                    // Get weather for this location
+                    String forecastType = currentWeatherRequest.isForecast ? 
+                        "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
+                        "&current=temperature_2m,weather_code";
+                    
+                    String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
+                                      "&longitude=" + longitude + forecastType + "&timezone=auto";
+                    
+                    if (http.begin(weatherUrl)) {
+                        int weatherCode = http.GET();
+                        if (weatherCode == 200) {
+                            String weatherPayload = http.getString();
+                            
+                            if (currentWeatherRequest.isForecast) {
+                                // Parse 3-day forecast
+                                lastWeatherData.location = currentWeatherRequest.query;
+                                lastWeatherData.forecast = weatherPayload.substring(0, 200);  // Simplified
+                                lastWeatherData.current = "(3-day forecast data retrieved)";
+                            } else {
+                                // Parse current weather
+                                int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
+                                if (tempIdx >= 0) {
+                                    tempIdx += 17;
+                                    int tempEnd = weatherPayload.indexOf(",", tempIdx);
+                                    String temp = weatherPayload.substring(tempIdx, tempEnd);
+                                    
+                                    lastWeatherData.location = currentWeatherRequest.query;
+                                    lastWeatherData.current = "Temperature: " + temp + "°C";
+                                    lastWeatherData.forecast = "(Weather data retrieved successfully)";
+                                }
+                            }
+                            lastWeatherData.timestamp = now;
+                            success = true;
+                        }
+                        http.end();
+                    }
+                }
+            }
+            http.end();
+        }
+    }
+    
+    currentWeatherRequest.pending = false;
+    
+    if (success) {
+        String output = "📍 " + lastWeatherData.location + "\n";
+        output += lastWeatherData.current + "\n";
+        output += lastWeatherData.forecast;
+        broadcastWeather(output);
+    } else {
+        broadcastWeather("The Weather Mage says: The spirits are unable to divine the weather at this time.");
+    }
+}
+
+void cmdWeather(Player &p, const String &arg) {
+    // Check if player is in weather station room
+    if (p.roomX != 248 || p.roomY != 242 || p.roomZ != 50) {
+        p.client.println("You must be at a weather station to use this command.");
+        return;
+    }
+    
+    String location = arg;
+    location.trim();
+    
+    if (location.length() == 0) {
+        // Local weather - use player's IP to determine location
+        p.client.println("The Weather Mage begins to consult the spirits about your realm...");
+        currentWeatherRequest.pending = true;
+        currentWeatherRequest.isForecast = false;
+        currentWeatherRequest.query = "";
+        currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
+        currentWeatherRequest.startTime = millis();
+        // HTTP request will be initiated in updateWeatherRequests()
+    } else {
+        // Specific location weather
+        p.client.println("The Weather Mage begins to divine the weather for " + location + "...");
+        currentWeatherRequest.pending = true;
+        currentWeatherRequest.isForecast = false;
+        currentWeatherRequest.query = location;
+        currentWeatherRequest.startTime = millis();
+        // HTTP request will be initiated in updateWeatherRequests()
+    }
+}
+
+void cmdForecast(Player &p, const String &arg) {
+    // Check if player is in weather station room
+    if (p.roomX != 248 || p.roomY != 242 || p.roomZ != 50) {
+        p.client.println("You must be at a weather station to use this command.");
+        return;
+    }
+    
+    String location = arg;
+    location.trim();
+    
+    if (location.length() == 0) {
+        // Local forecast - use player's IP to determine location
+        p.client.println("The Weather Mage begins consulting the spirits for a 3-day forecast...");
+        currentWeatherRequest.pending = true;
+        currentWeatherRequest.isForecast = true;
+        currentWeatherRequest.query = "";
+        currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
+        currentWeatherRequest.startTime = millis();
+        // HTTP request will be initiated in updateWeatherRequests()
+    } else {
+        // Specific location forecast
+        p.client.println("The Weather Mage begins to divine the 3-day forecast for " + location + "...");
+        currentWeatherRequest.pending = true;
+        currentWeatherRequest.isForecast = true;
+        currentWeatherRequest.query = location;
+        currentWeatherRequest.startTime = millis();
+        // HTTP request will be initiated in updateWeatherRequests()
     }
 }
 
@@ -11004,39 +11322,6 @@ void initializeTaverns() {
     taverns.push_back(tavern);
 }
 
-void initializeTavernDrinks() {
-    // Add drink items to the Tavern Libations room (249,242,50)
-    // These are the actual items players can pick up and drink
-    
-    // Giant's Beer
-    WorldItem giants_beer_item;
-    giants_beer_item.x = 249;
-    giants_beer_item.y = 242;
-    giants_beer_item.z = 50;
-    giants_beer_item.name = "giants_beer";
-    giants_beer_item.value = 10;
-    worldItems.push_back(giants_beer_item);
-    
-    // Honeyed Mead
-    WorldItem honeyed_mead_item;
-    honeyed_mead_item.x = 249;
-    honeyed_mead_item.y = 242;
-    honeyed_mead_item.z = 50;
-    honeyed_mead_item.name = "honeyed_mead";
-    honeyed_mead_item.value = 5;
-    worldItems.push_back(honeyed_mead_item);
-    
-    // Faery Fire
-    WorldItem faery_fire_item;
-    faery_fire_item.x = 249;
-    faery_fire_item.y = 242;
-    faery_fire_item.z = 50;
-    faery_fire_item.name = "faery_fire";
-    faery_fire_item.value = 20;
-    worldItems.push_back(faery_fire_item);
-}
-
-
 void initializePostOffices() {
     // Clear existing post offices
     postOffices.clear();
@@ -11049,6 +11334,21 @@ void initializePostOffices() {
     po.postOfficeName = "The Post Office";
     
     postOffices.push_back(po);
+}
+
+void initializeWeatherStations() {
+    // Weather Station initialized - uses hardcoded voxel (248,242,50)
+    // No persistent data needed, just ready for async HTTP requests
+    currentWeatherRequest.pending = false;
+    currentWeatherRequest.isForecast = false;
+    currentWeatherRequest.query = "";
+    currentWeatherRequest.startTime = 0;
+    currentWeatherRequest.ipAddress = "";
+    
+    lastWeatherData.location = "";
+    lastWeatherData.current = "";
+    lastWeatherData.forecast = "";
+    lastWeatherData.timestamp = 0;
 }
 
 /**
@@ -11438,8 +11738,8 @@ void updateDrunkennessRecovery(Player &p) {
 void updateFullnessRecovery(Player &p) {
     unsigned long now = millis();
     
-    // Recover 1 fullness unit every 60 seconds (60000 ms)
-    if (now - p.lastFullnessRecoveryCheck >= 60000UL) {
+    // Recover 1 fullness unit every 120 seconds (120000 ms)
+    if (now - p.lastFullnessRecoveryCheck >= 120000UL) {
         p.lastFullnessRecoveryCheck = now;
         if (p.fullness < 6) {
             p.fullness++;
@@ -15050,6 +15350,19 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
 // -----------------------------------------
+// WEATHER STATION: WEATHER / FORECAST
+// -----------------------------------------
+    if (cmd == "weather") {
+        cmdWeather(p, args);
+        return;
+    }
+
+    if (cmd == "forecast") {
+        cmdForecast(p, args);
+        return;
+    }
+
+// -----------------------------------------
 // GAME PARLOR: HIGH-LOW CARD GAME
 // -----------------------------------------
     if (cmd == "play") {
@@ -16535,8 +16848,8 @@ void setup() {
     buildRoomIndexesIfNeeded();     // build room lookup tables
     initializeShops();              // initialize room-based shops
     initializeTaverns();            // initialize taverns with drinks
-    initializeTavernDrinks();       // create drink items in tavern rooms
     initializePostOffices();        // initialize post offices
+    initializeWeatherStations();    // initialize weather station
     loadHighLowPot();               // load high-low pot from persistent storage
 
     // Initialize 6-hour reboot timer
@@ -16916,6 +17229,9 @@ for (auto &npc : npcInstances) {
             updateFullnessRecovery(p);
         }
     }
+
+    // Update weather requests (non-blocking HTTP)
+    updateWeatherRequests();
 
     // Shop restock
     if (now - lastShopRestock >= 60UL * 60UL * 1000UL) {
