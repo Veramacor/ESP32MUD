@@ -73,11 +73,42 @@
 
 Access with `wizhelp` command when logged in as a wizard.
 
-### Character Manipulation
+### Debug System
+- `debug delete <file>` - Delete a LittleFS file
+- `debug destination` - Toggle debug output destination (Serial/None)
+- `debug extract <file>` - Backup a single file
+- `debug extractall` - Backup all LittleFS files
+- `debug files` - Dump core data files
+- `debug flashspace` - Show LittleFS usage and stats
+- `debug items` - Dump all world items and details
+- `debug list` - List all LittleFS files
+- `debug npcs` - Dump NPC definitions
+- `debug online` - List connected players with stats
+- `debug players` - Dump all player saves
+- `debug questflags` - Show quest completion flags
+- `debug sessions` - Show last 50 session log records
+- `debug ymodem` - YMODEM transfer log
+- `debug <player>` - Dump a single player's data
+
+### Quest System
+- `questinfo <id>` - Show quest definition and details
+
+### Player Utilities
+- `blind <player>` - Toggle blindness (cannot use look, map, townmap)
+- `hobble <player>` - Toggle hobbling (move every other step)
+- `lame <player>` - Toggle lameness (cannot wield weapons, bare fists work)
 - `heal <player>` - Fully restore player HP
-- `blind <player>` - Blind a player (eyes injured)
-- `hobble <player>` - Reduce player movement speed
-- `lame <player>` - Severe leg injury, heavy speed penalty
+- `summon <player>` - Bring a player to your location
+- `goto <x,y,z|player>` - Teleport instantly to coordinates or player
+- `invis` - Toggle personal invisibility
 
 ### World Management
-- `resetworlditems` - Reset all world items to spawn locations
+- `clone` - Clone an item or NPC to your current room
+- `clonegold <amount>` - Spawn gold coins to your room
+- `resetworlditems` - Reset all world item spawns to defaults
+- `reboot` - Restart the world
+
+### Wizard Customization
+- `entermsg <text>` - Set custom arrival message
+- `exitmsg <text>` - Set custom departure message
+- `stats` - Toggle wizard stats display
