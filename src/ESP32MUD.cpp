@@ -7922,6 +7922,10 @@ void cmdScore(Player &p) {
     p.client.print("Wimp mode: ");
     p.client.println(p.wimpMode ? "ON" : "OFF");
 
+    if (p.hasHealthcarePlan) {
+        p.client.println("Healthcare Plan Member (lifetime)");
+    }
+
     p.client.println("=============================");
 }
 
@@ -8737,6 +8741,7 @@ void cmdWizHelp(Player &p) {
     // ---------------------------------------------------------
     // WIZARD UTILITIES (alphabetical)
     // ---------------------------------------------------------
+    p.client.println("blind <player>          - Toggle blindness on a player");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
@@ -9593,6 +9598,55 @@ void cmdHeal(Player &p, const String &input) {
     p.client.println("You restore " + String(capFirst(target->name)) + " to full health.");
 }
 
+void cmdBlind(Player &p, const String &input) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    String arg = input;
+    arg.trim();
+
+    if (arg.length() == 0) {
+        p.client.println("Blind whom?");
+        return;
+    }
+
+    // Find target player by name (case-insensitive)
+    Player* target = nullptr;
+    int targetIndex = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+
+        if (!strcasecmp(players[i].name, arg.c_str())) {
+            target = &players[i];
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (!target) {
+        p.client.println("No such player is online.");
+        return;
+    }
+
+    // Toggle blindness
+    if (target->IsHeadInjured) {
+        // Currently blinded, so unblind them
+        target->IsHeadInjured = false;
+        target->client.println("You can see! You are cured! They have shown mercy upon you.");
+        p.client.println(capFirst(target->name) + " has been cured of blindness.");
+    } else {
+        // Currently sighted, so blind them
+        target->IsHeadInjured = true;
+        target->client.println("You have been blinded! You can hear sadistic laughing... uh huh, huh huh, uh huh huh....");
+        p.client.println(capFirst(target->name) + " has been blinded.");
+    }
+
+    // Save target
+    savePlayerToFS(*target);
+}
+
 void cmdDoctorHeal(Player &p, const String &input) {
     // Doctor's Office heal service (only available at 246, 246, 50)
     if (p.roomX != 246 || p.roomY != 246 || p.roomZ != 50) {
@@ -9643,8 +9697,8 @@ void cmdDoctorHeal(Player &p, const String &input) {
             p.IsHeadInjured = false;
             p.client.println("The Doctor performs the surgery...");
             p.client.println("You have been cured! Now you see some light.");
-            if (p.hasHealthcarePlan && playerBlindCost == 500) {
-                p.client.println("Your Healthcare Plan has covered " + String(blindnessCost - 500) + " gold coins of this procedure.");
+            if (p.hasHealthcarePlan && playerBlindCost < blindnessCost) {
+                p.client.println("You pay the Doctor " + String(playerBlindCost) + " gp with your Healthcare plan covering the rest!");
             }
             broadcastRoomExcept(p, capFirst(p.name) + " has been cured of blindness!", p);
             savePlayerToFS(p);
@@ -9706,6 +9760,9 @@ void cmdDoctorHeal(Player &p, const String &input) {
         if (p.hp > p.maxHp) p.hp = p.maxHp;
         p.coins -= playerCost;
         p.client.println("You have been treated for minor cuts and bruises. You feel much better!");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
+        }
     }
     else if (service == 2) {
         int healAmount = p.maxHp / 2;
@@ -9713,15 +9770,16 @@ void cmdDoctorHeal(Player &p, const String &input) {
         if (p.hp > p.maxHp) p.hp = p.maxHp;
         p.coins -= playerCost;
         p.client.println("Your major wounds have been tended to. The pain fades significantly.");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
+        }
     }
     else if (service == 3) {
         p.hp = p.maxHp;
         p.coins -= playerCost;
-        if (p.hasHealthcarePlan && playerCost == 500) {
-            p.client.println("The healing magic washes over you. You feel completely restored!");
-            p.client.println("Your Healthcare Plan has covered " + String(price - 500) + " gold coins of this service.");
-        } else {
-            p.client.println("The healing magic washes over you. You feel completely restored!");
+        p.client.println("The healing magic washes over you. You feel completely restored!");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
         }
     }
     else if (service == 4 || service == 5 || service == 6) {
@@ -14996,6 +15054,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         // Otherwise use wizard heal
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdHeal(p, args);
+        return;
+    }
+
+    if (cmd == "blind") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+        cmdBlind(p, args);
         return;
     }
 
