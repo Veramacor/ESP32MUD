@@ -6310,9 +6310,6 @@ void updateWeatherRequests() {
     // Always use geocoding for specified location, then fetch weather
     String geoUrl = "http://geocoding-api.open-meteo.com/v1/search?name=" + currentWeatherRequest.query + "&count=1&language=en&format=json";
     
-    Serial.println("[WEATHER] Attempting geocoding for: " + currentWeatherRequest.query);
-    Serial.println("[WEATHER] URL: " + geoUrl);
-    
     HTTPClient http;
     http.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
     http.setTimeout(WEATHER_REQUEST_TIMEOUT);
@@ -6321,9 +6318,6 @@ void updateWeatherRequests() {
         int httpCode = http.GET();
         String payload = http.getString();
         http.end();
-        
-        Serial.println("[WEATHER] Geocoding response code: " + String(httpCode));
-        Serial.println("[WEATHER] Geocoding response (first 200 chars): " + payload.substring(0, 200));
         
         if (httpCode == 200) {
             // Extract latitude and longitude
@@ -6362,13 +6356,10 @@ void updateWeatherRequests() {
                 if (latitude.length() > 0 && longitude.length() > 0) {
                     String forecastType = currentWeatherRequest.isForecast ? 
                         "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
-                        "&current=temperature_2m,weather_code";
+                        "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min";
                     
                     String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
                                       "&longitude=" + longitude + forecastType + "&timezone=auto";
-                    
-                    Serial.println("[WEATHER] Got coordinates - Lat: " + latitude + ", Lon: " + longitude);
-                    Serial.println("[WEATHER] Fetching weather from: " + weatherUrl.substring(0, 80) + "...");
                     
                     HTTPClient http2;
                     http2.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
@@ -6379,27 +6370,150 @@ void updateWeatherRequests() {
                         String weatherPayload = http2.getString();
                         http2.end();
                         
-                        Serial.println("[WEATHER] Weather response code: " + String(weatherCode));
-                        Serial.println("[WEATHER] Weather response (first 200 chars): " + weatherPayload.substring(0, 200));
-                        
                         if (weatherCode == 200) {
                             if (currentWeatherRequest.isForecast) {
-                                String maxTempC = extractTemperature(weatherPayload.substring(weatherPayload.indexOf("\"temperature_2m_max\":")));
-                                String maxTempF = celsiusToFahrenheit(maxTempC);
-                                if (maxTempF != "unknown") {
-                                    lastWeatherData.location = currentWeatherRequest.query;
-                                    lastWeatherData.forecast = "3-day forecast - Max: " + maxTempF + "°F";
-                                    lastWeatherData.current = "(Forecast mode)";
-                                    success = true;
+                                // Extract from daily array - get temps and conditions for 3 days
+                                int dailyIdx = weatherPayload.indexOf("\"daily\":");
+                                if (dailyIdx >= 0) {
+                                    String dailyData = weatherPayload.substring(dailyIdx);
+                                    
+                                    // Extract max temps
+                                    int maxTempIdx = dailyData.indexOf("\"temperature_2m_max\":");
+                                    String maxTemps[3] = {"unknown", "unknown", "unknown"};
+                                    
+                                    if (maxTempIdx >= 0) {
+                                        int idx = maxTempIdx + 20;
+                                        while (idx < dailyData.length() && dailyData[idx] != '[') idx++;
+                                        if (idx < dailyData.length()) idx++;
+                                        
+                                        for (int day = 0; day < 3; day++) {
+                                            while (idx < dailyData.length() && (dailyData[idx] == ' ' || dailyData[idx] == '\t' || dailyData[idx] == '\n' || dailyData[idx] == '\r' || dailyData[idx] == ',')) idx++;
+                                            if (idx >= dailyData.length() || dailyData[idx] == ']') break;
+                                            
+                                            String tempStr = "";
+                                            while (idx < dailyData.length() && ((dailyData[idx] >= '0' && dailyData[idx] <= '9') || dailyData[idx] == '.' || dailyData[idx] == '-')) {
+                                                tempStr += dailyData[idx];
+                                                idx++;
+                                            }
+                                            if (tempStr.length() > 0) maxTemps[day] = tempStr;
+                                        }
+                                    }
+                                    
+                                    // Extract min temps
+                                    int minTempIdx = dailyData.indexOf("\"temperature_2m_min\":");
+                                    String minTemps[3] = {"unknown", "unknown", "unknown"};
+                                    
+                                    if (minTempIdx >= 0) {
+                                        int idx = minTempIdx + 20;
+                                        while (idx < dailyData.length() && dailyData[idx] != '[') idx++;
+                                        if (idx < dailyData.length()) idx++;
+                                        
+                                        for (int day = 0; day < 3; day++) {
+                                            while (idx < dailyData.length() && (dailyData[idx] == ' ' || dailyData[idx] == '\t' || dailyData[idx] == '\n' || dailyData[idx] == '\r' || dailyData[idx] == ',')) idx++;
+                                            if (idx >= dailyData.length() || dailyData[idx] == ']') break;
+                                            
+                                            String tempStr = "";
+                                            while (idx < dailyData.length() && ((dailyData[idx] >= '0' && dailyData[idx] <= '9') || dailyData[idx] == '.' || dailyData[idx] == '-')) {
+                                                tempStr += dailyData[idx];
+                                                idx++;
+                                            }
+                                            if (tempStr.length() > 0) minTemps[day] = tempStr;
+                                        }
+                                    }
+                                    
+                                    // Extract weather codes
+                                    int wCodeIdx = dailyData.indexOf("\"weather_code\":");
+                                    int codes[3] = {-1, -1, -1};
+                                    
+                                    if (wCodeIdx >= 0) {
+                                        // Search for [ starting from wCodeIdx
+                                        int idx = wCodeIdx;
+                                        while (idx < dailyData.length() && dailyData[idx] != '[') idx++;
+                                        if (idx < dailyData.length()) idx++;  // skip the [
+                                        
+                                        for (int day = 0; day < 3; day++) {
+                                            // Skip whitespace and commas
+                                            while (idx < dailyData.length() && (dailyData[idx] == ' ' || dailyData[idx] == '\t' || dailyData[idx] == '\n' || dailyData[idx] == '\r' || dailyData[idx] == ',')) idx++;
+                                            if (idx >= dailyData.length() || dailyData[idx] == ']') break;
+                                            
+                                            String codeStr = "";
+                                            while (idx < dailyData.length() && ((dailyData[idx] >= '0' && dailyData[idx] <= '9') || dailyData[idx] == '-')) {
+                                                codeStr += dailyData[idx];
+                                                idx++;
+                                            }
+                                            if (codeStr.length() > 0) codes[day] = codeStr.toInt();
+                                        }
+                                    }
+                                    
+                                    // Build forecast output with High/Low
+                                    String forecastStr = "";
+                                    for (int day = 0; day < 3; day++) {
+                                        String maxF = celsiusToFahrenheit(maxTemps[day]);
+                                        String minF = celsiusToFahrenheit(minTemps[day]);
+                                        String weatherDesc = getWeatherDescription(codes[day]);
+                                        forecastStr += "Day " + String(day + 1) + ": High " + maxF + " / Low " + minF + " degrees Fahrenheit - " + weatherDesc;
+                                        if (day < 2) forecastStr += "\n";
+                                    }
+                                    
+                                    if (forecastStr.length() > 0) {
+                                        lastWeatherData.location = currentWeatherRequest.query;
+                                        lastWeatherData.current = "3-Day Forecast";
+                                        lastWeatherData.forecast = forecastStr;
+                                        success = true;
+                                    }
                                 }
                             } else {
+                                // Current weather - extract current temp and conditions, plus today's high/low
                                 String tempC = extractCurrentTemperature(weatherPayload);
                                 String tempF = celsiusToFahrenheit(tempC);
                                 int code = extractWeatherCode(weatherPayload);
                                 
+                                // Also extract today's high/low from daily data
+                                String highF = "unknown";
+                                String lowF = "unknown";
+                                
+                                int dailyIdx = weatherPayload.indexOf("\"daily\":");
+                                if (dailyIdx >= 0) {
+                                    String dailyData = weatherPayload.substring(dailyIdx);
+                                    
+                                    // Extract first day's max temp
+                                    int maxTempIdx = dailyData.indexOf("\"temperature_2m_max\":");
+                                    if (maxTempIdx >= 0) {
+                                        int idx = maxTempIdx + 20;
+                                        while (idx < dailyData.length() && dailyData[idx] != '[') idx++;
+                                        if (idx < dailyData.length()) idx++;
+                                        
+                                        while (idx < dailyData.length() && (dailyData[idx] == ' ' || dailyData[idx] == '\t' || dailyData[idx] == '\n' || dailyData[idx] == '\r' || dailyData[idx] == ',')) idx++;
+                                        
+                                        String tempStr = "";
+                                        while (idx < dailyData.length() && ((dailyData[idx] >= '0' && dailyData[idx] <= '9') || dailyData[idx] == '.' || dailyData[idx] == '-')) {
+                                            tempStr += dailyData[idx];
+                                            idx++;
+                                        }
+                                        if (tempStr.length() > 0) highF = celsiusToFahrenheit(tempStr);
+                                    }
+                                    
+                                    // Extract first day's min temp
+                                    int minTempIdx = dailyData.indexOf("\"temperature_2m_min\":");
+                                    if (minTempIdx >= 0) {
+                                        int idx = minTempIdx + 20;
+                                        while (idx < dailyData.length() && dailyData[idx] != '[') idx++;
+                                        if (idx < dailyData.length()) idx++;
+                                        
+                                        while (idx < dailyData.length() && (dailyData[idx] == ' ' || dailyData[idx] == '\t' || dailyData[idx] == '\n' || dailyData[idx] == '\r' || dailyData[idx] == ',')) idx++;
+                                        
+                                        String tempStr = "";
+                                        while (idx < dailyData.length() && ((dailyData[idx] >= '0' && dailyData[idx] <= '9') || dailyData[idx] == '.' || dailyData[idx] == '-')) {
+                                            tempStr += dailyData[idx];
+                                            idx++;
+                                        }
+                                        if (tempStr.length() > 0) lowF = celsiusToFahrenheit(tempStr);
+                                    }
+                                }
+                                
                                 if (tempF != "unknown" && code >= 0) {
                                     lastWeatherData.location = currentWeatherRequest.query;
-                                    lastWeatherData.current = "Temperature: " + tempF + "°F";
+                                    lastWeatherData.current = "Current Temperature: " + tempF + " degrees Fahrenheit\nToday's High: " + highF + " / Low: " + lowF + " degrees Fahrenheit";
                                     lastWeatherData.forecast = getWeatherDescription(code);
                                     success = true;
                                 }
