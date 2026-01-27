@@ -6101,7 +6101,25 @@ void broadcastWeather(const String &data) {
     
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!players[i].active || !players[i].loggedIn) continue;
-        players[i].client.println(message);
+        // Split message into lines to avoid buffer issues
+        int lineStart = 0;
+        String lines[10];
+        int lineCount = 0;
+        
+        // Manually split by \n to ensure clean output
+        int newlineIdx = 0;
+        while ((newlineIdx = message.indexOf("\n", lineStart)) != -1 && lineCount < 10) {
+            lines[lineCount++] = message.substring(lineStart, newlineIdx);
+            lineStart = newlineIdx + 1;
+        }
+        if (lineStart < message.length() && lineCount < 10) {
+            lines[lineCount++] = message.substring(lineStart);
+        }
+        
+        // Print each line
+        for (int j = 0; j < lineCount; j++) {
+            players[i].client.println(lines[j]);
+        }
     }
 }
 
@@ -6162,6 +6180,7 @@ void updateWeatherRequests() {
                     
                     latIdx += 11;
                     int latEnd = payload.indexOf(",", latIdx);
+                    if (latEnd < 0) latEnd = payload.indexOf("}", latIdx);
                     String latitude = payload.substring(latIdx, latEnd);
                     
                     lonIdx += 12;
@@ -6176,12 +6195,14 @@ void updateWeatherRequests() {
                         int weatherCode = http.GET();
                         if (weatherCode == 200) {
                             String weatherPayload = http.getString();
-                            // Parse current temperature and weather_code
+                            // Parse current: {"current":{"temperature_2m":XX.X,"weather_code":0},...}
                             int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
                             if (tempIdx >= 0) {
                                 tempIdx += 17;
                                 int tempEnd = weatherPayload.indexOf(",", tempIdx);
+                                if (tempEnd < 0) tempEnd = weatherPayload.indexOf("}", tempIdx);
                                 String temp = weatherPayload.substring(tempIdx, tempEnd);
+                                temp.trim();
                                 
                                 lastWeatherData.location = city;
                                 lastWeatherData.current = "Temperature: " + temp + "°C";
@@ -6211,11 +6232,15 @@ void updateWeatherRequests() {
                 if (latIdx >= 0 && lonIdx >= 0) {
                     latIdx += 11;
                     int latEnd = payload.indexOf(",", latIdx);
+                    if (latEnd < 0) latEnd = payload.indexOf("}", latIdx);
                     String latitude = payload.substring(latIdx, latEnd);
+                    latitude.trim();
                     
                     lonIdx += 12;
                     int lonEnd = payload.indexOf(",", lonIdx);
+                    if (lonEnd < 0) lonEnd = payload.indexOf("}", lonIdx);
                     String longitude = payload.substring(lonIdx, lonEnd);
+                    longitude.trim();
                     
                     // Get weather for this location
                     String forecastType = currentWeatherRequest.isForecast ? 
@@ -6232,24 +6257,35 @@ void updateWeatherRequests() {
                             
                             if (currentWeatherRequest.isForecast) {
                                 // Parse 3-day forecast
-                                lastWeatherData.location = currentWeatherRequest.query;
-                                lastWeatherData.forecast = weatherPayload.substring(0, 200);  // Simplified
-                                lastWeatherData.current = "(3-day forecast data retrieved)";
+                                int maxTempIdx = weatherPayload.indexOf("\"temperature_2m_max\":");
+                                if (maxTempIdx >= 0) {
+                                    maxTempIdx += 20;
+                                    int maxEnd = weatherPayload.indexOf(",", maxTempIdx);
+                                    String maxTemp = weatherPayload.substring(maxTempIdx, maxEnd);
+                                    maxTemp.trim();
+                                    
+                                    lastWeatherData.location = currentWeatherRequest.query;
+                                    lastWeatherData.forecast = "3-day forecast retrieved - Max: " + maxTemp + "°C";
+                                    lastWeatherData.current = "(Forecast mode)";
+                                    success = true;
+                                }
                             } else {
                                 // Parse current weather
                                 int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
                                 if (tempIdx >= 0) {
                                     tempIdx += 17;
                                     int tempEnd = weatherPayload.indexOf(",", tempIdx);
+                                    if (tempEnd < 0) tempEnd = weatherPayload.indexOf("}", tempIdx);
                                     String temp = weatherPayload.substring(tempIdx, tempEnd);
+                                    temp.trim();
                                     
                                     lastWeatherData.location = currentWeatherRequest.query;
                                     lastWeatherData.current = "Temperature: " + temp + "°C";
                                     lastWeatherData.forecast = "(Weather data retrieved successfully)";
+                                    success = true;
                                 }
                             }
                             lastWeatherData.timestamp = now;
-                            success = true;
                         }
                         http.end();
                     }
