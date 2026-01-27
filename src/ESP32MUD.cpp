@@ -5414,6 +5414,8 @@ void showTavernSign(Player &p, Tavern &tavern) {
     }
     
     p.client.println("");
+    p.client.println("  type 'drink [name]' to enjoy a drink");
+    p.client.println("");
 }
 
 void showPostOfficeSign(Player &p, PostOffice &po) {
@@ -11002,6 +11004,39 @@ void initializeTaverns() {
     taverns.push_back(tavern);
 }
 
+void initializeTavernDrinks() {
+    // Add drink items to the Tavern Libations room (249,242,50)
+    // These are the actual items players can pick up and drink
+    
+    // Giant's Beer
+    WorldItem giants_beer_item;
+    giants_beer_item.x = 249;
+    giants_beer_item.y = 242;
+    giants_beer_item.z = 50;
+    giants_beer_item.name = "giants_beer";
+    giants_beer_item.value = 10;
+    worldItems.push_back(giants_beer_item);
+    
+    // Honeyed Mead
+    WorldItem honeyed_mead_item;
+    honeyed_mead_item.x = 249;
+    honeyed_mead_item.y = 242;
+    honeyed_mead_item.z = 50;
+    honeyed_mead_item.name = "honeyed_mead";
+    honeyed_mead_item.value = 5;
+    worldItems.push_back(honeyed_mead_item);
+    
+    // Faery Fire
+    WorldItem faery_fire_item;
+    faery_fire_item.x = 249;
+    faery_fire_item.y = 242;
+    faery_fire_item.z = 50;
+    faery_fire_item.name = "faery_fire";
+    faery_fire_item.value = 20;
+    worldItems.push_back(faery_fire_item);
+}
+
+
 void initializePostOffices() {
     // Clear existing post offices
     postOffices.clear();
@@ -16500,6 +16535,7 @@ void setup() {
     buildRoomIndexesIfNeeded();     // build room lookup tables
     initializeShops();              // initialize room-based shops
     initializeTaverns();            // initialize taverns with drinks
+    initializeTavernDrinks();       // create drink items in tavern rooms
     initializePostOffices();        // initialize post offices
     loadHighLowPot();               // load high-low pot from persistent storage
 
