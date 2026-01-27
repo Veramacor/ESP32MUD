@@ -8742,6 +8742,8 @@ void cmdWizHelp(Player &p) {
     // WIZARD UTILITIES (alphabetical)
     // ---------------------------------------------------------
     p.client.println("blind <player>          - Toggle blindness on a player");
+    p.client.println("                          Usage: blind playerName (toggles on/off)");
+    p.client.println("                          Blinded players cannot use look, map, or townmap");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
