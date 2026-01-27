@@ -5417,6 +5417,9 @@ void cmdReadSign(Player &p, const String &input) {
     // Check if there's a tavern in this room
     Tavern* tavern = getTavernForRoom(p);
     if (tavern) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
         showTavernSign(p, *tavern);
         return;
     }
@@ -5424,12 +5427,19 @@ void cmdReadSign(Player &p, const String &input) {
     // Check if there's a post office in this room
     PostOffice* po = getPostOfficeForRoom(p);
     if (po) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
         showPostOfficeSign(p, *po);
         return;
     }
     
     // Check if this is the Game Parlor
     if (p.roomX == 247 && p.roomY == 248 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        
         // Find player index to get their game pot
         int potAmount = globalHighLowPot;
         
@@ -5445,6 +5455,10 @@ void cmdReadSign(Player &p, const String &input) {
     
     // Check if this is the Doctor's Office
     if (p.roomX == 246 && p.roomY == 246 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        
         p.client.println("Esperthertu Doctor's Office Services");
         p.client.println("");
         p.client.println("BASIC SERVICES:");
