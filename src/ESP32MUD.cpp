@@ -4693,6 +4693,11 @@ void cmdLook(Player &p) {
         }
     }
     
+    // Check if this is the Weather Station
+    if (p.roomX == 248 && p.roomY == 242 && p.roomZ == 50) {
+        p.client.println("A sign is here.");
+    }
+    
     p.client.println("");  // blank line
 
     // Other players in the room
