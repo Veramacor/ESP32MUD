@@ -8761,6 +8761,9 @@ void cmdWizHelp(Player &p) {
     p.client.println("hobble <player>         - Toggle hobbling on a player");
     p.client.println("                          Usage: hobble playerName (toggles on/off)");
     p.client.println("                          Hobbled players move every other step");
+    p.client.println("lame <player>           - Toggle lameness on a player");
+    p.client.println("                          Usage: lame playerName (toggles on/off)");
+    p.client.println("                          Lamed players cannot wield weapons (bare fists work)");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
@@ -9730,6 +9733,63 @@ void cmdHobble(Player &p, const String &input) {
         target->hobbleSkipNextMove = false;  // Start fresh
         target->client.println("You have been Hobbled! You now walk with a limp!");
         p.client.println(capFirst(target->name) + " has been hobbled.");
+    }
+
+    // Save target
+    savePlayerToFS(*target);
+}
+
+void cmdLame(Player &p, const String &input) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    String arg = input;
+    arg.trim();
+
+    if (arg.length() == 0) {
+        p.client.println("Lame whom?");
+        return;
+    }
+
+    // Find target player by name (case-insensitive)
+    Player* target = nullptr;
+    int targetIndex = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+
+        if (!strcasecmp(players[i].name, arg.c_str())) {
+            target = &players[i];
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (!target) {
+        p.client.println("No such player is online.");
+        return;
+    }
+
+    // Toggle lameness
+    if (target->IsShoulderInjured) {
+        // Currently lamed, so cure them
+        target->IsShoulderInjured = false;
+        target->client.println("You have been cured from your lameness!");
+        p.client.println(capFirst(target->name) + " has been cured of lameness.");
+    } else {
+        // Currently able-armed, so lame them
+        target->IsShoulderInjured = true;
+        target->client.println("You have been lamed! You can no longer wield any weapon!");
+        p.client.println(capFirst(target->name) + " has been lamed.");
+        
+        // Force unwield if wielding
+        if (target->wieldedItemIndex != -1) {
+            WorldItem &wi = worldItems[target->wieldedItemIndex];
+            target->client.println("You stop wielding " + getItemDisplayName(wi) + ".");
+            target->wieldedItemIndex = -1;
+            applyEquipmentBonuses(*target);
+        }
     }
 
     // Save target
@@ -12818,6 +12878,12 @@ void cmdRemove(Player &p, const String &input) {
 // =============================================================
 
 void cmdWield(Player &p, const String &input) {
+    // Check if player is lamed (shoulder injured)
+    if (p.IsShoulderInjured) {
+        p.client.println("You cannot wield anything while lamed!");
+        return;
+    }
+
     String arg = input;
     arg.trim();
 
@@ -15169,6 +15235,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     if (cmd == "hobble") {
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdHobble(p, args);
+        return;
+    }
+
+    if (cmd == "lame") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+        cmdLame(p, args);
         return;
     }
 
