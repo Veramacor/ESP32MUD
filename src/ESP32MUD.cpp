@@ -10850,21 +10850,8 @@ void initializeShops() {
     wares.addItem("map_fragment", "Map Fragment", 3, 10);
     
     shops.push_back(wares);
-
-    // TAVERN LIBATIONS SHOP at voxel 249,242,50
-    Shop tavern_shop;
-    tavern_shop.x = 249;
-    tavern_shop.y = 242;
-    tavern_shop.z = 50;
-    tavern_shop.shopName = "Tavern Libations";
-    tavern_shop.shopType = "misc";
     
-    // Add drinks (unlimited inventory at tavern)
-    tavern_shop.addItem("giants_beer", "Giant's Beer", 999, 10);
-    tavern_shop.addItem("honeyed_mead", "Honeyed Mead", 999, 5);
-    tavern_shop.addItem("faery_fire", "Faery Fire", 999, 20);
-    
-    shops.push_back(tavern_shop);
+    // NOTE: Tavern Libations at (249,242,50) is handled by taverns system, not shops
 }
 
 WorldItem* findShopSign(Player &p) {
