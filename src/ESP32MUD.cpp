@@ -432,6 +432,7 @@ void cmdForecast(Player &p, const String &arg);
 void showWeatherStationSign(Player &p);
 void updateWeatherRequests();
 void broadcastWeather(const String &data);
+void cmdWho(Player &p);
 String getPlayerIPAddress(Player &p);
 
 // High-Low card game functions
@@ -6273,6 +6274,9 @@ void broadcastWeather(const String &data) {
         for (int j = 0; j < lineCount; j++) {
             players[i].client.println(lines[j]);
         }
+        
+        // Print the prompt (>) to indicate readiness for next command
+        players[i].client.print("> ");
     }
 }
 
@@ -6609,6 +6613,31 @@ void cmdForecast(Player &p, const String &arg) {
     currentWeatherRequest.isLocalQuery = false;
     currentWeatherRequest.query = location;
     currentWeatherRequest.startTime = millis();
+}
+
+void cmdWho(Player &p) {
+    // Count online players and build list
+    int onlineCount = 0;
+    String playerList = "\n=== Players Online ===\n";
+    
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (players[i].active && players[i].loggedIn) {
+            String title = getPlayerTitle(players[i].raceId, players[i].level);
+            playerList += String(players[i].name) + " The " + title + "\n";
+            onlineCount++;
+        }
+    }
+    
+    // Add footer with count
+    playerList += "==========================================\n";
+    if (onlineCount == 1) {
+        playerList += "(1 player online)\n";
+    } else {
+        playerList += "(" + String(onlineCount) + " players online)\n";
+    }
+    
+    p.client.print(playerList);
+    p.client.print("> ");
 }
 
 // =============================
@@ -15904,6 +15933,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
 // -----------------------------------------
     if (cmd == "help") {
         cmdHelp(p);
+        return;
+    }
+
+    if (cmd == "who") {
+        cmdWho(p);
         return;
     }
 
