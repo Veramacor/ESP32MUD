@@ -664,6 +664,9 @@ struct Player {
     bool IsHeadInjured = false;      // Blindness
     bool IsShoulderInjured = false;  // Cannot wield weapon effectively
     bool IsLegInjured = false;       // Hobbled
+    
+    // Hobble tracking: alternate accepting/rejecting movement commands
+    bool hobbleSkipNextMove = false; // If true, skip the next movement command
 };
 
 // =============================
@@ -7926,13 +7929,15 @@ void cmdScore(Player &p) {
         p.client.println("Healthcare Plan Member (lifetime)");
     }
 
-    // Show injury status
+    // Show all current injuries
     if (p.IsHeadInjured) {
-        p.client.println("You are Blind!");
-    } else if (p.IsShoulderInjured) {
-        p.client.println("Shoulder Injury: you cannot wield anything.");
-    } else if (p.IsLegInjured) {
-        p.client.println("You have been hobbled and walk with a limp.");
+        p.client.println("Current Injury: You are Blind!");
+    }
+    if (p.IsShoulderInjured) {
+        p.client.println("Current Injury: Shoulder Injury: you cannot wield anything.");
+    }
+    if (p.IsLegInjured) {
+        p.client.println("Current Injury: You have been hobbled and walk with a limp.");
     }
 
     p.client.println("=============================");
@@ -8753,6 +8758,9 @@ void cmdWizHelp(Player &p) {
     p.client.println("blind <player>          - Toggle blindness on a player");
     p.client.println("                          Usage: blind playerName (toggles on/off)");
     p.client.println("                          Blinded players cannot use look, map, or townmap");
+    p.client.println("hobble <player>         - Toggle hobbling on a player");
+    p.client.println("                          Usage: hobble playerName (toggles on/off)");
+    p.client.println("                          Hobbled players move every other step");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
@@ -9668,6 +9676,57 @@ void cmdBlind(Player &p, const String &input) {
         target->IsHeadInjured = true;
         target->client.println("You have been blinded! You can hear sadistic laughing... uh huh, huh huh, uh huh huh....");
         p.client.println(capFirst(target->name) + " has been blinded.");
+    }
+
+    // Save target
+    savePlayerToFS(*target);
+}
+
+void cmdHobble(Player &p, const String &input) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    String arg = input;
+    arg.trim();
+
+    if (arg.length() == 0) {
+        p.client.println("Hobble whom?");
+        return;
+    }
+
+    // Find target player by name (case-insensitive)
+    Player* target = nullptr;
+    int targetIndex = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+
+        if (!strcasecmp(players[i].name, arg.c_str())) {
+            target = &players[i];
+            targetIndex = i;
+            break;
+        }
+    }
+
+    if (!target) {
+        p.client.println("No such player is online.");
+        return;
+    }
+
+    // Toggle hobble
+    if (target->IsLegInjured) {
+        // Currently hobbled, so cure them
+        target->IsLegInjured = false;
+        target->hobbleSkipNextMove = false;  // Reset hobble tracking
+        target->client.println("You can walk normally! You are cured! They have shown mercy upon you.");
+        p.client.println(capFirst(target->name) + " has been cured of hobbling.");
+    } else {
+        // Currently mobile, so hobble them
+        target->IsLegInjured = true;
+        target->hobbleSkipNextMove = false;  // Start fresh
+        target->client.println("You have been Hobbled! You now walk with a limp!");
+        p.client.println(capFirst(target->name) + " has been hobbled.");
     }
 
     // Save target
@@ -14455,7 +14514,21 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         cmd == "u" || cmd == "up" ||
         cmd == "d" || cmd == "down")
     {
-        movePlayer(p, index, normalizeDir(cmd).c_str());
+        // Check if player is hobbled
+        if (p.IsLegInjured) {
+            if (p.hobbleSkipNextMove) {
+                // Skip this movement
+                p.client.println("Your hobbling slows you down.");
+                p.hobbleSkipNextMove = false;  // Next direction will be accepted
+            } else {
+                // Accept this movement
+                movePlayer(p, index, normalizeDir(cmd).c_str());
+                p.hobbleSkipNextMove = true;  // Next direction will be skipped
+            }
+        } else {
+            // Normal movement
+            movePlayer(p, index, normalizeDir(cmd).c_str());
+        }
         return;
     }
 
@@ -15087,6 +15160,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     if (cmd == "blind") {
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdBlind(p, args);
+        return;
+    }
+
+    if (cmd == "hobble") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+        cmdHobble(p, args);
         return;
     }
 
