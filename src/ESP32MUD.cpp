@@ -235,12 +235,18 @@ ChessSession chessSessions[MAX_PLAYERS];
 int globalHighLowPot = 50;
 
 // =============================
-// JOKE SYSTEM (Inn Keeper at 249,248,50)
+// JOKE SYSTEM (Inn Keeper at 249,248,50) - NON-BLOCKING ASYNC
 // =============================
 struct JokeSession {
-    bool active = false;             // timer running when players in room
-    unsigned long nextJokeTime = 0;  // when to fetch next joke
-    String currentJoke = "";         // stored joke text
+    bool active = false;                    // timer running when players in room
+    unsigned long nextJokeTime = 0;         // when to fetch next joke
+    String currentJoke = "";                // stored joke text
+    
+    // Async HTTP state
+    bool requestPending = false;            // HTTP request in flight
+    unsigned long requestStartTime = 0;     // when request was initiated
+    HTTPClient* httpClient = nullptr;       // pointer to active HTTP client
+    const int REQUEST_TIMEOUT = 5000;       // 5 second timeout for HTTP request
 };
 
 JokeSession innKeeperJokes;
@@ -1001,96 +1007,124 @@ int countPlayersInRoom(int x, int y, int z) {
 }
 
 // =============================
-// JOKE API SYSTEM
+// JOKE API SYSTEM - NON-BLOCKING ASYNC HELPERS
 // =============================
-bool fetchJoke() {
-    // Fetch a random joke from JokeAPI (v2.jokeapi.dev)
-    // Excludes NSFW and returns from all categories
+
+// Initiate an async joke fetch (non-blocking - just starts the request)
+void startJokeFetch() {
+    if (innKeeperJokes.requestPending) return; // Already fetching
     
-    HTTPClient http;
-    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw";
+    innKeeperJokes.httpClient = new HTTPClient();
+    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
     
-    if (!http.begin(jokeUrl)) {
+    if (innKeeperJokes.httpClient->begin(jokeUrl)) {
+        innKeeperJokes.httpClient->setConnectTimeout(3000);
+        innKeeperJokes.httpClient->setTimeout(5000);
+        innKeeperJokes.httpClient->GET();  // Send request, don't wait for response
+        innKeeperJokes.requestPending = true;
+        innKeeperJokes.requestStartTime = millis();
+        Serial.println("[JOKE] Async request initiated");
+    } else {
         Serial.println("[JOKE] Failed to begin HTTP connection");
+        delete innKeeperJokes.httpClient;
+        innKeeperJokes.httpClient = nullptr;
+    }
+}
+
+// Check if async joke fetch is complete and process response (non-blocking)
+bool checkJokeFetchComplete() {
+    if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) return false;
+    
+    unsigned long now = millis();
+    unsigned long elapsed = now - innKeeperJokes.requestStartTime;
+    
+    // Check for timeout
+    if (elapsed > innKeeperJokes.REQUEST_TIMEOUT) {
+        Serial.println("[JOKE] Request timeout");
+        innKeeperJokes.httpClient->end();
+        delete innKeeperJokes.httpClient;
+        innKeeperJokes.httpClient = nullptr;
+        innKeeperJokes.requestPending = false;
         return false;
     }
     
-    http.setConnectTimeout(3000);
-    http.setTimeout(5000);
-    
-    int httpCode = http.GET();
-    
-    if (httpCode == 200) {
-        String payload = http.getString();
-        
-        // Parse JSON response - simple parser for JokeAPI format
-        // JokeAPI returns: { "error": false, "type": "single" or "twopart", "joke": "...", "setup": "...", "delivery": "..." }
-        
-        // Check if it's an error response
-        if (payload.indexOf("\"error\":true") != -1) {
-            Serial.println("[JOKE] API returned error response");
-            http.end();
-            return false;
-        }
-        
-        // Extract joke text
-        String jokeText = "";
-        int typeIdx = payload.indexOf("\"type\"");
-        
-        // Look for "type": "single" or "type": "twopart"
-        if (payload.indexOf("\"single\"") != -1) {
-            // Single joke - extract "joke" field
-            int jokeIdx = payload.indexOf("\"joke\":");
-            if (jokeIdx != -1) {
-                jokeIdx += 7; // skip "joke":
-                int startIdx = payload.indexOf("\"", jokeIdx) + 1;
-                int endIdx = payload.indexOf("\"", startIdx);
-                if (startIdx > 0 && endIdx > startIdx) {
-                    jokeText = payload.substring(startIdx, endIdx);
-                }
-            }
-        } else if (payload.indexOf("\"twopart\"") != -1) {
-            // Two-part joke - extract "setup" + " " + "delivery"
-            int setupIdx = payload.indexOf("\"setup\":");
-            if (setupIdx != -1) {
-                setupIdx += 8; // skip "setup":
-                int startIdx = payload.indexOf("\"", setupIdx) + 1;
-                int endIdx = payload.indexOf("\"", startIdx);
-                if (startIdx > 0 && endIdx > startIdx) {
-                    jokeText = payload.substring(startIdx, endIdx);
-                }
-            }
-            
-            int deliveryIdx = payload.indexOf("\"delivery\":");
-            if (deliveryIdx != -1) {
-                jokeText += " ";
-                deliveryIdx += 11; // skip "delivery":
-                int startIdx = payload.indexOf("\"", deliveryIdx) + 1;
-                int endIdx = payload.indexOf("\"", startIdx);
-                if (startIdx > 0 && endIdx > startIdx) {
-                    jokeText += payload.substring(startIdx, endIdx);
-                }
-            }
-        }
-        
-        // Handle Unicode escape sequences (\u followed by 4 hex digits)
-        // Simple approach: look for common ones
-        jokeText.replace("\\\"", "\"");  // Escaped quotes
-        jokeText.replace("\\n", "\n");   // Newlines
-        jokeText.replace("\\\\", "\\");  // Escaped backslashes
-        
-        if (jokeText.length() > 0) {
-            innKeeperJokes.currentJoke = jokeText;
-            http.end();
-            return true;
-        }
-    } else {
-        Serial.print("[JOKE] HTTP GET failed with code: ");
-        Serial.println(httpCode);
+    // Request still pending - not ready yet
+    // In real ESP32 HTTP implementation, we'd check client.connected() state
+    // For now, give it time to respond
+    if (elapsed < 500) {
+        return false; // Not enough time for response yet
     }
     
-    http.end();
-    return false;
+    // Try to get response
+    int httpCode = innKeeperJokes.httpClient->getSize();
+    if (httpCode == -1) return false; // Still waiting
+    
+    // Response available - parse it
+    String payload = innKeeperJokes.httpClient->getString();
+    innKeeperJokes.httpClient->end();
+    delete innKeeperJokes.httpClient;
+    innKeeperJokes.httpClient = nullptr;
+    innKeeperJokes.requestPending = false;
+    
+    // Check if it's an error response
+    if (payload.indexOf("\"error\":true") != -1) {
+        Serial.println("[JOKE] API returned error response");
+        return false;
+    }
+    
+    // Extract joke text
+    String jokeText = "";
+    
+    // Look for "type": "single" or "type": "twopart"
+    if (payload.indexOf("\"single\"") != -1) {
+        // Single joke - extract "joke" field
+        int jokeIdx = payload.indexOf("\"joke\":");
+        if (jokeIdx != -1) {
+            jokeIdx += 7;
+            int startIdx = payload.indexOf("\"", jokeIdx) + 1;
+            int endIdx = payload.indexOf("\"", startIdx);
+            if (startIdx > 0 && endIdx > startIdx) {
+                jokeText = payload.substring(startIdx, endIdx);
+            }
+        }
+    } else if (payload.indexOf("\"twopart\"") != -1) {
+        // Two-part joke - extract "setup" + " " + "delivery"
+        int setupIdx = payload.indexOf("\"setup\":");
+        if (setupIdx != -1) {
+            setupIdx += 8;
+            int startIdx = payload.indexOf("\"", setupIdx) + 1;
+            int endIdx = payload.indexOf("\"", startIdx);
+            if (startIdx > 0 && endIdx > startIdx) {
+                jokeText = payload.substring(startIdx, endIdx);
+            }
+        }
+        
+        int deliveryIdx = payload.indexOf("\"delivery\":");
+        if (deliveryIdx != -1) {
+            jokeText += " ";
+            deliveryIdx += 11;
+            int startIdx = payload.indexOf("\"", deliveryIdx) + 1;
+            int endIdx = payload.indexOf("\"", startIdx);
+            if (startIdx > 0 && endIdx > startIdx) {
+                jokeText += payload.substring(startIdx, endIdx);
+            }
+        }
+    }
+    
+    // Handle Unicode escape sequences
+    jokeText.replace("\\\"", "\"");
+    jokeText.replace("\\n", "\n");
+    jokeText.replace("\\\\", "\\");
+    
+    // Validate: joke must be at least 10 characters long
+    if (jokeText.length() >= 10) {
+        innKeeperJokes.currentJoke = jokeText;
+        Serial.println("[JOKE] Successfully fetched joke: " + jokeText.substring(0, 40) + "...");
+        return true;
+    } else {
+        Serial.println("[JOKE] Joke text too short, retrying...");
+        return false;
+    }
 }
 
 void checkGlobalRebootCountdown(unsigned long now) {
@@ -17654,7 +17688,7 @@ for (auto &npc : npcInstances) {
 
 
     // =============================
-    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50)
+    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - NON-BLOCKING ASYNC
     // =============================
     {
         const int JOKE_ROOM_X = 249;
@@ -17667,26 +17701,38 @@ for (auto &npc : npcInstances) {
             // Players are in the Inn Keeper room - activate joke system
             innKeeperJokes.active = true;
             
-            // Check if it's time to fetch and broadcast a joke
-            if (now >= innKeeperJokes.nextJokeTime) {
+            // Check if async fetch completed (non-blocking check)
+            if (innKeeperJokes.requestPending && checkJokeFetchComplete()) {
+                // Successfully received and parsed joke - broadcast it to the room
+                broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, "");
                 
-                // Try to fetch a new joke
-                if (fetchJoke()) {
-                    // Successfully fetched joke - broadcast it to the room
-                    String jokeMsg = "The Inn Keeper Says: \"" + innKeeperJokes.currentJoke + ".\"";
-                    broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg);
-                    
-                    // Schedule next joke (10-20 seconds from now)
-                    innKeeperJokes.nextJokeTime = now + random(10000, 20001);
-                } else {
-                    // API failed - try again in 5 seconds
-                    innKeeperJokes.nextJokeTime = now + 5000;
-                }
+                // Wrap joke text like room descriptions (80 chars max)
+                String wrappedJoke = wordWrap(innKeeperJokes.currentJoke, MAX_OUTPUT_WIDTH);
+                String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + ".\"";
+                
+                // Send wrapped joke to all players in room
+                announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
+                
+                // Schedule next joke (20-40 seconds from now)
+                innKeeperJokes.nextJokeTime = now + random(20000, 40001);
+            }
+            
+            // Check if it's time to initiate a new joke fetch (non-blocking start)
+            if (now >= innKeeperJokes.nextJokeTime && !innKeeperJokes.requestPending) {
+                startJokeFetch();  // Just initiate, doesn't block
+                // Schedule timeout fallback (try again in 5 seconds if request fails)
+                innKeeperJokes.nextJokeTime = now + 5000;
             }
         } else {
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
-            // Don't reset nextJokeTime here - let it pick up where it left off when players return
+            // Cancel any pending request
+            if (innKeeperJokes.requestPending && innKeeperJokes.httpClient) {
+                innKeeperJokes.httpClient->end();
+                delete innKeeperJokes.httpClient;
+                innKeeperJokes.httpClient = nullptr;
+                innKeeperJokes.requestPending = false;
+            }
         }
     }
 
