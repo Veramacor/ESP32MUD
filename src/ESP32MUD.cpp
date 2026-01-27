@@ -6618,26 +6618,29 @@ void cmdForecast(Player &p, const String &arg) {
 void cmdWho(Player &p) {
     // Count online players and build list
     int onlineCount = 0;
-    String playerList = "\n=== Players Online ===\n";
+    
+    p.client.println("\n======== Players Online ========");
     
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (players[i].active && players[i].loggedIn) {
+            String name = String(players[i].name);
+            if (name.length() > 0) {
+                name[0] = toupper(name[0]);
+            }
             String title = getPlayerTitle(players[i].raceId, players[i].level);
-            playerList += String(players[i].name) + " The " + title + "\n";
+            p.client.println(name + " The " + title);
             onlineCount++;
         }
     }
     
     // Add footer with count
-    playerList += "==========================================\n";
     if (onlineCount == 1) {
-        playerList += "(1 player online)\n";
-    } else {
-        playerList += "(" + String(onlineCount) + " players online)\n";
-    }
-    
-    p.client.print(playerList);
-    p.client.print("> ");
+            p.client.println("(1 player online)");
+        } else {
+            p.client.println("(" + String(onlineCount) + " players online)");
+        }
+    p.client.println("================================" );
+    p.client.println("");
 }
 
 // =============================
@@ -8733,6 +8736,7 @@ void cmdHelp(Player &p) {
     p.client.println("shout <msg>            - Broadcast to all players");
     p.client.println("tell <player> <msg>    - Send a private message to a player");
     p.client.println("actions                - List available emotes");
+    p.client.println("who                    - List all players currently online");
 
     // --- World navigation ---
     p.client.println("map                    - Toggle the Mapper Utility on or off");
