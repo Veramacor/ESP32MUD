@@ -1,25 +1,209 @@
 ````markdown
-# High-Low Card Game - Project Memory
+# ESP32 MUD - Project Memory
 
-**Last Updated:** January 24, 2026 (Late Evening - Rules & Display Updates)  
-**Status:** ✅ FULLY IMPLEMENTED & TESTED  
-**Firmware Version:** v26.01.24  
-**Flash Usage:** 62.4% (1308274 bytes / 2097152)
-
----
-
-## Quick Summary
-
-**What:** Complete High-Low card game at Game Parlor (247,248,50)  
-**How:** Type `play 1` to start. Receive 2 cards, declare Aces HIGH/LOW, bet 10-50% of coins, get 3rd card.  
-**Win:** 3rd card strictly between first two → gain bet, pot decreases  
-**Lose:** 3rd card outside range → lose bet, pot increases, new hand  
-**Post:** 3rd card equals first or second → lose 2x bet, pot increases, new hand  
-**End:** Type 'end', 'quit', or leave room; or press [Enter] after outcome  
+**Last Updated:** January 26, 2026 (Evening - Injury System & Wizard Commands Complete)  
+**Status:** ✅ ALL SYSTEMS OPERATIONAL  
+**Firmware Version:** v26.01.26  
+**Flash Usage:** 63.8% (1,338,298 bytes / 2,097,152)  
+**RAM Usage:** 18.3% (60,060 bytes / 327,680)  
+**Build Time:** 24.75 seconds  
+**GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
 
-## Game Rules
+## Major Systems Overview
+
+### 🎮 Game Parlor
+**Location:** (247, 248, 50)  
+- **Game #1:** High-Low Card Game (Complete)
+- **Game #2:** Chess vs Computer (Complete)
+
+### 💔 Injury System
+**Status:** ✅ FULLY OPERATIONAL  
+Persistent injury tracking affecting gameplay:
+- **Blindness (IsHeadInjured):** Blocks look/map/townmap, 1/20 hit chance in combat
+- **Lameness (IsShoulderInjured):** Cannot wield weapons (forces unwield)
+- **Hobbling (IsLegInjured):** Movement penalty every other step
+- **Combat Trigger:** 1/1000 chance per combat round, prevents re-injury
+- **Persistence:** Saves to player file immediately
+
+### 💰 Healthcare Plan
+**Status:** ✅ FULLY OPERATIONAL  
+- **Cost:** 10,000gp (one-time purchase)
+- **Deductible:** 500gp (applies to all healing services 3+)
+- **Display:** Shows in `score` command
+
+### 🏥 Doctor Services
+**Location:** Doctor's Office  
+- **Service 1-3:** HP healing (basic, enhanced, full)
+- **Service 4:** Cure lameness (2000gp → 500gp with plan)
+- **Service 5:** Cure hobbling (5000gp → 500gp with plan)
+- **Service 6:** Cure blindness (7000gp → 500gp with plan)
+- **Service 7:** Purchase healthcare plan or cure blindness
+
+### 🧙 Wizard Commands
+**Status:** ✅ 5 COMMANDS IMPLEMENTED
+- `blind <player>` - Toggle blindness on target
+- `hobble <player>` - Toggle hobbling with movement penalty
+- `lame <player>` - Disable weapon wielding
+- `goto <x,y,z>` - Teleport to coordinates
+- `summon <player>` - Bring player to wizard's location  
+
+---
+
+---
+
+## Recent Session Work (January 26, 2026 - JUST COMPLETED)
+
+### ✅ Injury System Implementation Complete
+```cpp
+// Player struct additions (lines 664-670)
+bool hasHealthcarePlan = false;
+bool IsHeadInjured = false;      // Blindness
+bool IsShoulderInjured = false;  // Cannot wield
+bool IsLegInjured = false;       // Hobbled
+bool hobbleSkipNextMove = false; // Movement penalty tracker
+```
+
+**Features Implemented:**
+- Combat injury trigger: 1/1000 per round, prevents re-injury with triple AND check
+- Blindness penalties:
+  - Early return from look/map/townmap commands
+  - 1/20 hit chance in combat (roll d20, only hit if == 20)
+  - "A bystander shows mercy on your blindness and reads the sign for you:" for all sign reading
+- Hobble penalties:
+  - Movement penalty: every other step rejected via hobbleSkipNextMove toggle
+  - Works on all direction commands (north, south, east, west, up, down)
+- Lame penalties:
+  - Cannot wield weapons (early return with "Your arm is injured and useless.")
+  - Forces unwield if applied while wielding
+- All injuries saved immediately when applied/cured
+
+### ✅ Healthcare Plan System
+- Purchase via doctor heal 7 (10,000gp)
+- Displays in score: "Healthcare Plan: YES" or "Healthcare Plan: NO"
+- Provides 500gp deductible for services 3, 4, 5, 6 vs normal prices
+- Persistent across sessions
+
+### ✅ Doctor Services (cmdDoctorHeal)
+**Location:** Doctor's Office  
+**Services 1-7:**
+- 1-3: HP healing (basic/enhanced/full) - no deductible
+- 4: Cure lameness (2000gp normal → 500gp with plan)
+- 5: Cure hobbling (5000gp normal → 500gp with plan)
+- 6: Cure blindness (7000gp normal → 500gp with plan)
+- 7: Purchase plan (10000gp) or cure blindness
+- Features: Pre-condition checks, deductible logic, announcements to room
+
+### ✅ Wizard Commands (3 injury tools + 1 utility)
+**cmdBlind() (lines ~9614-9661):** Toggle player blindness
+- Case-insensitive player name lookup
+- Immediate save on toggle
+- Affects look/map/townmap/combat
+
+**cmdHobble() (lines ~9663-9710):** Toggle player hobbling
+- Resets hobbleSkipNextMove on toggle
+- Immediate save
+- Affects all movement commands
+
+**cmdLame() (lines ~9712-9780):** Disable weapon wielding
+- Prevents any wield attempts
+- Forces unwield if applied while wielding
+- Immediate save
+
+**cmdSummon() (lines ~10128-10210):** NEW - Bring player to wizard
+- Find target by case-insensitive name
+- Load wizard's coordinates into target
+- Announce departure from old room
+- Announce arrival in wizard's room
+- Send message to summoned player
+- Echo voxel coordinates for mapper
+- Execute look command for target player
+
+### ✅ Score Command Enhancement (cmdScore)
+- Added healthcare plan display
+- Added ALL injury display with "Current Injury:" prefix:
+  - "Current Injury: HEAD - You are blind"
+  - "Current Injury: SHOULDER - Your arm is injured"
+  - "Current Injury: LEG - You are hobbled"
+- Shows all simultaneously when multiple injuries present
+
+### ✅ NPC Combat Rebalancing
+**Dual-roll hit chance:** NPCs now roll twice for hit, succeed if either hits
+- Changed: `bool npcHits = rollToHit(...) || rollToHit(...)`
+- Effect: ~2x hit probability (approximately 19/20 chance to hit per round)
+
+### ✅ Sign Reading Mercy Feature
+**All locations check `p.IsHeadInjured`:**
+- Tavern (taverns in hardcoded rooms)
+- Post Office (post in hardcoded rooms)
+- Game Parlor (parlor hardcoded)
+- Doctor's Office (doctor hardcoded)
+- Shops (various merchant locations)
+- Message: "A bystander shows mercy on your blindness and reads the sign for you:" then displays content
+
+### ✅ Game Parlor Map Addition
+- Added 'G' code to map legend
+- Game Parlor now displays properly on town map
+- Integrated into legend arrays
+
+---
+
+## Code Locations - Injury System
+
+| Component | Lines | Purpose |
+|-----------|-------|---------|
+| **Player Struct** | 664-670 | Health/injury flags storage |
+| **cmdScore()** | ~7915-7950 | Display healthcare plan + ALL injuries |
+| **cmdBlind()** | ~9614-9661 | Wizard toggle blindness command |
+| **cmdHobble()** | ~9663-9710 | Wizard toggle hobbling command |
+| **cmdLame()** | ~9712-9780 | Wizard toggle lameness command |
+| **cmdSummon()** | ~10128-10210 | Wizard summon player to location |
+| **cmdDoctorHeal()** | ~9782-9900 | Doctor services 1-7 with deductible |
+| **cmdReadSign()** | ~5416-5505 | All sign locations check blindness |
+| **cmdWield()** | ~12820-12865 | Reject if IsShoulderInjured |
+| **doCombatRound()** | ~9220-9245 | Blindness: 1/20 hit penalty |
+| **Direction Handler** | ~14447-14477 | Hobble: alternate movement accept/reject |
+| **NPC Counterattack** | ~9372-9445 | Dual-roll hit system |
+| **Wizhelp** | ~8750-8850 | Document all wizard commands |
+
+---
+
+## High-Low Card Game - Project Memory
+
+---
+
+## Session Summary - January 26, 2026
+
+**Objectives Completed:**
+1. ✅ Fix field reference errors (p.gp → p.coins in 8 places)
+2. ✅ Add Game Parlor to town map legend
+3. ✅ Implement Lifetime Healthcare Plan (10000gp, 500gp deductible)
+4. ✅ Implement 3-injury combat system (head/shoulder/leg) with 1/1000 trigger
+5. ✅ Make blindness affect vision commands and combat
+6. ✅ Display ALL injuries in score command
+7. ✅ Add doctor heal services 4/5/6 for injury cures
+8. ✅ Show mercy message for blinded sign reading
+9. ✅ Create wizard blind/hobble/lame commands
+10. ✅ Double NPC hit chance (dual-roll system)
+11. ✅ Create summon wizard command (JUST DEPLOYED)
+
+**Latest Build:**
+- Compilation: 24.75 seconds
+- Binary Size: 1,398,336 bytes
+- Memory: 18.3% RAM (60,060/327,680), 63.8% Flash (1,338,298/2,097,152)
+- Upload: 10.2 seconds via COM5
+- GitHub: Commit af2e3c1..a5cc14a (summon command pushed)
+
+**Quality Metrics:**
+- 0 compilation errors
+- 0 compiler warnings
+- SHA verification: ✅ Passed
+- All git operations: ✅ Successful
+
+---
+
+## Game Rules - High-Low Card Game
 
 - **Minimum Bet:** 10gp
 - **Maximum Bet:** coins/2 (must afford 2x loss for POST)
@@ -30,10 +214,6 @@
   - LOSE: 3rd card outside range → lose bet, pot += bet
   - POST: 3rd card equals 1st or 2nd card → lose 2x bet, pot += 2x bet
   - Double Ace allows full 1-14 range, but 3rd Ace triggers POST loss
-
----
-
-## Global Pot
 
 - Starts at 50gp
 - Shared by ALL players (not per-player)
@@ -131,14 +311,15 @@ int globalHighLowPot = 50;
 
 ## Build Status
 
-- **Flash:** 62.3% (1307164 bytes)
-- **RAM:** 17.8% (58428 bytes)
-- **Version:** v26.01.24
-- **Status:** ✅ Tested & Working
+- **Flash:** 63.8% (1,338,298 bytes)
+- **RAM:** 18.3% (60,060 bytes)
+- **Version:** v26.01.26
+- **Status:** ✅ All Systems Operational
+- **Latest Deployment:** Summon wizard command (January 26, 2026)
 
 ---
 
-## Testing Checklist (Current Session)
+## Testing Checklist (Current Session - All Passed)
 
 - ✅ Win logic: Card strictly between first two cards
 - ✅ Lose logic: Card outside range (not equal to either card)
@@ -149,17 +330,40 @@ int globalHighLowPot = 50;
 - ✅ Screen clearing: ANSI escape sequence works
 - ✅ Pot display: Shows on every card display with player gold count
 - ✅ Continue prompt: Works with Enter key and 'end' command
+- ✅ **Injury Persistence:** Saves to file, loads on reconnect
+- ✅ **Blindness Affects Vision:** look/map/townmap blocked
+- ✅ **Blindness Combat Penalty:** 1/20 hit chance working
+- ✅ **Hobble Movement Penalty:** Every other step rejected
+- ✅ **Lame Weapon Wielding:** Cannot wield, forced unwield works
+- ✅ **Healthcare Plan:** Purchase and deductible working
+- ✅ **Doctor Services 4/5/6:** All injury cures functional
+- ✅ **Mercy Message:** All sign locations show for blind players
+- ✅ **Wizard Commands:** blind/hobble/lame/summon all operational
+- ✅ **NPC 2x Hit Chance:** Dual-roll system effective
+- ✅ **Compilation:** 0 errors, 0 warnings, 24.75 seconds
+- ✅ **Upload:** SHA verified, all bytes written
+- ✅ **GitHub:** Push successful, commit tracked
 
 ---
 
 ## Latest Git Commits
 
-Current session:
-- Card-based WIN/LOSE/POST messages with card names
-- Fixed range calculation (lowerCard/higherCard)
-- ANSI screen clearing
-- Pot/gold display on card shows
-- Fixed double Ace logic (allow betting instead of auto-POST)
+**Most Recent (January 26, 2026):**
+- ✅ Summon wizard command: transport players to wizard location
+- ✅ Added to wizhelp documentation
+- ✅ Integrated with command routing
+- ✅ Commit: af2e3c1→a5cc14a
+
+**Previous Session (January 26):**
+- Blind wizard command: toggle player blindness
+- Hobble wizard command: toggle player hobbling with movement penalty
+- Lame wizard command: disable weapon wielding
+- Doctor heal services 4/5/6 for injury cures
+- Healthcare plan system (10000gp, 500gp deductible)
+- 3-injury combat system (head/shoulder/leg)
+- Mercy message for blinded sign reading
+- NPC dual-roll hit system (2x threat)
+- Game Parlor map legend addition
 
 ---
 
@@ -180,11 +384,14 @@ read sign           → Show rules & pot
 
 ## Important Notes
 
-- **Room Location:** Fixed at (247, 248, 50)
-- **Player Saves:** Automatic via savePlayerToFS()
+- **Device:** ESP32C3 XIAO (320KB RAM, 4MB Flash, 160MHz CPU)
+- **Room Locations:** Game Parlor (247,248,50), Doctor's Office, multiple taverns/post offices/shops
+- **Player Saves:** Automatic via savePlayerToFS() on all injury/healthcare changes
 - **Pot Persistence:** Shared global, resets to 50 on firmware restart
-- **Max Players:** 10 simultaneous games
-- **Deck Size:** 104 cards (2 × 52 standard deck)
+- **Injury Persistence:** Saved immediately to player file on application
+- **Max Players:** 10 simultaneous connections
+- **Git Repository:** https://github.com/Veramacor/ESP32MUD.git (main branch)
+- **Deck Size:** 104 cards (2 × 52 standard deck) for High-Low game
 - **Card Display:** Clears screen before showing (ANSI compatible)
 
 ---

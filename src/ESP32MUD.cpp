@@ -3769,7 +3769,28 @@ Emote emotes[] = {
   {"whirl","whirls","around","energetically", true},
   {"whistle","whistles","at","tunelessly", true},
   {"wink","winks","at","suggestively", true},
-  {"yawn","yawns","at","lazily", true}
+  {"yawn","yawns","at","lazily", true},
+  {"puke","pukes","at","disgustingly", true},
+  {"barf","barfs","at","violently", true},
+  {"gag","gags","at","nauseously", true},
+  {"fart","farts","at","thunderously", true},
+  {"spit","spits","at","rudely", true},
+  {"choke","chokes","on","pathetically", true},
+  {"burp","burps","at","obnoxiously", true},
+  {"belch","belches","at","repulsively", true},
+  {"heave","heaves","at","miserably", true},
+  {"retch","retches","at","horribly", true},
+  {"gunk","gunks","at","slimily", true},
+  {"phlegm","phlegms","at","grossly", true},
+  {"hack","hacks","at","wetly", true},
+  {"wheeze","wheezes","at","raunchily", true},
+  {"fume","fumes","at","angrily", true},
+  {"splutter","splutters","at","indignantly", true},
+  {"snort","snorts","at","crudely", true},
+  {"muck","mucks","at","messily", true},
+  {"slime","slimes","onto","nastily", true},
+  {"slurp","slurps","at","greedily", true},
+  {"smack","smacks","lips","loudly", false}
 };
 
 
