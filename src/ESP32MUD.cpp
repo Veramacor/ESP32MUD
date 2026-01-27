@@ -656,6 +656,9 @@ struct Player {
     
     // Map tracker toggle
     bool mapTrackerEnabled = false;
+
+    // Healthcare plan flag
+    bool hasHealthcarePlan = false;
 };
 
 // =============================
@@ -9561,61 +9564,84 @@ void cmdDoctorHeal(Player &p, const String &input) {
     int servicePrices[] = {100, 500, 1000, 2000, 5000, 7000, 10000};
     int price = servicePrices[service - 1];
 
-    // Check if player has enough gold
-    if (p.coins < price) {
-        p.client.println("This service requires " + String(price) + " gold coins to purchase, which you do not have.");
+    // Service 7: Lifetime Healthcare Plan
+    if (service == 7) {
+        if (p.hasHealthcarePlan) {
+            p.client.println("You have already purchased a Plan.");
+            return;
+        }
+        
+        // Check if player has enough gold
+        if (p.coins < price) {
+            p.client.println("This service requires " + String(price) + " gold coins to purchase, which you do not have.");
+            return;
+        }
+        
+        p.coins -= price;
+        p.hasHealthcarePlan = true;
+        p.client.println("Congratulations! You have purchased a Lifetime Healthcare Plan. You will now receive");
+        p.client.println("discounted medical services with a 500 gold coin deductible per service.");
+        savePlayerToFS(p);
         return;
     }
 
-    // Process service
+    // For services 1-6: Calculate cost with healthcare plan deductible
+    int playerCost = price;
+    
+    if (p.hasHealthcarePlan && service >= 3) {
+        // Deductible only applies to services 3 and above
+        // Services 1-2 are below/at 500gp, so no deductible benefit
+        // Services 3+ benefit from the 500gp deductible
+        if (price > 500) {
+            playerCost = 500;  // Player pays only deductible, plan covers rest
+        } else {
+            playerCost = price;  // No deductible benefit (cost is <= 500gp)
+        }
+    }
+
+    // Check if player has enough gold for their portion
+    if (p.coins < playerCost) {
+        p.client.println("This service requires " + String(playerCost) + " gold coins to purchase, which you do not have.");
+        return;
+    }
+
+    // Check health for healing services (1-3)
     if (service == 1 || service == 2 || service == 3) {
-        // Check if player is at max health for healing services
         if (p.hp >= p.maxHp) {
             p.client.println("You are already at maximum health! you do not need this service.");
             return;
         }
     }
 
+    // Process healing services (1-3)
     if (service == 1) {
-        // Heal 1/4 of max HP
         int healAmount = p.maxHp / 4;
         p.hp += healAmount;
         if (p.hp > p.maxHp) p.hp = p.maxHp;
-        p.coins -= price;
+        p.coins -= playerCost;
         p.client.println("You have been treated for minor cuts and bruises. You feel much better!");
     }
     else if (service == 2) {
-        // Heal 1/2 of max HP
         int healAmount = p.maxHp / 2;
         p.hp += healAmount;
         if (p.hp > p.maxHp) p.hp = p.maxHp;
-        p.coins -= price;
+        p.coins -= playerCost;
         p.client.println("Your major wounds have been tended to. The pain fades significantly.");
     }
     else if (service == 3) {
-        // Full heal
         p.hp = p.maxHp;
-        p.coins -= price;
-        p.client.println("The healing magic washes over you. You feel completely restored!");
+        p.coins -= playerCost;
+        if (p.hasHealthcarePlan && playerCost == 500) {
+            p.client.println("The healing magic washes over you. You feel completely restored!");
+            p.client.println("Your Healthcare Plan has covered " + String(price - 500) + " gold coins of this service.");
+        } else {
+            p.client.println("The healing magic washes over you. You feel completely restored!");
+        }
     }
-    else if (service == 4) {
-        p.coins -= price;
+    else if (service == 4 || service == 5 || service == 6) {
+        // Unavailable services 4-6 still deduct cost
+        p.coins -= playerCost;
         p.client.println("This service is currently unavailable.");
-        return;
-    }
-    else if (service == 5) {
-        p.coins -= price;
-        p.client.println("This service is currently unavailable.");
-        return;
-    }
-    else if (service == 6) {
-        p.coins -= price;
-        p.client.println("This service is currently unavailable.");
-        return;
-    }
-    else if (service == 7) {
-        p.coins -= price;
-        p.client.println("The Healthcare Plan is currently unavailable.");
         return;
     }
 
@@ -13093,6 +13119,9 @@ void savePlayerToFS(Player &p) {
         for (int s = 0; s < 10; s++)
             f.println(p.questStepDone[q][s] ? "1" : "0");
 
+    // Healthcare plan flag
+    f.println(p.hasHealthcarePlan ? "1" : "0");
+
     f.close();
 
 
@@ -13325,6 +13354,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
             p.questStepDone[q][s] = (tmp == "1");
         }
     }
+
+    // Healthcare plan flag
+    safeRead(tmp);
+    p.hasHealthcarePlan = (tmp == "1");
 
     f.close();
     return true;
