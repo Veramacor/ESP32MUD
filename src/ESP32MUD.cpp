@@ -5496,6 +5496,9 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    if (p.IsHeadInjured) {
+        p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+    }
     shop->displayInventory(p.client);
 }
 
