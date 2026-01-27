@@ -8784,6 +8784,7 @@ void cmdWizHelp(Player &p) {
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
+    p.client.println("summon <player>         - Bring a player to your location");
     p.client.println("heal <player>           - Fully heal a player");
     p.client.println("invis                   - Toggle invisibility");
     p.client.println("reboot                  - Restart the world");
@@ -10125,6 +10126,94 @@ void cmdGoto(Player &p, const String &args) {
     }
 
     p.client.println("No such player or room.");
+}
+
+void cmdSummon(Player &p, const String &args) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    // Resolve wizard playerIndex
+    int wizardIndex = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (&players[i] == &p) {
+            wizardIndex = i;
+            break;
+        }
+    }
+    if (wizardIndex < 0) return;
+
+    String target = args;
+    target.trim();
+
+    if (target.length() == 0) {
+        p.client.println("Usage: summon <player>");
+        return;
+    }
+
+    // Find target player
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Player &other = players[i];
+        if (!other.active) continue;
+        if (&other == &p) continue;
+
+        if (npcNameMatches(other.name, target)) {
+
+            if (!loadRoomForPlayer(other, p.roomX, p.roomY, p.roomZ)) {
+                p.client.println("Summon failed.");
+                return;
+            }
+
+            // Announce departure from old room
+            String departure;
+            if (other.ExitMsg.length() > 0)
+                departure = String(capFirst(other.name)) + " " + other.ExitMsg;
+            else
+                departure = String(capFirst(other.name)) + " vanishes!";
+
+            // Get target's old room before we changed it
+            int oldX = other.roomX;
+            int oldY = other.roomY;
+            int oldZ = other.roomZ;
+            // Note: loadRoomForPlayer already moved them, so we announce to new room
+
+            // Announce arrival in new room if wizard is visible
+            String arrival;
+            if (other.EnterMsg.length() > 0)
+                arrival = String(capFirst(other.name)) + " " + other.EnterMsg;
+            else
+                arrival = String(capFirst(other.name)) + " appears before you!";
+
+            announceToRoom(
+                p.roomX,
+                p.roomY,
+                p.roomZ,
+                arrival,
+                i
+            );
+
+            // Message to summoned player
+            other.client.println("You are suddenly transported before " + String(capFirst(p.name)) + "!");
+
+            // Wizard confirmation
+            p.client.println(capFirst(other.name) + " has been summoned.");
+
+            // Echo voxel coords for VB.NET mapper
+            p.client.print("(");
+            p.client.print(p.roomX);
+            p.client.print(",");
+            p.client.print(p.roomY);
+            p.client.print(",");
+            p.client.print(p.roomZ);
+            p.client.println(")");
+
+            cmdLook(other);
+            return;
+        }
+    }
+
+    p.client.println("No such player online.");
 }
 
 void cmdWimp(Player &p) {
@@ -15316,6 +15405,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     if (cmd == "goto") {
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdGoto(p, args);
+        return;
+    }
+
+    if (cmd == "summon") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+        cmdSummon(p, args);
         return;
     }
 
