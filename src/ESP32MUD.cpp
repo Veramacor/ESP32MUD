@@ -691,6 +691,9 @@ struct Player {
     // Healthcare plan flag
     bool hasHealthcarePlan = false;
 
+    // Weather city preference
+    String weatherCity = "";
+    
     // Combat injury flags
     bool IsHeadInjured = false;      // Blindness
     bool IsShoulderInjured = false;  // Cannot wield weapon effectively
@@ -6195,6 +6198,17 @@ int extractWeatherCode(const String &json) {
     return code.length() > 0 ? code.toInt() : -1;
 }
 
+// Convert Celsius to Fahrenheit
+String celsiusToFahrenheit(const String &celsius) {
+    if (celsius == "unknown") return "unknown";
+    float c = celsius.toFloat();
+    float f = (c * 9.0 / 5.0) + 32.0;
+    // Format to 1 decimal place
+    char buffer[10];
+    sprintf(buffer, "%.1f", f);
+    return String(buffer);
+}
+
 // Helper function to extract temperature from JSON response (for geocoding)
 String extractTemperature(const String &json) {
     // Look for "temperature_2m": followed by a number
@@ -6273,7 +6287,7 @@ void updateWeatherRequests() {
     // Check for timeout
     if (elapsed > WEATHER_REQUEST_TIMEOUT) {
         currentWeatherRequest.pending = false;
-        broadcastWeather("The Weather Mage says: Unable to contact the weather spirits at this time.");
+        broadcastWeather("The Weather Mage says: Unable to contact the\nweather spirits at this time.");
         return;
     }
     
@@ -6281,7 +6295,7 @@ void updateWeatherRequests() {
     if (WiFi.status() != WL_CONNECTED) {
         if (elapsed > 1000) {
             currentWeatherRequest.pending = false;
-            broadcastWeather("The Weather Mage says: The spirits are not responding. Check your network connection.");
+            broadcastWeather("The Weather Mage says: The spirits are not\nresponding. Check your network connection.");
         }
         return;
     }
@@ -6291,140 +6305,85 @@ void updateWeatherRequests() {
         return;
     }
     
-    // Attempt to fetch weather data
+    bool success = false;
+    
+    // Always use geocoding for specified location, then fetch weather
+    String geoUrl = "http://geocoding-api.open-meteo.com/v1/search?name=" + currentWeatherRequest.query + "&count=1&language=en&format=json";
+    
     HTTPClient http;
     http.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
     http.setTimeout(WEATHER_REQUEST_TIMEOUT);
     
-    bool success = false;
-    
-    if (currentWeatherRequest.isLocalQuery) {
-        // Local weather - first try to get city from public IP
-        String url = "http://ip-api.com/json/?fields=city,latitude,longitude";
+    if (http.begin(geoUrl)) {
+        int httpCode = http.GET();
+        String payload = http.getString();
+        http.end();
         
-        if (http.begin(url)) {
-            int httpCode = http.GET();
-            if (httpCode == 200) {
-                String payload = http.getString();
+        if (httpCode == 200) {
+            // Extract latitude and longitude
+            int latIdx = payload.indexOf("\"latitude\":");
+            int lonIdx = payload.indexOf("\"longitude\":");
+            
+            if (latIdx >= 0 && lonIdx >= 0) {
+                String latitude = extractTemperature(payload.substring(latIdx));
                 
-                // Extract coordinates
-                int latIdx = payload.indexOf("\"latitude\":");
-                int lonIdx = payload.indexOf("\"longitude\":");
-                
-                if (latIdx >= 0 && lonIdx >= 0) {
-                    String latitude = extractTemperature(payload.substring(latIdx)); // Reuse number extraction
-                    
-                    // For longitude, extract similarly
-                    int lonStart = lonIdx + 12;
-                    String longitude = "";
-                    while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
-                    while (lonStart < payload.length()) {
-                        char c = payload[lonStart];
-                        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
-                            longitude += c;
-                            lonStart++;
-                        } else {
-                            break;
-                        }
+                int lonStart = lonIdx + 12;
+                String longitude = "";
+                while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
+                while (lonStart < payload.length()) {
+                    char c = payload[lonStart];
+                    if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+                        longitude += c;
+                        lonStart++;
+                    } else {
+                        break;
                     }
+                }
+                
+                if (latitude.length() > 0 && longitude.length() > 0) {
+                    String forecastType = currentWeatherRequest.isForecast ? 
+                        "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
+                        "&current=temperature_2m,weather_code";
                     
-                    if (latitude.length() > 0 && longitude.length() > 0) {
-                        // Now get weather for this location
-                        String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
-                                          "&longitude=" + longitude + "&current=temperature_2m,weather_code&timezone=auto";
+                    String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
+                                      "&longitude=" + longitude + forecastType + "&timezone=auto";
+                    
+                    HTTPClient http2;
+                    http2.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
+                    http2.setTimeout(WEATHER_REQUEST_TIMEOUT);
+                    
+                    if (http2.begin(weatherUrl)) {
+                        int weatherCode = http2.GET();
+                        String weatherPayload = http2.getString();
+                        http2.end();
                         
-                        if (http.begin(weatherUrl)) {
-                            int weatherCode = http.GET();
-                            if (weatherCode == 200) {
-                                String weatherPayload = http.getString();
-                                String temp = extractCurrentTemperature(weatherPayload);
+                        if (weatherCode == 200) {
+                            if (currentWeatherRequest.isForecast) {
+                                String maxTempC = extractTemperature(weatherPayload.substring(weatherPayload.indexOf("\"temperature_2m_max\":")));
+                                String maxTempF = celsiusToFahrenheit(maxTempC);
+                                if (maxTempF != "unknown") {
+                                    lastWeatherData.location = currentWeatherRequest.query;
+                                    lastWeatherData.forecast = "3-day forecast - Max: " + maxTempF + "°F";
+                                    lastWeatherData.current = "(Forecast mode)";
+                                    success = true;
+                                }
+                            } else {
+                                String tempC = extractCurrentTemperature(weatherPayload);
+                                String tempF = celsiusToFahrenheit(tempC);
                                 int code = extractWeatherCode(weatherPayload);
                                 
-                                if (temp != "unknown" && code >= 0) {
-                                    // For local queries, display as "Esperthertu"
-                                    lastWeatherData.location = "Esperthertu";
-                                    lastWeatherData.current = "Temperature: " + temp + "°C";
+                                if (tempF != "unknown" && code >= 0) {
+                                    lastWeatherData.location = currentWeatherRequest.query;
+                                    lastWeatherData.current = "Temperature: " + tempF + "°F";
                                     lastWeatherData.forecast = getWeatherDescription(code);
-                                    lastWeatherData.timestamp = now;
                                     success = true;
                                 }
                             }
-                            http.end();
+                            lastWeatherData.timestamp = now;
                         }
                     }
                 }
             }
-            http.end();
-        }
-    } else {
-        // Specific location - use geocoding then forecast
-        String geoUrl = "http://geocoding-api.open-meteo.com/v1/search?name=" + currentWeatherRequest.query + "&count=1&language=en&format=json";
-        
-        if (http.begin(geoUrl)) {
-            int httpCode = http.GET();
-            if (httpCode == 200) {
-                String payload = http.getString();
-                
-                // Extract latitude and longitude
-                int latIdx = payload.indexOf("\"latitude\":");
-                int lonIdx = payload.indexOf("\"longitude\":");
-                
-                if (latIdx >= 0 && lonIdx >= 0) {
-                    String latitude = extractTemperature(payload.substring(latIdx));
-                    
-                    int lonStart = lonIdx + 12;
-                    String longitude = "";
-                    while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
-                    while (lonStart < payload.length()) {
-                        char c = payload[lonStart];
-                        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
-                            longitude += c;
-                            lonStart++;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    if (latitude.length() > 0 && longitude.length() > 0) {
-                        String forecastType = currentWeatherRequest.isForecast ? 
-                            "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
-                            "&current=temperature_2m,weather_code";
-                        
-                        String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
-                                          "&longitude=" + longitude + forecastType + "&timezone=auto";
-                        
-                        if (http.begin(weatherUrl)) {
-                            int weatherCode = http.GET();
-                            if (weatherCode == 200) {
-                                String weatherPayload = http.getString();
-                                
-                                if (currentWeatherRequest.isForecast) {
-                                    String maxTemp = extractTemperature(weatherPayload.substring(weatherPayload.indexOf("\"temperature_2m_max\":")));
-                                    if (maxTemp != "unknown") {
-                                        lastWeatherData.location = currentWeatherRequest.query;
-                                        lastWeatherData.forecast = "3-day forecast retrieved - Max: " + maxTemp + "°C";
-                                        lastWeatherData.current = "(Forecast mode)";
-                                        success = true;
-                                    }
-                                } else {
-                                    String temp = extractCurrentTemperature(weatherPayload);
-                                    int code = extractWeatherCode(weatherPayload);
-                                    
-                                    if (temp != "unknown" && code >= 0) {
-                                        lastWeatherData.location = currentWeatherRequest.query;
-                                        lastWeatherData.current = "Temperature: " + temp + "°C";
-                                        lastWeatherData.forecast = getWeatherDescription(code);
-                                        success = true;
-                                    }
-                                }
-                                lastWeatherData.timestamp = now;
-                            }
-                            http.end();
-                        }
-                    }
-                }
-            }
-            http.end();
         }
     }
     
@@ -6436,7 +6395,7 @@ void updateWeatherRequests() {
         output += lastWeatherData.forecast;
         broadcastWeather(output);
     } else {
-        broadcastWeather("The Weather Mage says: The spirits are unable to divine the weather at this time.");
+        broadcastWeather("The Weather Mage says: The spirits are\nunable to divine the weather at this time.");
     }
 }
 
@@ -6450,26 +6409,28 @@ void cmdWeather(Player &p, const String &arg) {
     String location = arg;
     location.trim();
     
-    if (location.length() == 0) {
-        // Local weather - use player's IP to determine location
-        p.client.println("The Weather Mage begins to consult the spirits about your realm...");
-        currentWeatherRequest.pending = true;
-        currentWeatherRequest.isForecast = false;
-        currentWeatherRequest.isLocalQuery = true;
-        currentWeatherRequest.query = "";
-        currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
-        currentWeatherRequest.startTime = millis();
-        // HTTP request will be initiated in updateWeatherRequests()
+    // If argument provided, update the player's weather city
+    if (location.length() > 0) {
+        p.weatherCity = location;
+        savePlayerToFS(p);
+        location = p.weatherCity; // Use the updated city
+    } else if (p.weatherCity.length() > 0) {
+        // Use stored weather city
+        location = p.weatherCity;
     } else {
-        // Specific location weather
-        p.client.println("The Weather Mage begins to divine the weather for " + location + "...");
-        currentWeatherRequest.pending = true;
-        currentWeatherRequest.isForecast = false;
-        currentWeatherRequest.isLocalQuery = false;
-        currentWeatherRequest.query = location;
-        currentWeatherRequest.startTime = millis();
-        // HTTP request will be initiated in updateWeatherRequests()
+        // No stored city - prompt player
+        p.client.println("Enter the city of your origin you wish to forecast:");
+        p.client.println("(e.g., 'weather orlando' or 'weather detroit,mi')");
+        return;
     }
+    
+    // Initiate weather request for the city
+    p.client.println("The Weather Mage begins to consult the spirits for " + location + "...");
+    currentWeatherRequest.pending = true;
+    currentWeatherRequest.isForecast = false;
+    currentWeatherRequest.isLocalQuery = false;
+    currentWeatherRequest.query = location;
+    currentWeatherRequest.startTime = millis();
 }
 
 void cmdForecast(Player &p, const String &arg) {
@@ -6482,26 +6443,28 @@ void cmdForecast(Player &p, const String &arg) {
     String location = arg;
     location.trim();
     
-    if (location.length() == 0) {
-        // Local forecast - use player's IP to determine location
-        p.client.println("The Weather Mage begins consulting the spirits for a 3-day forecast...");
-        currentWeatherRequest.pending = true;
-        currentWeatherRequest.isForecast = true;
-        currentWeatherRequest.isLocalQuery = true;
-        currentWeatherRequest.query = "";
-        currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
-        currentWeatherRequest.startTime = millis();
-        // HTTP request will be initiated in updateWeatherRequests()
+    // If argument provided, update the player's weather city
+    if (location.length() > 0) {
+        p.weatherCity = location;
+        savePlayerToFS(p);
+        location = p.weatherCity; // Use the updated city
+    } else if (p.weatherCity.length() > 0) {
+        // Use stored weather city
+        location = p.weatherCity;
     } else {
-        // Specific location forecast
-        p.client.println("The Weather Mage begins to divine the 3-day forecast for " + location + "...");
-        currentWeatherRequest.pending = true;
-        currentWeatherRequest.isForecast = true;
-        currentWeatherRequest.isLocalQuery = false;
-        currentWeatherRequest.query = location;
-        currentWeatherRequest.startTime = millis();
-        // HTTP request will be initiated in updateWeatherRequests()
+        // No stored city - prompt player
+        p.client.println("Enter the city of your origin you wish to forecast:");
+        p.client.println("(e.g., 'forecast orlando' or 'forecast detroit,mi')");
+        return;
     }
+    
+    // Initiate forecast request for the city
+    p.client.println("The Weather Mage begins consulting the spirits for a forecast...");
+    currentWeatherRequest.pending = true;
+    currentWeatherRequest.isForecast = true;
+    currentWeatherRequest.isLocalQuery = false;
+    currentWeatherRequest.query = location;
+    currentWeatherRequest.startTime = millis();
 }
 
 // =============================
@@ -14082,6 +14045,9 @@ void savePlayerToFS(Player &p) {
     // Healthcare plan flag
     f.println(p.hasHealthcarePlan ? "1" : "0");
 
+    // Weather city preference
+    f.println(p.weatherCity);
+
     // Combat injury flags
     f.println(p.IsHeadInjured ? "1" : "0");
     f.println(p.IsShoulderInjured ? "1" : "0");
@@ -14323,6 +14289,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     // Healthcare plan flag
     safeRead(tmp);
     p.hasHealthcarePlan = (tmp == "1");
+
+    // Weather city preference
+    safeRead(tmp);
+    p.weatherCity = tmp;
 
     // Combat injury flags
     safeRead(tmp);
