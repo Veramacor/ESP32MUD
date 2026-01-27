@@ -153,6 +153,7 @@ struct WeatherRequest {
     bool pending;             // Is a request in progress?
     bool isForecast;          // true for forecast, false for current
     String query;             // City name or empty for local
+    bool isLocalQuery;        // true if no location specified (will show as Esperthertu)
     unsigned long startTime;  // When request started (for timeout)
     String ipAddress;         // Player's IP for local lookup
 };
@@ -6292,7 +6293,7 @@ void updateWeatherRequests() {
     
     bool success = false;
     
-    if (currentWeatherRequest.query.length() == 0) {
+    if (currentWeatherRequest.isLocalQuery) {
         // Local weather - first try to get city from public IP
         String url = "http://ip-api.com/json/?fields=city,latitude,longitude";
         
@@ -6322,21 +6323,6 @@ void updateWeatherRequests() {
                         }
                     }
                     
-                    // Extract city name
-                    int cityIdx = payload.indexOf("\"city\":");
-                    String city = "Your Location";
-                    if (cityIdx >= 0) {
-                        int cityStart = cityIdx + 7;
-                        while (cityStart < payload.length() && payload[cityStart] != '\"') cityStart++;
-                        if (cityStart < payload.length()) {
-                            cityStart++;
-                            while (cityStart < payload.length() && payload[cityStart] != '\"') {
-                                city += payload[cityStart];
-                                cityStart++;
-                            }
-                        }
-                    }
-                    
                     if (latitude.length() > 0 && longitude.length() > 0) {
                         // Now get weather for this location
                         String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
@@ -6350,7 +6336,8 @@ void updateWeatherRequests() {
                                 int code = extractWeatherCode(weatherPayload);
                                 
                                 if (temp != "unknown" && code >= 0) {
-                                    lastWeatherData.location = city;
+                                    // For local queries, display as "Esperthertu"
+                                    lastWeatherData.location = "Esperthertu";
                                     lastWeatherData.current = "Temperature: " + temp + "°C";
                                     lastWeatherData.forecast = getWeatherDescription(code);
                                     lastWeatherData.timestamp = now;
@@ -6463,6 +6450,7 @@ void cmdWeather(Player &p, const String &arg) {
         p.client.println("The Weather Mage begins to consult the spirits about your realm...");
         currentWeatherRequest.pending = true;
         currentWeatherRequest.isForecast = false;
+        currentWeatherRequest.isLocalQuery = true;
         currentWeatherRequest.query = "";
         currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
         currentWeatherRequest.startTime = millis();
@@ -6472,6 +6460,7 @@ void cmdWeather(Player &p, const String &arg) {
         p.client.println("The Weather Mage begins to divine the weather for " + location + "...");
         currentWeatherRequest.pending = true;
         currentWeatherRequest.isForecast = false;
+        currentWeatherRequest.isLocalQuery = false;
         currentWeatherRequest.query = location;
         currentWeatherRequest.startTime = millis();
         // HTTP request will be initiated in updateWeatherRequests()
@@ -6493,6 +6482,7 @@ void cmdForecast(Player &p, const String &arg) {
         p.client.println("The Weather Mage begins consulting the spirits for a 3-day forecast...");
         currentWeatherRequest.pending = true;
         currentWeatherRequest.isForecast = true;
+        currentWeatherRequest.isLocalQuery = true;
         currentWeatherRequest.query = "";
         currentWeatherRequest.ipAddress = getPlayerIPAddress(p);
         currentWeatherRequest.startTime = millis();
@@ -6502,6 +6492,7 @@ void cmdForecast(Player &p, const String &arg) {
         p.client.println("The Weather Mage begins to divine the 3-day forecast for " + location + "...");
         currentWeatherRequest.pending = true;
         currentWeatherRequest.isForecast = true;
+        currentWeatherRequest.isLocalQuery = false;
         currentWeatherRequest.query = location;
         currentWeatherRequest.startTime = millis();
         // HTTP request will be initiated in updateWeatherRequests()
