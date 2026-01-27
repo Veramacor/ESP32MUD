@@ -234,6 +234,17 @@ ChessSession chessSessions[MAX_PLAYERS];
 // Global High-Low pot (shared by all players)
 int globalHighLowPot = 50;
 
+// =============================
+// JOKE SYSTEM (Inn Keeper at 249,248,50)
+// =============================
+struct JokeSession {
+    bool active = false;             // timer running when players in room
+    unsigned long nextJokeTime = 0;  // when to fetch next joke
+    String currentJoke = "";         // stored joke text
+};
+
+JokeSession innKeeperJokes;
+
 bool g_inYmodem = false;
 
 bool receivingFile = false;
@@ -974,7 +985,113 @@ void safeReboot() {
     ESP.restart();
 }
 
+// =============================
+// ROOM UTILITY FUNCTIONS
+// =============================
+int countPlayersInRoom(int x, int y, int z) {
+    // Count how many active, logged-in players are in a specific room
+    int count = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (players[i].active && players[i].loggedIn && 
+            players[i].roomX == x && players[i].roomY == y && players[i].roomZ == z) {
+            count++;
+        }
+    }
+    return count;
+}
 
+// =============================
+// JOKE API SYSTEM
+// =============================
+bool fetchJoke() {
+    // Fetch a random joke from JokeAPI (v2.jokeapi.dev)
+    // Excludes NSFW and returns from all categories
+    
+    HTTPClient http;
+    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw";
+    
+    if (!http.begin(jokeUrl)) {
+        Serial.println("[JOKE] Failed to begin HTTP connection");
+        return false;
+    }
+    
+    http.setConnectTimeout(3000);
+    http.setTimeout(5000);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode == 200) {
+        String payload = http.getString();
+        
+        // Parse JSON response - simple parser for JokeAPI format
+        // JokeAPI returns: { "error": false, "type": "single" or "twopart", "joke": "...", "setup": "...", "delivery": "..." }
+        
+        // Check if it's an error response
+        if (payload.indexOf("\"error\":true") != -1) {
+            Serial.println("[JOKE] API returned error response");
+            http.end();
+            return false;
+        }
+        
+        // Extract joke text
+        String jokeText = "";
+        int typeIdx = payload.indexOf("\"type\"");
+        
+        // Look for "type": "single" or "type": "twopart"
+        if (payload.indexOf("\"single\"") != -1) {
+            // Single joke - extract "joke" field
+            int jokeIdx = payload.indexOf("\"joke\":");
+            if (jokeIdx != -1) {
+                jokeIdx += 7; // skip "joke":
+                int startIdx = payload.indexOf("\"", jokeIdx) + 1;
+                int endIdx = payload.indexOf("\"", startIdx);
+                if (startIdx > 0 && endIdx > startIdx) {
+                    jokeText = payload.substring(startIdx, endIdx);
+                }
+            }
+        } else if (payload.indexOf("\"twopart\"") != -1) {
+            // Two-part joke - extract "setup" + " " + "delivery"
+            int setupIdx = payload.indexOf("\"setup\":");
+            if (setupIdx != -1) {
+                setupIdx += 8; // skip "setup":
+                int startIdx = payload.indexOf("\"", setupIdx) + 1;
+                int endIdx = payload.indexOf("\"", startIdx);
+                if (startIdx > 0 && endIdx > startIdx) {
+                    jokeText = payload.substring(startIdx, endIdx);
+                }
+            }
+            
+            int deliveryIdx = payload.indexOf("\"delivery\":");
+            if (deliveryIdx != -1) {
+                jokeText += " ";
+                deliveryIdx += 11; // skip "delivery":
+                int startIdx = payload.indexOf("\"", deliveryIdx) + 1;
+                int endIdx = payload.indexOf("\"", startIdx);
+                if (startIdx > 0 && endIdx > startIdx) {
+                    jokeText += payload.substring(startIdx, endIdx);
+                }
+            }
+        }
+        
+        // Handle Unicode escape sequences (\u followed by 4 hex digits)
+        // Simple approach: look for common ones
+        jokeText.replace("\\\"", "\"");  // Escaped quotes
+        jokeText.replace("\\n", "\n");   // Newlines
+        jokeText.replace("\\\\", "\\");  // Escaped backslashes
+        
+        if (jokeText.length() > 0) {
+            innKeeperJokes.currentJoke = jokeText;
+            http.end();
+            return true;
+        }
+    } else {
+        Serial.print("[JOKE] HTTP GET failed with code: ");
+        Serial.println(httpCode);
+    }
+    
+    http.end();
+    return false;
+}
 
 void checkGlobalRebootCountdown(unsigned long now) {
     long remaining = (long)(nextGlobalRespawn - now);
@@ -6927,9 +7044,9 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
     // Determine 3rd card value
     int card3Value;
     if (session.card3.isAce) {
-        // If either first or second card is an Ace, 3rd Ace is a WIN
+        // If either first or second card is an Ace, 3rd Ace is a POST HIT - player loses double
         if (session.card1.isAce || session.card2.isAce) {
-            card3Value = -1;  // Flag for automatic win
+            card3Value = -2;  // Flag for POST HIT (lose double)
         } else {
             // 3rd card Ace should be valued as 1 or 14 based on what's optimal
             // Default to 1 (low) unless that makes it outside range
@@ -6942,33 +7059,32 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
         card3Value = session.card3.value;
     }
     
-    // Check for automatic win (3rd Ace when first or second is also Ace)
-    if (card3Value == -1) {
-        // WIN - double Ace is automatic win!
-        // Player wins their bet amount, pot is reduced by bet
-        p.coins += betAmount;
-        p.client.println("Double Ace! You WIN " + String(betAmount) + "gp!");
-        globalHighLowPot -= betAmount;
-        saveHighLowPot();  // Save pot after win
-        
-        // Check if pot is depleted (player won the game)
-        if (globalHighLowPot <= 0) {
-            globalHighLowPot = 50;  // Reset pot for next player
-            saveHighLowPot();  // Save reset pot
-            p.client.println("The pot is depleted! YOU WIN THE GAME!");
-            savePlayerToFS(p);
+    // Check for POST HIT with Ace (3rd Ace when first or second is also Ace - lose double)
+    if (card3Value == -2) {
+        // POST HIT - Ace hits the Ace! Player loses double
+        int loss = betAmount * 2;
+        if (p.coins < loss) {
+            p.client.println("You don't have enough to cover double! Game over.");
             endHighLowGame(p, playerIndex);
             return;
         }
+        p.coins -= loss;
         
-        // Pot still has money - continue game
-        p.client.println("Pot is now at " + String(globalHighLowPot) + "gp.");
+        p.client.println("ACE POSTS THE ACE... PAY DOUBLE!");
+        p.client.println("You pay the dealer " + String(loss) + " gold coins.");
+        
+        globalHighLowPot += loss;
+        saveHighLowPot();  // Save pot after POST loss
         savePlayerToFS(p);
         
         // Prompt for continue
         p.client.println("");
         promptHighLowContinue(p, playerIndex);
         return;
+    }
+    // Check for automatic win (3rd Ace when neither first nor second is an Ace)
+    else if (card3Value == -1) {
+        card3Value = 1;  // Default to 1 for calculations below
     }
     // Check for post hit (3rd card equals one of first two)
     else if (card3Value == session.card1Value || card3Value == session.card2Value) {
@@ -17536,6 +17652,43 @@ for (auto &npc : npcInstances) {
 
 
 
+
+    // =============================
+    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50)
+    // =============================
+    {
+        const int JOKE_ROOM_X = 249;
+        const int JOKE_ROOM_Y = 248;
+        const int JOKE_ROOM_Z = 50;
+        
+        int playersInRoom = countPlayersInRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z);
+        
+        if (playersInRoom > 0) {
+            // Players are in the Inn Keeper room - activate joke system
+            innKeeperJokes.active = true;
+            
+            // Check if it's time to fetch and broadcast a joke
+            if (now >= innKeeperJokes.nextJokeTime) {
+                
+                // Try to fetch a new joke
+                if (fetchJoke()) {
+                    // Successfully fetched joke - broadcast it to the room
+                    String jokeMsg = "The Inn Keeper Says: \"" + innKeeperJokes.currentJoke + ".\"";
+                    broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg);
+                    
+                    // Schedule next joke (10-20 seconds from now)
+                    innKeeperJokes.nextJokeTime = now + random(10000, 20001);
+                } else {
+                    // API failed - try again in 5 seconds
+                    innKeeperJokes.nextJokeTime = now + 5000;
+                }
+            }
+        } else {
+            // No players in room - deactivate joke system
+            innKeeperJokes.active = false;
+            // Don't reset nextJokeTime here - let it pick up where it left off when players return
+        }
+    }
 
     // Natural healing
     static unsigned long lastHealTick = 0;
