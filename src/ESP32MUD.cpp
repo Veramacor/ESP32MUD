@@ -6087,6 +6087,139 @@ void showWeatherStationSign(Player &p) {
     p.client.println("");
 }
 
+// WMO Weather interpretation codes
+String getWeatherDescription(int code) {
+    switch(code) {
+        case 0: return "Clear sky - Sunny";
+        case 1:
+        case 2: return "Mostly clear - Mostly Sunny";
+        case 3: return "Overcast - Cloudy";
+        case 45:
+        case 48: return "Foggy";
+        case 51:
+        case 53:
+        case 55: return "Light to moderate drizzle";
+        case 61:
+        case 63: return "Rainy - Rain showers";
+        case 65: return "Heavy rain";
+        case 71:
+        case 73:
+        case 75: return "Snowing";
+        case 77: return "Snow grains";
+        case 80:
+        case 81: return "Rainy - Heavy showers";
+        case 82: return "Violent rain showers";
+        case 85:
+        case 86: return "Snow showers";
+        default: return "Unknown conditions";
+    }
+}
+
+// Helper function to extract temperature from current object specifically
+String extractCurrentTemperature(const String &json) {
+    // Look specifically for "current":{...} and find temperature_2m within it
+    int currentIdx = json.indexOf("\"current\":");
+    if (currentIdx < 0) {
+        return "unknown";
+    }
+    
+    // Find "temperature_2m": after the "current" object starts
+    int tempIdx = json.indexOf("\"temperature_2m\":", currentIdx);
+    if (tempIdx < 0) {
+        return "unknown";
+    }
+    
+    // Move past the key and colon
+    tempIdx += 17;
+    
+    // Skip whitespace
+    while (tempIdx < json.length() && (json[tempIdx] == ' ' || json[tempIdx] == '\t' || json[tempIdx] == '\n')) {
+        tempIdx++;
+    }
+    
+    // Extract the number (could be negative, have decimals)
+    String temp = "";
+    while (tempIdx < json.length()) {
+        char c = json[tempIdx];
+        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+            temp += c;
+            tempIdx++;
+        } else {
+            break;
+        }
+    }
+    
+    return temp.length() > 0 ? temp : "unknown";
+}
+
+// Helper function to extract weather code from current object
+int extractWeatherCode(const String &json) {
+    // Look specifically for "current":{...} and find weather_code within it
+    int currentIdx = json.indexOf("\"current\":");
+    if (currentIdx < 0) {
+        return -1;
+    }
+    
+    // Find "weather_code": after the "current" object starts
+    int codeIdx = json.indexOf("\"weather_code\":", currentIdx);
+    if (codeIdx < 0) {
+        return -1;
+    }
+    
+    // Move past the key and colon
+    codeIdx += 15;
+    
+    // Skip whitespace
+    while (codeIdx < json.length() && (json[codeIdx] == ' ' || json[codeIdx] == '\t' || json[codeIdx] == '\n')) {
+        codeIdx++;
+    }
+    
+    // Extract the number
+    String code = "";
+    while (codeIdx < json.length()) {
+        char c = json[codeIdx];
+        if ((c >= '0' && c <= '9') || c == '-') {
+            code += c;
+            codeIdx++;
+        } else {
+            break;
+        }
+    }
+    
+    return code.length() > 0 ? code.toInt() : -1;
+}
+
+// Helper function to extract temperature from JSON response (for geocoding)
+String extractTemperature(const String &json) {
+    // Look for "temperature_2m": followed by a number
+    int idx = json.indexOf("\"temperature_2m\":");
+    if (idx < 0) {
+        return "unknown";
+    }
+    
+    // Move past the key and colon
+    idx += 17;
+    
+    // Skip whitespace
+    while (idx < json.length() && (json[idx] == ' ' || json[idx] == '\t' || json[idx] == '\n')) {
+        idx++;
+    }
+    
+    // Extract the number (could be negative, have decimals)
+    String temp = "";
+    while (idx < json.length()) {
+        char c = json[idx];
+        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+            temp += c;
+            idx++;
+        } else {
+            break;
+        }
+    }
+    
+    return temp.length() > 0 ? temp : "unknown";
+}
+
 String getPlayerIPAddress(Player &p) {
     // For now, return a placeholder since WiFiClient IP extraction is platform-specific
     // TODO: Implement proper IP retrieval from WiFiClient when needed
@@ -6140,7 +6273,7 @@ void updateWeatherRequests() {
     
     // Check if we have a WiFi connection
     if (WiFi.status() != WL_CONNECTED) {
-        if (elapsed > 1000) {  // After 1 second, assume connection failed
+        if (elapsed > 1000) {
             currentWeatherRequest.pending = false;
             broadcastWeather("The Weather Mage says: The spirits are not responding. Check your network connection.");
         }
@@ -6157,7 +6290,6 @@ void updateWeatherRequests() {
     http.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
     http.setTimeout(WEATHER_REQUEST_TIMEOUT);
     
-    String weatherData = "";
     bool success = false;
     
     if (currentWeatherRequest.query.length() == 0) {
@@ -6168,50 +6300,65 @@ void updateWeatherRequests() {
             int httpCode = http.GET();
             if (httpCode == 200) {
                 String payload = http.getString();
-                // Parse: {"city":"...","latitude":...,"longitude":...}
-                int cityIdx = payload.indexOf("\"city\":\"");
+                
+                // Extract coordinates
                 int latIdx = payload.indexOf("\"latitude\":");
                 int lonIdx = payload.indexOf("\"longitude\":");
                 
-                if (cityIdx >= 0 && latIdx >= 0 && lonIdx >= 0) {
-                    cityIdx += 8;
-                    int cityEnd = payload.indexOf("\"", cityIdx);
-                    String city = payload.substring(cityIdx, cityEnd);
+                if (latIdx >= 0 && lonIdx >= 0) {
+                    String latitude = extractTemperature(payload.substring(latIdx)); // Reuse number extraction
                     
-                    latIdx += 11;
-                    int latEnd = payload.indexOf(",", latIdx);
-                    if (latEnd < 0) latEnd = payload.indexOf("}", latIdx);
-                    String latitude = payload.substring(latIdx, latEnd);
+                    // For longitude, extract similarly
+                    int lonStart = lonIdx + 12;
+                    String longitude = "";
+                    while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
+                    while (lonStart < payload.length()) {
+                        char c = payload[lonStart];
+                        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+                            longitude += c;
+                            lonStart++;
+                        } else {
+                            break;
+                        }
+                    }
                     
-                    lonIdx += 12;
-                    int lonEnd = payload.indexOf("}", lonIdx);
-                    String longitude = payload.substring(lonIdx, lonEnd);
-                    
-                    // Now get weather for this location
-                    String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
-                                      "&longitude=" + longitude + "&current=temperature_2m,weather_code&timezone=auto";
-                    
-                    if (http.begin(weatherUrl)) {
-                        int weatherCode = http.GET();
-                        if (weatherCode == 200) {
-                            String weatherPayload = http.getString();
-                            // Parse current: {"current":{"temperature_2m":XX.X,"weather_code":0},...}
-                            int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
-                            if (tempIdx >= 0) {
-                                tempIdx += 17;
-                                int tempEnd = weatherPayload.indexOf(",", tempIdx);
-                                if (tempEnd < 0) tempEnd = weatherPayload.indexOf("}", tempIdx);
-                                String temp = weatherPayload.substring(tempIdx, tempEnd);
-                                temp.trim();
-                                
-                                lastWeatherData.location = city;
-                                lastWeatherData.current = "Temperature: " + temp + "°C";
-                                lastWeatherData.forecast = "(Local weather data retrieved successfully)";
-                                lastWeatherData.timestamp = now;
-                                success = true;
+                    // Extract city name
+                    int cityIdx = payload.indexOf("\"city\":");
+                    String city = "Your Location";
+                    if (cityIdx >= 0) {
+                        int cityStart = cityIdx + 7;
+                        while (cityStart < payload.length() && payload[cityStart] != '\"') cityStart++;
+                        if (cityStart < payload.length()) {
+                            cityStart++;
+                            while (cityStart < payload.length() && payload[cityStart] != '\"') {
+                                city += payload[cityStart];
+                                cityStart++;
                             }
                         }
-                        http.end();
+                    }
+                    
+                    if (latitude.length() > 0 && longitude.length() > 0) {
+                        // Now get weather for this location
+                        String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
+                                          "&longitude=" + longitude + "&current=temperature_2m,weather_code&timezone=auto";
+                        
+                        if (http.begin(weatherUrl)) {
+                            int weatherCode = http.GET();
+                            if (weatherCode == 200) {
+                                String weatherPayload = http.getString();
+                                String temp = extractCurrentTemperature(weatherPayload);
+                                int code = extractWeatherCode(weatherPayload);
+                                
+                                if (temp != "unknown" && code >= 0) {
+                                    lastWeatherData.location = city;
+                                    lastWeatherData.current = "Temperature: " + temp + "°C";
+                                    lastWeatherData.forecast = getWeatherDescription(code);
+                                    lastWeatherData.timestamp = now;
+                                    success = true;
+                                }
+                            }
+                            http.end();
+                        }
                     }
                 }
             }
@@ -6225,69 +6372,63 @@ void updateWeatherRequests() {
             int httpCode = http.GET();
             if (httpCode == 200) {
                 String payload = http.getString();
-                // Parse latitude and longitude from first result
+                
+                // Extract latitude and longitude
                 int latIdx = payload.indexOf("\"latitude\":");
                 int lonIdx = payload.indexOf("\"longitude\":");
                 
                 if (latIdx >= 0 && lonIdx >= 0) {
-                    latIdx += 11;
-                    int latEnd = payload.indexOf(",", latIdx);
-                    if (latEnd < 0) latEnd = payload.indexOf("}", latIdx);
-                    String latitude = payload.substring(latIdx, latEnd);
-                    latitude.trim();
+                    String latitude = extractTemperature(payload.substring(latIdx));
                     
-                    lonIdx += 12;
-                    int lonEnd = payload.indexOf(",", lonIdx);
-                    if (lonEnd < 0) lonEnd = payload.indexOf("}", lonIdx);
-                    String longitude = payload.substring(lonIdx, lonEnd);
-                    longitude.trim();
-                    
-                    // Get weather for this location
-                    String forecastType = currentWeatherRequest.isForecast ? 
-                        "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
-                        "&current=temperature_2m,weather_code";
-                    
-                    String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
-                                      "&longitude=" + longitude + forecastType + "&timezone=auto";
-                    
-                    if (http.begin(weatherUrl)) {
-                        int weatherCode = http.GET();
-                        if (weatherCode == 200) {
-                            String weatherPayload = http.getString();
-                            
-                            if (currentWeatherRequest.isForecast) {
-                                // Parse 3-day forecast
-                                int maxTempIdx = weatherPayload.indexOf("\"temperature_2m_max\":");
-                                if (maxTempIdx >= 0) {
-                                    maxTempIdx += 20;
-                                    int maxEnd = weatherPayload.indexOf(",", maxTempIdx);
-                                    String maxTemp = weatherPayload.substring(maxTempIdx, maxEnd);
-                                    maxTemp.trim();
-                                    
-                                    lastWeatherData.location = currentWeatherRequest.query;
-                                    lastWeatherData.forecast = "3-day forecast retrieved - Max: " + maxTemp + "°C";
-                                    lastWeatherData.current = "(Forecast mode)";
-                                    success = true;
-                                }
-                            } else {
-                                // Parse current weather
-                                int tempIdx = weatherPayload.indexOf("\"temperature_2m\":");
-                                if (tempIdx >= 0) {
-                                    tempIdx += 17;
-                                    int tempEnd = weatherPayload.indexOf(",", tempIdx);
-                                    if (tempEnd < 0) tempEnd = weatherPayload.indexOf("}", tempIdx);
-                                    String temp = weatherPayload.substring(tempIdx, tempEnd);
-                                    temp.trim();
-                                    
-                                    lastWeatherData.location = currentWeatherRequest.query;
-                                    lastWeatherData.current = "Temperature: " + temp + "°C";
-                                    lastWeatherData.forecast = "(Weather data retrieved successfully)";
-                                    success = true;
-                                }
-                            }
-                            lastWeatherData.timestamp = now;
+                    int lonStart = lonIdx + 12;
+                    String longitude = "";
+                    while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
+                    while (lonStart < payload.length()) {
+                        char c = payload[lonStart];
+                        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+                            longitude += c;
+                            lonStart++;
+                        } else {
+                            break;
                         }
-                        http.end();
+                    }
+                    
+                    if (latitude.length() > 0 && longitude.length() > 0) {
+                        String forecastType = currentWeatherRequest.isForecast ? 
+                            "&daily=weather_code,temperature_2m_max,temperature_2m_min" : 
+                            "&current=temperature_2m,weather_code";
+                        
+                        String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
+                                          "&longitude=" + longitude + forecastType + "&timezone=auto";
+                        
+                        if (http.begin(weatherUrl)) {
+                            int weatherCode = http.GET();
+                            if (weatherCode == 200) {
+                                String weatherPayload = http.getString();
+                                
+                                if (currentWeatherRequest.isForecast) {
+                                    String maxTemp = extractTemperature(weatherPayload.substring(weatherPayload.indexOf("\"temperature_2m_max\":")));
+                                    if (maxTemp != "unknown") {
+                                        lastWeatherData.location = currentWeatherRequest.query;
+                                        lastWeatherData.forecast = "3-day forecast retrieved - Max: " + maxTemp + "°C";
+                                        lastWeatherData.current = "(Forecast mode)";
+                                        success = true;
+                                    }
+                                } else {
+                                    String temp = extractCurrentTemperature(weatherPayload);
+                                    int code = extractWeatherCode(weatherPayload);
+                                    
+                                    if (temp != "unknown" && code >= 0) {
+                                        lastWeatherData.location = currentWeatherRequest.query;
+                                        lastWeatherData.current = "Temperature: " + temp + "°C";
+                                        lastWeatherData.forecast = getWeatherDescription(code);
+                                        success = true;
+                                    }
+                                }
+                                lastWeatherData.timestamp = now;
+                            }
+                            http.end();
+                        }
                     }
                 }
             }
