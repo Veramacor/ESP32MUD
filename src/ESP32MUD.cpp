@@ -5414,7 +5414,6 @@ void showTavernSign(Player &p, Tavern &tavern) {
     }
     
     p.client.println("");
-    p.client.println("  Drunkenness: " + String(p.drunkenness) + "/6");
 }
 
 void showPostOfficeSign(Player &p, PostOffice &po) {
