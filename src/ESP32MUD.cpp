@@ -9931,11 +9931,51 @@ void cmdDoctorHeal(Player &p, const String &input) {
             p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
         }
     }
-    else if (service == 4 || service == 5 || service == 6) {
-        // Unavailable services 4-6 still deduct cost
+    else if (service == 4) {
+        // Cure lameness (shoulder injury)
+        if (!p.IsShoulderInjured) {
+            p.client.println("You are not lamed, so this service is not needed.");
+            return;
+        }
         p.coins -= playerCost;
-        p.client.println("This service is currently unavailable.");
-        return;
+        p.IsShoulderInjured = false;
+        p.client.println("The Doctor performs the surgery...");
+        p.client.println("You have now been cured of your lameness.");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
+        }
+        broadcastRoomExcept(p, capFirst(p.name) + " has been cured of lameness!", p);
+    }
+    else if (service == 5) {
+        // Cure hobbling (leg injury)
+        if (!p.IsLegInjured) {
+            p.client.println("You are not hobbled, so this service is not needed.");
+            return;
+        }
+        p.coins -= playerCost;
+        p.IsLegInjured = false;
+        p.hobbleSkipNextMove = false;  // Reset hobble tracking
+        p.client.println("The Doctor performs the surgery...");
+        p.client.println("You have been cured of your hobbling.");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
+        }
+        broadcastRoomExcept(p, capFirst(p.name) + " has been cured of hobbling!", p);
+    }
+    else if (service == 6) {
+        // Cure blindness (head injury)
+        if (!p.IsHeadInjured) {
+            p.client.println("You are not blind, so this service is not needed.");
+            return;
+        }
+        p.coins -= playerCost;
+        p.IsHeadInjured = false;
+        p.client.println("The Doctor performs the surgery...");
+        p.client.println("You have been cured of your blindness.");
+        if (p.hasHealthcarePlan && playerCost < price) {
+            p.client.println("You pay the Doctor " + String(playerCost) + " gp with your Healthcare plan covering the rest!");
+        }
+        broadcastRoomExcept(p, capFirst(p.name) + " has been cured of blindness!", p);
     }
 
     // Save player after heal
