@@ -7926,6 +7926,15 @@ void cmdScore(Player &p) {
         p.client.println("Healthcare Plan Member (lifetime)");
     }
 
+    // Show injury status
+    if (p.IsHeadInjured) {
+        p.client.println("You are Blind!");
+    } else if (p.IsShoulderInjured) {
+        p.client.println("Shoulder Injury: you cannot wield anything.");
+    } else if (p.IsLegInjured) {
+        p.client.println("You have been hobbled and walk with a limp.");
+    }
+
     p.client.println("=============================");
 }
 
