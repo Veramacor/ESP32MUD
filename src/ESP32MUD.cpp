@@ -9375,7 +9375,10 @@ void doCombatRound(Player &p) {
 
         int playerDefense = p.baseDefense + p.armorBonus;
 
-        if (rollToHit(npcBaseDmg, playerDefense)) {
+        // Players have 2x chance to be hit: roll twice, hit if either succeeds
+        bool npcHits = rollToHit(npcBaseDmg, playerDefense) || rollToHit(npcBaseDmg, playerDefense);
+
+        if (npcHits) {
 
             int npcRollDmg = random(1, npcBaseDmg + 1);
 
