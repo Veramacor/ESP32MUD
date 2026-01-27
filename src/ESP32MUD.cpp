@@ -9235,7 +9235,23 @@ void doCombatRound(Player &p) {
     // ---------------------------------------------------------
     // PLAYER ATTACKS NPC
     // ---------------------------------------------------------
-    if (rollToHit(playerTotalAtk + playerToHitBonus, npcDefense)) {
+    bool playerHits = false;
+    
+    if (p.IsHeadInjured) {
+        // Blinded: 1 in 20 chance to hit (need to roll 20 on d20)
+        int blindRoll = random(1, 21);
+        playerHits = (blindRoll == 20);
+        
+        if (playerHits || !playerHits) {
+            // Print blindness message regardless of hit/miss
+            p.client.println("You blindly swing wildly hoping to hit something!");
+        }
+    } else {
+        // Normal hit chance
+        playerHits = rollToHit(playerTotalAtk + playerToHitBonus, npcDefense);
+    }
+    
+    if (playerHits) {
 
         int playerDmg = random(1, playerTotalAtk + 1);
         npc->hp -= playerDmg;
