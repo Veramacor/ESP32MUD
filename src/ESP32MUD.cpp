@@ -6310,6 +6310,9 @@ void updateWeatherRequests() {
     // Always use geocoding for specified location, then fetch weather
     String geoUrl = "http://geocoding-api.open-meteo.com/v1/search?name=" + currentWeatherRequest.query + "&count=1&language=en&format=json";
     
+    Serial.println("[WEATHER] Attempting geocoding for: " + currentWeatherRequest.query);
+    Serial.println("[WEATHER] URL: " + geoUrl);
+    
     HTTPClient http;
     http.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
     http.setTimeout(WEATHER_REQUEST_TIMEOUT);
@@ -6319,15 +6322,31 @@ void updateWeatherRequests() {
         String payload = http.getString();
         http.end();
         
+        Serial.println("[WEATHER] Geocoding response code: " + String(httpCode));
+        Serial.println("[WEATHER] Geocoding response (first 200 chars): " + payload.substring(0, 200));
+        
         if (httpCode == 200) {
             // Extract latitude and longitude
             int latIdx = payload.indexOf("\"latitude\":");
             int lonIdx = payload.indexOf("\"longitude\":");
             
             if (latIdx >= 0 && lonIdx >= 0) {
-                String latitude = extractTemperature(payload.substring(latIdx));
+                // Extract latitude properly
+                int latStart = latIdx + 11; // length of "latitude":
+                String latitude = "";
+                while (latStart < payload.length() && (payload[latStart] == ' ' || payload[latStart] == '\t')) latStart++;
+                while (latStart < payload.length()) {
+                    char c = payload[latStart];
+                    if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+                        latitude += c;
+                        latStart++;
+                    } else {
+                        break;
+                    }
+                }
                 
-                int lonStart = lonIdx + 12;
+                // Extract longitude properly
+                int lonStart = lonIdx + 12; // length of "longitude":
                 String longitude = "";
                 while (lonStart < payload.length() && (payload[lonStart] == ' ' || payload[lonStart] == '\t')) lonStart++;
                 while (lonStart < payload.length()) {
@@ -6348,6 +6367,9 @@ void updateWeatherRequests() {
                     String weatherUrl = "http://api.open-meteo.com/v1/forecast?latitude=" + latitude + 
                                       "&longitude=" + longitude + forecastType + "&timezone=auto";
                     
+                    Serial.println("[WEATHER] Got coordinates - Lat: " + latitude + ", Lon: " + longitude);
+                    Serial.println("[WEATHER] Fetching weather from: " + weatherUrl.substring(0, 80) + "...");
+                    
                     HTTPClient http2;
                     http2.setConnectTimeout(WEATHER_REQUEST_TIMEOUT);
                     http2.setTimeout(WEATHER_REQUEST_TIMEOUT);
@@ -6356,6 +6378,9 @@ void updateWeatherRequests() {
                         int weatherCode = http2.GET();
                         String weatherPayload = http2.getString();
                         http2.end();
+                        
+                        Serial.println("[WEATHER] Weather response code: " + String(weatherCode));
+                        Serial.println("[WEATHER] Weather response (first 200 chars): " + weatherPayload.substring(0, 200));
                         
                         if (weatherCode == 200) {
                             if (currentWeatherRequest.isForecast) {
@@ -6390,7 +6415,12 @@ void updateWeatherRequests() {
     currentWeatherRequest.pending = false;
     
     if (success) {
-        String output = "📍 " + lastWeatherData.location + "\n";
+        // Capitalize city name
+        String cityName = lastWeatherData.location;
+        if (cityName.length() > 0) {
+            cityName[0] = toupper(cityName[0]);
+        }
+        String output = cityName + "\n";
         output += lastWeatherData.current + "\n";
         output += lastWeatherData.forecast;
         broadcastWeather(output);
@@ -14045,13 +14075,13 @@ void savePlayerToFS(Player &p) {
     // Healthcare plan flag
     f.println(p.hasHealthcarePlan ? "1" : "0");
 
-    // Weather city preference
-    f.println(p.weatherCity);
-
     // Combat injury flags
     f.println(p.IsHeadInjured ? "1" : "0");
     f.println(p.IsShoulderInjured ? "1" : "0");
     f.println(p.IsLegInjured ? "1" : "0");
+
+    // Weather city preference (added last for backward compatibility)
+    f.println(p.weatherCity);
 
     f.close();
 
@@ -14290,10 +14320,6 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     safeRead(tmp);
     p.hasHealthcarePlan = (tmp == "1");
 
-    // Weather city preference
-    safeRead(tmp);
-    p.weatherCity = tmp;
-
     // Combat injury flags
     safeRead(tmp);
     p.IsHeadInjured = (tmp == "1");
@@ -14301,6 +14327,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     p.IsShoulderInjured = (tmp == "1");
     safeRead(tmp);
     p.IsLegInjured = (tmp == "1");
+
+    // Weather city preference (added last for backward compatibility)
+    safeRead(tmp);
+    p.weatherCity = tmp;
 
     f.close();
     return true;
