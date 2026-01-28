@@ -241,6 +241,8 @@ struct JokeSession {
     bool active = false;                    // timer running when players in room
     unsigned long nextJokeTime = 0;         // when to fetch next joke
     String currentJoke = "";                // stored joke text
+    String currentJokeId = "";              // joke ID to prevent repeats
+    std::vector<String> usedJokeIds;        // list of joke IDs already shown
     
     // Async HTTP state
     bool requestPending = false;            // HTTP request in flight
@@ -1063,7 +1065,21 @@ void startJokeFetch() {
     
     Serial.println("[JOKE] Creating HTTPClient...");
     innKeeperJokes.httpClient = new HTTPClient();
+    
+    // Build URL with excluded joke IDs
     String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
+    
+    // Add exclude parameter if we have used jokes
+    if (innKeeperJokes.usedJokeIds.size() > 0) {
+        jokeUrl += "&exclude=";
+        for (size_t i = 0; i < innKeeperJokes.usedJokeIds.size(); i++) {
+            jokeUrl += innKeeperJokes.usedJokeIds[i];
+            if (i < innKeeperJokes.usedJokeIds.size() - 1) {
+                jokeUrl += ",";
+            }
+        }
+        Serial.printf("[JOKE] Excluding %d previously used jokes\n", innKeeperJokes.usedJokeIds.size());
+    }
     
     Serial.println("[JOKE] Attempting to begin connection to: " + jokeUrl);
     if (innKeeperJokes.httpClient->begin(jokeUrl)) {
@@ -1136,6 +1152,13 @@ bool checkJokeFetchComplete() {
         return false;
     }
     
+    // Extract joke ID first (to track what we've used)
+    String jokeId = extractJsonString(payload, "id");
+    if (jokeId.length() > 0) {
+        innKeeperJokes.currentJokeId = jokeId;
+        Serial.println("[JOKE] Joke ID: " + jokeId);
+    }
+    
     // Extract joke text
     String jokeText = "";
     
@@ -1163,6 +1186,11 @@ bool checkJokeFetchComplete() {
     // Validate: joke must be at least 10 characters long
     if (jokeText.length() >= 10) {
         innKeeperJokes.currentJoke = jokeText;
+        // Add ID to used list to prevent repeats
+        if (jokeId.length() > 0) {
+            innKeeperJokes.usedJokeIds.push_back(jokeId);
+            Serial.printf("[JOKE] Added to used list (now %d jokes tracked)\n", innKeeperJokes.usedJokeIds.size());
+        }
         Serial.println("[JOKE] Successfully fetched joke: " + jokeText.substring(0, 40) + "...");
         return true;
     } else {
@@ -17809,6 +17837,11 @@ for (auto &npc : npcInstances) {
                 innKeeperJokes.httpClient = nullptr;
                 innKeeperJokes.requestPending = false;
                 Serial.println("[JOKE] Request cancelled, no players in room");
+            }
+            // Clear used joke IDs when room empties
+            if (innKeeperJokes.usedJokeIds.size() > 0) {
+                Serial.printf("[JOKE] Clearing %d used joke IDs\n", innKeeperJokes.usedJokeIds.size());
+                innKeeperJokes.usedJokeIds.clear();
             }
         }
     }
