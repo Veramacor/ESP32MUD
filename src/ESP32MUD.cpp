@@ -1013,42 +1013,67 @@ int countPlayersInRoom(int x, int y, int z) {
 // Helper: Extract JSON string value, properly handling escaped quotes
 // Looks for "fieldName":"value" and extracts value, stopping at closing quote that's not escaped
 String extractJsonString(const String &json, const String &fieldName) {
-    String searchKey = "\"" + fieldName + "\":\"";
-    int keyIdx = json.indexOf(searchKey);
-    if (keyIdx == -1) return "";
+    // Try both formats: "field":"value" and "field": "value" (with space)
+    String searchKey1 = "\"" + fieldName + "\":\"";
+    String searchKey2 = "\"" + fieldName + "\": \"";
     
-    int startIdx = keyIdx + searchKey.length();
+    int keyIdx = json.indexOf(searchKey1);
+    int searchLen = searchKey1.length();
+    
+    if (keyIdx == -1) {
+        keyIdx = json.indexOf(searchKey2);
+        searchLen = searchKey2.length();
+    }
+    
+    if (keyIdx == -1) {
+        Serial.println("[JOKE PARSE] Could not find field: " + fieldName);
+        return "";
+    }
+    
+    int startIdx = keyIdx + searchLen;
     int idx = startIdx;
     
-    // Find closing quote, skipping escaped quotes
+    Serial.printf("[JOKE PARSE] Found field '%s' at index %d, starting extraction at %d\n", fieldName.c_str(), keyIdx, startIdx);
+    
+    // Find closing quote, properly handling escaped characters
     while (idx < json.length()) {
         if (json[idx] == '\\' && idx + 1 < json.length()) {
-            idx += 2;  // Skip escaped character and the backslash
+            // Skip escaped character (including \n, \r, \", etc.)
+            idx += 2;
         } else if (json[idx] == '"') {
             // Found unescaped closing quote
-            return json.substring(startIdx, idx);
+            String result = json.substring(startIdx, idx);
+            Serial.printf("[JOKE PARSE] Extracted %d chars: %s\n", result.length(), result.substring(0, 50).c_str());
+            return result;
         } else {
             idx++;
         }
     }
     
+    Serial.println("[JOKE PARSE] No closing quote found!");
     return "";  // No closing quote found
 }
 
 // Initiate an async joke fetch (non-blocking - just starts the request)
 void startJokeFetch() {
-    if (innKeeperJokes.requestPending) return; // Already fetching
+    if (innKeeperJokes.requestPending) {
+        Serial.println("[JOKE] Request already pending, skipping");
+        return; // Already fetching
+    }
     
+    Serial.println("[JOKE] Creating HTTPClient...");
     innKeeperJokes.httpClient = new HTTPClient();
     String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
     
+    Serial.println("[JOKE] Attempting to begin connection to: " + jokeUrl);
     if (innKeeperJokes.httpClient->begin(jokeUrl)) {
         innKeeperJokes.httpClient->setConnectTimeout(3000);
         innKeeperJokes.httpClient->setTimeout(5000);
+        Serial.println("[JOKE] Sending GET request...");
         innKeeperJokes.httpClient->GET();  // Send request, don't wait for response
         innKeeperJokes.requestPending = true;
         innKeeperJokes.requestStartTime = millis();
-        Serial.println("[JOKE] Async request initiated");
+        Serial.println("[JOKE] Async request initiated at " + String(innKeeperJokes.requestStartTime));
     } else {
         Serial.println("[JOKE] Failed to begin HTTP connection");
         delete innKeeperJokes.httpClient;
@@ -1058,10 +1083,15 @@ void startJokeFetch() {
 
 // Check if async joke fetch is complete and process response (non-blocking)
 bool checkJokeFetchComplete() {
-    if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) return false;
+    if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) {
+        Serial.printf("[JOKE] Early return: requestPending=%d, httpClient=%p\n", innKeeperJokes.requestPending, innKeeperJokes.httpClient);
+        return false;
+    }
     
     unsigned long now = millis();
     unsigned long elapsed = now - innKeeperJokes.requestStartTime;
+    
+    Serial.printf("[JOKE] Checking fetch: elapsed=%lu ms\n", elapsed);
     
     // Check for timeout (10 seconds)
     if (elapsed > 10000) {
@@ -1075,19 +1105,22 @@ bool checkJokeFetchComplete() {
     
     // Give request at least 200ms to complete
     if (elapsed < 200) {
+        Serial.printf("[JOKE] Waiting... only %.0f ms elapsed\n", (float)elapsed);
         return false; // Not enough time for response yet
     }
     
     // Try to get response
     int httpCode = innKeeperJokes.httpClient->getSize();
-    Serial.println("[JOKE] HTTP status check, code: " + String(httpCode));
+    Serial.printf("[JOKE] HTTP getSize() returned: %d\n", httpCode);
     
     if (httpCode == -1) {
         // Still waiting or error
+        Serial.println("[JOKE] Still waiting for response (-1)");
         return false;
     }
     
     // Response available - parse it
+    Serial.println("[JOKE] Response available, calling getString()...");
     String payload = innKeeperJokes.httpClient->getString();
     innKeeperJokes.httpClient->end();
     delete innKeeperJokes.httpClient;
@@ -1095,6 +1128,7 @@ bool checkJokeFetchComplete() {
     innKeeperJokes.requestPending = false;
     
     Serial.println("[JOKE] Response received, size: " + String(payload.length()));
+    Serial.println("[JOKE] Response snippet: " + payload.substring(0, 100));
     
     // Check if it's an error response
     if (payload.indexOf("\"error\":true") != -1) {
@@ -1107,13 +1141,18 @@ bool checkJokeFetchComplete() {
     
     // Look for "type": "single" or "type": "twopart"
     if (payload.indexOf("\"single\"") != -1) {
+        Serial.println("[JOKE] Detected single joke format");
         // Single joke - extract "joke" field
         jokeText = extractJsonString(payload, "joke");
     } else if (payload.indexOf("\"twopart\"") != -1) {
+        Serial.println("[JOKE] Detected two-part joke format");
         // Two-part joke - extract "setup" + " " + "delivery"
         String setup = extractJsonString(payload, "setup");
         String delivery = extractJsonString(payload, "delivery");
         jokeText = setup + " " + delivery;
+    } else {
+        Serial.println("[JOKE] Unknown joke format!");
+        Serial.println("[JOKE] Full payload: " + payload);
     }
     
     // Handle Unicode escape sequences
@@ -1127,7 +1166,8 @@ bool checkJokeFetchComplete() {
         Serial.println("[JOKE] Successfully fetched joke: " + jokeText.substring(0, 40) + "...");
         return true;
     } else {
-        Serial.println("[JOKE] Joke text too short, retrying...");
+        Serial.println("[JOKE] Joke text too short (len=" + String(jokeText.length()) + "), retrying...");
+        Serial.println("[JOKE] Extracted text: " + jokeText);
         return false;
     }
 }
@@ -17700,36 +17740,50 @@ for (auto &npc : npcInstances) {
         const int JOKE_ROOM_Y = 248;
         const int JOKE_ROOM_Z = 50;
         
+        static unsigned long lastDebugTime = 0;
+        bool shouldDebug = (now - lastDebugTime >= 5000UL);  // Debug every 5 seconds
+        if (shouldDebug) lastDebugTime = now;
+        
         int playersInRoom = countPlayersInRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z);
+        
+        if (shouldDebug) {
+            Serial.printf("[JOKE DEBUG] playersInRoom=%d, active=%d, requestPending=%d, nextJokeTime=%lu, now=%lu, diff=%ld\n",
+                playersInRoom, innKeeperJokes.active, innKeeperJokes.requestPending,
+                innKeeperJokes.nextJokeTime, now, (long)(innKeeperJokes.nextJokeTime - now));
+        }
         
         if (playersInRoom > 0) {
             // Players are in the Inn Keeper room - activate joke system
             innKeeperJokes.active = true;
             
             // Check if async fetch completed (non-blocking check)
-            if (innKeeperJokes.requestPending && checkJokeFetchComplete()) {
-                // Successfully received and parsed joke - broadcast it to the room
-                broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, "");
-                
-                // Wrap joke text like room descriptions (80 chars max)
-                String wrappedJoke = wordWrap(innKeeperJokes.currentJoke, MAX_OUTPUT_WIDTH);
-                String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + ".\"";
-                
-                // Send wrapped joke to all players in room
-                announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
-                
-                // Send prompt to all players in room on new line
-                for (int i = 0; i < MAX_PLAYERS; i++) {
-                    if (players[i].active && players[i].loggedIn &&
-                        players[i].roomX == JOKE_ROOM_X && players[i].roomY == JOKE_ROOM_Y && players[i].roomZ == JOKE_ROOM_Z) {
-                        players[i].client.println("");  // Blank line
-                        players[i].client.print("> ");
+            if (innKeeperJokes.requestPending) {
+                if (shouldDebug) Serial.println("[JOKE DEBUG] Request is pending, checking completion...");
+                if (checkJokeFetchComplete()) {
+                    Serial.println("[JOKE SUCCESS] Fetch completed!");
+                    // Successfully received and parsed joke - broadcast it to the room
+                    broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, "");
+                    
+                    // Wrap joke text like room descriptions (80 chars max)
+                    String wrappedJoke = wordWrap(innKeeperJokes.currentJoke, MAX_OUTPUT_WIDTH);
+                    String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + ".\"";
+                    
+                    // Send wrapped joke to all players in room
+                    announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
+                    
+                    // Send prompt to all players in room on new line
+                    for (int i = 0; i < MAX_PLAYERS; i++) {
+                        if (players[i].active && players[i].loggedIn &&
+                            players[i].roomX == JOKE_ROOM_X && players[i].roomY == JOKE_ROOM_Y && players[i].roomZ == JOKE_ROOM_Z) {
+                            players[i].client.println("");  // Blank line
+                            players[i].client.print("> ");
+                        }
                     }
+                    
+                    // Schedule next joke (15-20 seconds from now)
+                    innKeeperJokes.nextJokeTime = now + random(15000, 20001);
+                    Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
                 }
-                
-                // Schedule next joke (15-20 seconds from now)
-                innKeeperJokes.nextJokeTime = now + random(15000, 20001);
-                Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
             }
             
             // Check if it's time to initiate a new joke fetch (non-blocking start)
@@ -17738,8 +17792,14 @@ for (auto &npc : npcInstances) {
                 startJokeFetch();  // Just initiate, doesn't block
                 // Schedule timeout fallback (try again in 3 seconds if request fails)
                 innKeeperJokes.nextJokeTime = now + 3000;
+            } else if (shouldDebug && !innKeeperJokes.requestPending) {
+                long remaining = (long)(innKeeperJokes.nextJokeTime - now);
+                if (remaining > 0) {
+                    Serial.printf("[JOKE DEBUG] Waiting %.1f seconds for next fetch\n", remaining / 1000.0);
+                }
             }
         } else {
+            if (shouldDebug) Serial.println("[JOKE DEBUG] No players in room");
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
             // Cancel any pending request
