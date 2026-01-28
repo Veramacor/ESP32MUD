@@ -4457,10 +4457,16 @@ void cmdBalance(Player &p) {
     }
     
     p.client.println("");
-    p.client.printf("========== ACCOUNT BALANCE ==========\n");
-    p.client.printf("Coins in hand:   %d gp\n", p.coins);
-    p.client.printf("Bank balance:    %d gp\n", p.bankGp);
-    p.client.printf("Total wealth:    %d gp\n", p.coins + p.bankGp);
+    p.client.println("========== ACCOUNT BALANCE ==========");
+    p.client.print("Coins in hand:   ");
+    p.client.print(p.coins);
+    p.client.println(" gp");
+    p.client.print("Bank balance:    ");
+    p.client.print(p.bankGp);
+    p.client.println(" gp");
+    p.client.print("Total wealth:    ");
+    p.client.print(p.coins + p.bankGp);
+    p.client.println(" gp");
     p.client.println("=====================================");
     p.client.println("");
 }
