@@ -1374,12 +1374,12 @@ CHECK_COMPLETE:
 
                         if (nl == -1) {
                             p.client.println(dialog.substring(start));
-                            delay(2000);   // ⭐ 2‑second pause after final line
+                            delay(500);   // ⭐ 0.5‑second pause after final line
                             break;
                         }
 
                         p.client.println(dialog.substring(start, nl));
-                        delay(2000);       // ⭐ 2‑second pause between lines
+                        delay(500);       // ⭐ 0.5‑second pause between lines
 
                         start = nl + 1;
                     }
@@ -3756,8 +3756,26 @@ NpcInstance* findNPCInRoom(Player &p, const String &id) {
         if (n.hp <= 0) continue;
 
         if (n.x == p.roomX && n.y == p.roomY && n.z == p.roomZ) {
-            if (n.npcId == id) {   // ⭐ match by ID, not name
+            // Try matching by ID first
+            if (n.npcId == id) {
                 return &n;
+            }
+            
+            // Also try matching by display name (case-insensitive, partial match)
+            std::string key = std::string(n.npcId.c_str());
+            auto it = npcDefs.find(key);
+            if (it != npcDefs.end()) {
+                String npcName = it->second.attributes.at("name").c_str();
+                String searchStr = id;
+                
+                // Convert both to lowercase for case-insensitive comparison
+                npcName.toLowerCase();
+                searchStr.toLowerCase();
+                
+                // Check if search string is contained in the NPC name
+                if (npcName.indexOf(searchStr) != -1) {
+                    return &n;
+                }
             }
         }
     }
@@ -14142,7 +14160,7 @@ void handlePlayerDeath(Player &p) {
     // Dramatic death line
     String msg = deathMsgs[random(5)];
     p.client.println(msg);
-    delay(2000);
+    delay(500);
 
     broadcastRoomExcept(
         p,
@@ -14156,7 +14174,7 @@ void handlePlayerDeath(Player &p) {
     if (p.xp < 0) p.xp = 0;
 
     p.client.println("You lose " + String(lostXP) + " experience points!");
-    delay(2000);
+    delay(500);
 
     // Prevent negative HP
     p.hp = 0;
@@ -14164,6 +14182,33 @@ void handlePlayerDeath(Player &p) {
     // End combat
     p.inCombat = false;
     p.combatTarget = nullptr;
+
+    // Drop all coins in inventory at death location
+    if (p.coins > 0) {
+        spawnGoldAt(p.roomX, p.roomY, p.roomZ, p.coins);
+        p.client.println("Your " + String(p.coins) + " gold coins scatter on the ground!");
+        p.coins = 0;
+        delay(1000);
+    }
+
+    // Drop all inventory items
+    for (int i = 0; i < p.invCount; i++) {
+        int itemIdx = p.invIndices[i];
+        if (itemIdx >= 0 && itemIdx < (int)worldItems.size()) {
+            WorldItem &wi = worldItems[itemIdx];
+            wi.ownerName = "";
+            wi.x = p.roomX;
+            wi.y = p.roomY;
+            wi.z = p.roomZ;
+        }
+    }
+    p.invCount = 0;
+
+    // Clear wielded and worn items
+    p.wieldedItemIndex = -1;
+    for (int s = 0; s < SLOT_COUNT; s++) {
+        p.wornItemIndices[s] = -1;
+    }
 
     // ----------------------------------------------------
     // ⭐ Recalculate level based on new XP
@@ -14175,11 +14220,11 @@ void handlePlayerDeath(Player &p) {
         applyLevelBonuses(p);
 
         p.client.println("You have dropped to level " + String(p.level) + ".");
-        delay(2000);
+        delay(500);
 
         p.client.println("You are now known as: " +
             String(titles[p.raceId][p.level - 1]));
-        delay(2000);
+        delay(500);
     }
 
     // ----------------------------------------------------
@@ -14193,12 +14238,12 @@ void handlePlayerDeath(Player &p) {
     int spawnZ = 50;
 
     p.client.println("Your spirit drifts back toward the mortal world...");
-    delay(2000);
+    delay(500);
 
     loadRoomForPlayer(p, spawnX, spawnY, spawnZ);
 
     p.client.println("You awaken back at the spawn point...");
-    delay(2000);
+    delay(500);
 
     cmdLook(p);
 }
