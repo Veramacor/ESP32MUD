@@ -4449,6 +4449,22 @@ void cmdWithdraw(Player &p, const String &input) {
     savePlayerToFS(p);
 }
 
+void cmdBalance(Player &p) {
+    // Check if player is in bank room (254, 245, 50)
+    if (p.roomX != 254 || p.roomY != 245 || p.roomZ != 50) {
+        p.client.println("You need to be at a bank teller to check your balance.");
+        return;
+    }
+    
+    p.client.println("");
+    p.client.printf("========== ACCOUNT BALANCE ==========\n");
+    p.client.printf("Coins in hand:   %d gp\n", p.coins);
+    p.client.printf("Bank balance:    %d gp\n", p.bankGp);
+    p.client.printf("Total wealth:    %d gp\n", p.coins + p.bankGp);
+    p.client.println("=====================================");
+    p.client.println("");
+}
+
 void cmdInventory(Player &p, const String &input) {
     (void)input;
 
@@ -14590,9 +14606,11 @@ bool loadPlayerFromFS(Player &p, const String &name) {
 
     String tmp;
 
-    // -----------------------------
-    // Basic stats
-    // -----------------------------
+    // Detect file format version by checking length
+    // Old format (v1): 7 basic stats (no bankGp)
+    // New format (v2): 8 basic stats (includes bankGp)
+    
+    // Read first 7 basic stats and store them
     safeRead(tmp); strncpy(p.storedPassword, tmp.c_str(), sizeof(p.storedPassword)-1);
     p.storedPassword[sizeof(p.storedPassword)-1] = '\0';
 
@@ -14602,11 +14620,29 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     safeRead(tmp); p.hp     = tmp.toInt();
     safeRead(tmp); p.maxHp  = tmp.toInt();
     safeRead(tmp); p.coins  = tmp.toInt();
-    safeRead(tmp); p.bankGp = tmp.toInt();
+    
+    // Read next line - could be bankGp (numeric) or IsWizard flag (0 or 1)
+    safeRead(tmp);
+    String checkLine = tmp;
+    
+    // If it's a pure number > 1000 or negative, it's likely bankGp from old save, not wizard flag
+    // Wizard flag is only "0" or "1", bankGp can be any value
+    // If it doesn't parse as 0 or 1, treat as bankGp and read next line for wizard flag
+    bool isOldFormat = false;
+    int bankGpValue = 0;
+    
+    if (checkLine == "0" || checkLine == "1") {
+        // This is wizard flag - old format file (no bankGp)
+        isOldFormat = true;
+        p.bankGp = 0;  // Default new field
+    } else {
+        // This is bankGp value - new format file
+        p.bankGp = checkLine.toInt();
+        safeRead(checkLine);  // Read actual wizard flag next
+    }
 
     // Wizard flag
-    safeRead(tmp);
-    p.IsWizard = (tmp == "1");
+    p.IsWizard = (checkLine == "1");
 
     // Debug destination
     safeRead(tmp);
@@ -15193,9 +15229,9 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                     // Show special wizard greeting
                     p.client.println("");
                     p.client.println("╔═══════════════════════════════════════════════════════════╗");
-                    p.client.println("║ CONGRATULATIONS! You have been made an honorary Wizard on   ║");
+                    p.client.println("║ CONGRATULATIONS! You have been made an honorary Wizard on ║");
                     p.client.println("║ ESPERTHERU! It's no Nobel Peace Prize, but who would want ║");
-                    p.client.println("║ one of those?                                              ║");
+                    p.client.println("║ one of those?                                             ║");
                     p.client.println("╚═══════════════════════════════════════════════════════════╝");
                     p.client.println("");
                     
@@ -15951,6 +15987,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         cmdWithdraw(p, args);
+        return;
+    }
+
+    if (cmd == "balance") {
+        cmdBalance(p);
         return;
     }
 
