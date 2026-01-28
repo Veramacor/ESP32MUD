@@ -449,6 +449,7 @@ void initializeWeatherStations();
 void cmdWeather(Player &p, const String &arg);
 void cmdForecast(Player &p, const String &arg);
 void showWeatherStationSign(Player &p);
+void showBankSign(Player &p);
 void updateWeatherRequests();
 void broadcastWeather(const String &data);
 void cmdWho(Player &p);
@@ -644,7 +645,8 @@ struct Player {
     int raceId;
     int hp;
     int maxHp;
-    int coins;
+    int coins;                          // Gold coins in inventory (can be stolen)
+    int bankGp = 0;                     // Gold coins in bank (safe, can't be stolen, persists through death)
     int xp;
     int level;
     int questsCompleted;
@@ -4377,6 +4379,76 @@ bool playerHasItem(const Player &p, const String &itemId) {
 }
 
 
+void cmdDeposit(Player &p, const String &input) {
+    // Check if player is in bank room (254, 245, 50)
+    if (p.roomX != 254 || p.roomY != 245 || p.roomZ != 50) {
+        p.client.println("You need to be at a bank teller to deposit gold.");
+        return;
+    }
+    
+    // Parse amount
+    String amountStr = input;
+    amountStr.trim();
+    if (amountStr.length() == 0) {
+        p.client.println("Usage: deposit <amount>");
+        return;
+    }
+    
+    int amount = atoi(amountStr.c_str());
+    if (amount <= 0) {
+        p.client.println("You must deposit at least 1 gold coin.");
+        return;
+    }
+    
+    if (amount > p.coins) {
+        p.client.printf("You only have %d gold coins to deposit.\n", p.coins);
+        return;
+    }
+    
+    // Transfer coins from inventory to bank
+    p.coins -= amount;
+    p.bankGp += amount;
+    p.client.printf("You deposit %dgp into your bank account.\n", amount);
+    
+    // Save player to persist bank changes
+    savePlayerToFS(p);
+}
+
+void cmdWithdraw(Player &p, const String &input) {
+    // Check if player is in bank room (254, 245, 50)
+    if (p.roomX != 254 || p.roomY != 245 || p.roomZ != 50) {
+        p.client.println("You need to be at a bank teller to withdraw gold.");
+        return;
+    }
+    
+    // Parse amount
+    String amountStr = input;
+    amountStr.trim();
+    if (amountStr.length() == 0) {
+        p.client.println("Usage: withdraw <amount>");
+        return;
+    }
+    
+    int amount = atoi(amountStr.c_str());
+    if (amount <= 0) {
+        p.client.println("You must withdraw at least 1 gold coin.");
+        return;
+    }
+    
+    if (amount > p.bankGp) {
+        p.client.printf("You only have %d gold coins in your bank account.\n", p.bankGp);
+        return;
+    }
+    
+    // Transfer coins from bank to inventory
+    p.bankGp -= amount;
+    p.coins += amount;
+    p.client.printf("You withdraw %dgp from your bank account.\n", amount);
+    
+    // Save player to persist bank changes
+    savePlayerToFS(p);
+}
+
 void cmdInventory(Player &p, const String &input) {
     (void)input;
 
@@ -4923,6 +4995,11 @@ void cmdLook(Player &p) {
     
     // Check if this is the Weather Station
     if (p.roomX == 248 && p.roomY == 242 && p.roomZ == 50) {
+        p.client.println("A sign is here.");
+    }
+    
+    // Check if this is the Bank
+    if (p.roomX == 254 && p.roomY == 245 && p.roomZ == 50) {
         p.client.println("A sign is here.");
     }
     
@@ -5784,6 +5861,15 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    // Check if this is the Bank
+    if (p.roomX == 254 && p.roomY == 245 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        showBankSign(p);
+        return;
+    }
+    
     // Check if there's a shop in this room
     Shop* shop = getShopForRoom(p);
     if (!shop) {
@@ -6318,6 +6404,28 @@ void showWeatherStationSign(Player &p) {
     p.client.println("* 'weather [name]' to conjure the forecast for a known realm.");
     p.client.println("");
     p.client.println("* 'forecast [name]' to forecast the weather for a known realm.");
+    p.client.println("");
+}
+
+void showBankSign(Player &p) {
+    p.client.println("");
+    p.client.println("          ===== ESPERTHERU BANK AND TRUST =====");
+    p.client.println("");
+    p.client.println("Welcome to the safest place to store your gold!");
+    p.client.println("");
+    p.client.println("BANKING SERVICES:");
+    p.client.println("");
+    p.client.println("  'deposit [amount]'   - Deposit gold coins into your account");
+    p.client.println("                         (Safe from theft and death)");
+    p.client.println("");
+    p.client.println("  'withdraw [amount]'  - Withdraw gold coins from your account");
+    p.client.println("");
+    p.client.println("  'balance'            - Check your account balance");
+    p.client.println("");
+    p.client.println("Bank Policy: Gold deposited is safe from theft and persists through");
+    p.client.println("death. However, you may only access these services at the bank.");
+    p.client.println("");
+    p.client.println("==========================================");
     p.client.println("");
 }
 
@@ -14369,6 +14477,7 @@ void savePlayerToFS(Player &p) {
     f.println(p.hp);
     f.println(p.maxHp);
     f.println(p.coins);
+    f.println(p.bankGp);
 
     // -----------------------------
     // Wizard options
@@ -14493,6 +14602,7 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     safeRead(tmp); p.hp     = tmp.toInt();
     safeRead(tmp); p.maxHp  = tmp.toInt();
     safeRead(tmp); p.coins  = tmp.toInt();
+    safeRead(tmp); p.bankGp = tmp.toInt();
 
     // Wizard flag
     safeRead(tmp);
@@ -15820,6 +15930,27 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         cmdGive(p, args);
+        return;
+    }
+
+// -----------------------------------------
+// BANK: DEPOSIT / WITHDRAW
+// -----------------------------------------
+    if (cmd == "deposit") {
+        if (args.length() == 0) {
+            p.client.println("Deposit how much? Usage: deposit <amount>");
+            return;
+        }
+        cmdDeposit(p, args);
+        return;
+    }
+
+    if (cmd == "withdraw") {
+        if (args.length() == 0) {
+            p.client.println("Withdraw how much? Usage: withdraw <amount>");
+            return;
+        }
+        cmdWithdraw(p, args);
         return;
     }
 
