@@ -1010,6 +1010,31 @@ int countPlayersInRoom(int x, int y, int z) {
 // JOKE API SYSTEM - NON-BLOCKING ASYNC HELPERS
 // =============================
 
+// Helper: Extract JSON string value, properly handling escaped quotes
+// Looks for "fieldName":"value" and extracts value, stopping at closing quote that's not escaped
+String extractJsonString(const String &json, const String &fieldName) {
+    String searchKey = "\"" + fieldName + "\":\"";
+    int keyIdx = json.indexOf(searchKey);
+    if (keyIdx == -1) return "";
+    
+    int startIdx = keyIdx + searchKey.length();
+    int idx = startIdx;
+    
+    // Find closing quote, skipping escaped quotes
+    while (idx < json.length()) {
+        if (json[idx] == '\\' && idx + 1 < json.length()) {
+            idx += 2;  // Skip escaped character and the backslash
+        } else if (json[idx] == '"') {
+            // Found unescaped closing quote
+            return json.substring(startIdx, idx);
+        } else {
+            idx++;
+        }
+    }
+    
+    return "";  // No closing quote found
+}
+
 // Initiate an async joke fetch (non-blocking - just starts the request)
 void startJokeFetch() {
     if (innKeeperJokes.requestPending) return; // Already fetching
@@ -1078,37 +1103,12 @@ bool checkJokeFetchComplete() {
     // Look for "type": "single" or "type": "twopart"
     if (payload.indexOf("\"single\"") != -1) {
         // Single joke - extract "joke" field
-        int jokeIdx = payload.indexOf("\"joke\":");
-        if (jokeIdx != -1) {
-            jokeIdx += 7;
-            int startIdx = payload.indexOf("\"", jokeIdx) + 1;
-            int endIdx = payload.indexOf("\"", startIdx);
-            if (startIdx > 0 && endIdx > startIdx) {
-                jokeText = payload.substring(startIdx, endIdx);
-            }
-        }
+        jokeText = extractJsonString(payload, "joke");
     } else if (payload.indexOf("\"twopart\"") != -1) {
         // Two-part joke - extract "setup" + " " + "delivery"
-        int setupIdx = payload.indexOf("\"setup\":");
-        if (setupIdx != -1) {
-            setupIdx += 8;
-            int startIdx = payload.indexOf("\"", setupIdx) + 1;
-            int endIdx = payload.indexOf("\"", startIdx);
-            if (startIdx > 0 && endIdx > startIdx) {
-                jokeText = payload.substring(startIdx, endIdx);
-            }
-        }
-        
-        int deliveryIdx = payload.indexOf("\"delivery\":");
-        if (deliveryIdx != -1) {
-            jokeText += " ";
-            deliveryIdx += 11;
-            int startIdx = payload.indexOf("\"", deliveryIdx) + 1;
-            int endIdx = payload.indexOf("\"", startIdx);
-            if (startIdx > 0 && endIdx > startIdx) {
-                jokeText += payload.substring(startIdx, endIdx);
-            }
-        }
+        String setup = extractJsonString(payload, "setup");
+        String delivery = extractJsonString(payload, "delivery");
+        jokeText = setup + " " + delivery;
     }
     
     // Handle Unicode escape sequences
@@ -17712,6 +17712,15 @@ for (auto &npc : npcInstances) {
                 
                 // Send wrapped joke to all players in room
                 announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
+                
+                // Send prompt to all players in room on new line
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    if (players[i].active && players[i].loggedIn &&
+                        players[i].roomX == JOKE_ROOM_X && players[i].roomY == JOKE_ROOM_Y && players[i].roomZ == JOKE_ROOM_Z) {
+                        players[i].client.println("");  // Blank line
+                        players[i].client.print("> ");
+                    }
+                }
                 
                 // Schedule next joke (20-40 seconds from now)
                 innKeeperJokes.nextJokeTime = now + random(20000, 40001);
