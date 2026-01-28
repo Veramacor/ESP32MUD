@@ -1063,9 +1063,9 @@ bool checkJokeFetchComplete() {
     unsigned long now = millis();
     unsigned long elapsed = now - innKeeperJokes.requestStartTime;
     
-    // Check for timeout
-    if (elapsed > innKeeperJokes.REQUEST_TIMEOUT) {
-        Serial.println("[JOKE] Request timeout");
+    // Check for timeout (10 seconds)
+    if (elapsed > 10000) {
+        Serial.println("[JOKE] Request timeout after 10 seconds");
         innKeeperJokes.httpClient->end();
         delete innKeeperJokes.httpClient;
         innKeeperJokes.httpClient = nullptr;
@@ -1073,16 +1073,19 @@ bool checkJokeFetchComplete() {
         return false;
     }
     
-    // Request still pending - not ready yet
-    // In real ESP32 HTTP implementation, we'd check client.connected() state
-    // For now, give it time to respond
-    if (elapsed < 500) {
+    // Give request at least 200ms to complete
+    if (elapsed < 200) {
         return false; // Not enough time for response yet
     }
     
     // Try to get response
     int httpCode = innKeeperJokes.httpClient->getSize();
-    if (httpCode == -1) return false; // Still waiting
+    Serial.println("[JOKE] HTTP status check, code: " + String(httpCode));
+    
+    if (httpCode == -1) {
+        // Still waiting or error
+        return false;
+    }
     
     // Response available - parse it
     String payload = innKeeperJokes.httpClient->getString();
@@ -1090,6 +1093,8 @@ bool checkJokeFetchComplete() {
     delete innKeeperJokes.httpClient;
     innKeeperJokes.httpClient = nullptr;
     innKeeperJokes.requestPending = false;
+    
+    Serial.println("[JOKE] Response received, size: " + String(payload.length()));
     
     // Check if it's an error response
     if (payload.indexOf("\"error\":true") != -1) {
@@ -17722,15 +17727,17 @@ for (auto &npc : npcInstances) {
                     }
                 }
                 
-                // Schedule next joke (20-40 seconds from now)
-                innKeeperJokes.nextJokeTime = now + random(20000, 40001);
+                // Schedule next joke (15-20 seconds from now)
+                innKeeperJokes.nextJokeTime = now + random(15000, 20001);
+                Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
             }
             
             // Check if it's time to initiate a new joke fetch (non-blocking start)
             if (now >= innKeeperJokes.nextJokeTime && !innKeeperJokes.requestPending) {
+                Serial.println("[JOKE] Timer expired, initiating fetch");
                 startJokeFetch();  // Just initiate, doesn't block
-                // Schedule timeout fallback (try again in 5 seconds if request fails)
-                innKeeperJokes.nextJokeTime = now + 5000;
+                // Schedule timeout fallback (try again in 3 seconds if request fails)
+                innKeeperJokes.nextJokeTime = now + 3000;
             }
         } else {
             // No players in room - deactivate joke system
@@ -17741,6 +17748,7 @@ for (auto &npc : npcInstances) {
                 delete innKeeperJokes.httpClient;
                 innKeeperJokes.httpClient = nullptr;
                 innKeeperJokes.requestPending = false;
+                Serial.println("[JOKE] Request cancelled, no players in room");
             }
         }
     }
