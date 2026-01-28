@@ -4401,14 +4401,18 @@ void cmdDeposit(Player &p, const String &input) {
     }
     
     if (amount > p.coins) {
-        p.client.printf("You only have %d gold coins to deposit.\n", p.coins);
+        p.client.print("You only have ");
+        p.client.print(p.coins);
+        p.client.println(" gold coins to deposit.");
         return;
     }
     
     // Transfer coins from inventory to bank
     p.coins -= amount;
     p.bankGp += amount;
-    p.client.printf("You deposit %dgp into your bank account.\n", amount);
+    p.client.print("You deposit ");
+    p.client.print(amount);
+    p.client.println("gp into your bank account.");
     
     // Save player to persist bank changes
     savePlayerToFS(p);
@@ -4436,14 +4440,18 @@ void cmdWithdraw(Player &p, const String &input) {
     }
     
     if (amount > p.bankGp) {
-        p.client.printf("You only have %d gold coins in your bank account.\n", p.bankGp);
+        p.client.print("You only have ");
+        p.client.print(p.bankGp);
+        p.client.println(" gold coins in your bank account.");
         return;
     }
     
     // Transfer coins from bank to inventory
     p.bankGp -= amount;
     p.coins += amount;
-    p.client.printf("You withdraw %dgp from your bank account.\n", amount);
+    p.client.print("You withdraw ");
+    p.client.print(amount);
+    p.client.println("gp from your bank account.");
     
     // Save player to persist bank changes
     savePlayerToFS(p);
