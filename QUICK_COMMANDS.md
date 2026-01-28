@@ -82,6 +82,20 @@ SELL ALL             Sell all items to current shop
 READ SIGN            View tavern sign (shows drunkenness level)
 ```
 
+### Banking System (at voxel 254,245,50)
+```
+DEPOSIT <amount>      Deposit gold coins into your safe bank account
+WITHDRAW <amount>     Withdraw gold coins from your bank account
+BALANCE               Check your account balance (coins in hand + bank total)
+READ SIGN             View bank sign with instructions
+```
+
+**Banking Benefits:**
+- Gold in your bank is safe from theft and death
+- Your on-hand coins can be lost when you die
+- Bank deposits are persistent across sessions
+- Only accessible at the bank location
+
 ### Character
 ```
 RACE <name>          Set your character race
@@ -195,6 +209,20 @@ Format in `/session_log.txt`:
 3. **Shop types** - Each shop specializes; sell to the right shop for better prices
 4. **Location memory** - Logging out and back in returns you to your last location
 5. **Communication** - Use SAY for room-only chat, SHOUT for world-wide broadcasts
+6. **Banking safety** - Keep valuable gold in the bank; only carry what you can afford to lose
+7. **Death penalty** - When you die, you lose 1/3 of your XP, all on-hand coins, and all inventory items (bank gold is safe!)
+
+## Death & Respawning
+
+When your character dies:
+- You lose **1/3 of your total experience points** (can result in level loss)
+- **All gold coins in your inventory** are dropped at your death location as loot
+- **All items you're carrying** are dropped and can be looted by other players
+- **Bank gold remains safe** - This survives death and cannot be stolen
+- You respawn at the spawn point (250, 250, 50)
+- You receive a brief death sequence with messages and delays
+
+**Strategy:** Use the bank to store your most valuable coins. Keep only what you need for immediate purchases or goals in your inventory.
 
 ## Tips for Wizards
 
