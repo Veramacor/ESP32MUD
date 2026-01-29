@@ -1,12 +1,12 @@
 ````markdown
 # ESP32 MUD - Project Memory
 
-**Last Updated:** January 26, 2026 (Evening - Injury System & Wizard Commands Complete)  
+**Last Updated:** January 28, 2026 (Late Morning - File Sync & Server Cleanup Complete)  
 **Status:** ✅ ALL SYSTEMS OPERATIONAL  
-**Firmware Version:** v26.01.26  
-**Flash Usage:** 63.8% (1,338,298 bytes / 2,097,152)  
-**RAM Usage:** 18.3% (60,060 bytes / 327,680)  
-**Build Time:** 24.75 seconds  
+**Firmware Version:** v26.01.28  
+**Flash Usage:** 65.5% (1,373,564 bytes / 2,097,152)  
+**RAM Usage:** 18.6% (60,844 bytes / 327,680)  
+**Build Time:** 27.66 seconds  
 **GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
@@ -50,6 +50,43 @@ Persistent injury tracking affecting gameplay:
 - `summon <player>` - Bring player to wizard's location  
 
 ---
+
+---
+
+## Recent Session Work (January 28, 2026 - File Sync & Cleanup)
+
+### ✅ File Upload Server Removed
+**Removed:** Port 8080 file upload server initialization from setup()
+- **Reason:** No longer needed; manual `download all` command provides on-demand control
+- **Cleanup:** Removed FILE_UPLOAD_SERVER initialization block and all references
+- **Code Location:** setup() function, was interfering with auto-sync timing
+- **Status:** Successfully removed, code compiles cleanly
+
+### ✅ Auto-Sync at Boot Made Optional
+**Location:** Line 18006 in setup()  
+**Action:** Commented out `autoSyncFilesAtBoot()` call
+**Rationale:** 
+- Avoids unnecessary HTTP requests every boot
+- Wizards can manually control sync with `download all` command
+- Reduces boot time when server unavailable
+- Function remains in codebase for future re-enablement
+**Manual Control:** Wizard command `download all` syncs all 6 files at 36.7 KB/s (73× faster than individual downloads)
+
+### 📊 Performance Metrics (Latest Build v26.01.28)
+- **Compilation Time:** 27.66 seconds
+- **Binary Size:** 1,373,564 bytes (65.5% of Flash)
+- **Memory Usage:** 60,844 bytes (18.6% of RAM)
+- **Upload Time:** 10.7 seconds via COM5
+- **Build Status:** ✅ 0 errors, 0 warnings
+- **SHA Verification:** ✅ Passed
+- **Device:** ESP32C3 XIAO (160MHz, 320KB RAM, 4MB Flash)
+
+### ✅ Build & Deployment Successful
+- **Task:** 🔄 Reset and Upload (executed successfully)
+- **Serial Port:** COM5
+- **Baud Rate:** 460800 kbit/s effective write speed
+- **All Features:** Working (download, auto-sync optional, manual control via wizard)
+- **GitHub Status:** Ready for next push
 
 ---
 

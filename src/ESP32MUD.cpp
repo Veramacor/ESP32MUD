@@ -14,11 +14,38 @@
 #include "chess_game.h"
 #include <mcu-max.h>  // Strong chess engine library
 
+// =============================
+// Base64 Decode Utility
+// =============================
+int base64_decode(uint8_t *output, int outlen, const char *input) {
+    // Simple base64 decoder
+    static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    
+    int outIndex = 0;
+    int bits = 0;
+    int bitCount = 0;
+    
+    for (int i = 0; input[i] && outIndex < outlen; i++) {
+        if (input[i] == '=') break;  // Padding
+        
+        const char* ptr = strchr(base64_chars, input[i]);
+        if (!ptr) continue;  // Skip invalid characters
+        
+        int val = ptr - base64_chars;
+        bits = (bits << 6) | val;
+        bitCount += 6;
+        
+        if (bitCount >= 8) {
+            bitCount -= 8;
+            output[outIndex++] = (bits >> bitCount) & 0xFF;
+        }
+    }
+    
+    return outIndex;
+}
 
 
-// =============================
-// Core limits and constants
-// =============================
+
 
 #define MAX_PLAYERS    10
 #define MAX_INVENTORY 32
@@ -360,6 +387,7 @@ void printWrappedLines(Client &client, const String &text, int width);
 void announceToRoomWrapped(int x, int y, int z, const String &msg, int excludeIndex);
 void announceToRoom(int x, int y, int z, const String &msg, int excludeIndex);
 void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, int excludeB);
+void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex);
 
 // Debug and logging
 void debugDumpItemsToSerial();
@@ -453,6 +481,7 @@ void showBankSign(Player &p);
 void updateWeatherRequests();
 void broadcastWeather(const String &data);
 void cmdWho(Player &p);
+void cmdDownload(Player &p, const String &filename);
 String getPlayerIPAddress(Player &p);
 
 // High-Low card game functions
@@ -1693,15 +1722,24 @@ void generateBinaryIndex() {
     Serial.printf("[IDX] Complete. Total records: %d\n", count);
 }
 
-void buildRoomIndexesIfNeeded() {
+void buildRoomIndexesIfNeeded(bool forceRebuild = false) {
     if (!LittleFS.exists("/rooms.txt")) {
         Serial.println("[FATAL] rooms.txt missing");
         return;
     }
 
-    // Always rebuild (your request)
-    LittleFS.remove("/rooms.idx");
-    LittleFS.remove("/rooms.bin");
+    // If not forcing rebuild, check if indexes already exist
+    if (!forceRebuild && LittleFS.exists("/rooms.idx") && LittleFS.exists("/rooms.bin")) {
+        Serial.println("[IDX] Room indexes already exist, skipping rebuild");
+        return;
+    }
+
+    // Delete old indexes if forcing rebuild
+    if (forceRebuild) {
+        LittleFS.remove("/rooms.idx");
+        LittleFS.remove("/rooms.bin");
+        Serial.println("[IDX] Forcing rebuild of room indexes...");
+    }
 
     Serial.println("[IDX] Building rooms.idx...");
     if (!createRoomsIDX()) {
@@ -3025,6 +3063,52 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
         }
     }
 }
+
+/**
+ * Announce dialog from an NPC/item with proper wrapping
+ * Prints: "The X says: "dialog line 1
+ * dialog line 2" (continuation at column 1)
+ */
+void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex = -1) {
+    String cleaned = ensurePunctuation(dialog);
+    String wrappedDialog = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
+    
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        if (i == excludeIndex) continue;
+
+        if (players[i].roomX == x &&
+            players[i].roomY == y &&
+            players[i].roomZ == z) {
+            
+            // Collect all wrapped lines into a vector first
+            std::vector<String> lines;
+            int start = 0;
+            for (int j = 0; j <= wrappedDialog.length(); j++) {
+                if (j == wrappedDialog.length() || wrappedDialog[j] == '\n') {
+                    String line = wrappedDialog.substring(start, j);
+                    lines.push_back(line);
+                    start = j + 1;
+                }
+            }
+            
+            // Print each line separately
+            for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
+                if (lineIdx == 0) {
+                    // First line gets the prefix and opening quote
+                    players[i].client.println(speaker + " says: \"" + lines[lineIdx]);
+                } else if (lineIdx == lines.size() - 1) {
+                    // Last line gets the closing quote
+                    players[i].client.println(lines[lineIdx] + "\"");
+                } else {
+                    // Middle lines - no prefix or quotes
+                    players[i].client.println(lines[lineIdx]);
+                }
+            }
+        }
+    }
+}
+
 void recalcBonuses(Player &p) {
     applyEquipmentBonuses(p);
 }
@@ -5909,6 +5993,42 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    // Check if this is the Magic Shop
+    if (p.roomX == 254 && p.roomY == 247 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        
+        p.client.println("");
+        p.client.println("╔═══════════════════════════════════════╗");
+        p.client.println("║   ENCHANTED ARCANA - PURVEYOR OF      ║");
+        p.client.println("║      MYSTICAL FORCES & ARCANE ARTS    ║");
+        p.client.println("╚═══════════════════════════════════════╝");
+        p.client.println("");
+        p.client.println("Welcome, Seeker of the Mystic Arts!");
+        p.client.println("");
+        p.client.println("ELIXIRS & DRAUGHTS OF POWER:");
+        p.client.println("  • Potion of Healing............ 25gp");
+        p.client.println("  • Potion of Mana............... 35gp");
+        p.client.println("  • Potion of Strength........... 45gp");
+        p.client.println("  • Potion of Invisibility....... 50gp");
+        p.client.println("");
+        p.client.println("ENCHANTED RINGS & TALISMANS:");
+        p.client.println("  • Ring of Protection........... 150gp");
+        p.client.println("  • Amulet of Wisdom............. 200gp");
+        p.client.println("");
+        p.client.println("WANDS & STAVES OF DEVASTATING MAGIC:");
+        p.client.println("  • Wand of Magic Missile........ 650gp");
+        p.client.println("  • Wand of Fireball............. 800gp");
+        p.client.println("  • Wand of Lightning............ 1200gp");
+        p.client.println("  • Staff of Frost............... 2000gp");
+        p.client.println("");
+        p.client.println("Type 'buy <item>' to purchase");
+        p.client.println("Type 'sell <item>' to trade with us");
+        p.client.println("");
+        return;
+    }
+    
     // Check if this is the Bank
     if (p.roomX == 254 && p.roomY == 245 && p.roomZ == 50) {
         if (p.IsHeadInjured) {
@@ -6071,6 +6191,11 @@ void cmdSell(Player &p, const String &arg) {
     } else if (shop->shopType == "misc") {
         if (itemType != "misc") {
             p.client.println("The shopkeeper says: I only buy miscellaneous items.");
+            return;
+        }
+    } else if (shop->shopType == "magic") {
+        if (itemType != "magic" && itemType != "weapon" && itemType != "misc") {
+            p.client.println("The arcane merchant says: I only buy magical items, enchanted weapons, and potions.");
             return;
         }
     }
@@ -7021,6 +7146,521 @@ void cmdWho(Player &p) {
         }
     p.client.println("================================" );
     p.client.println("");
+}
+
+// =============================
+// DOWNLOAD COMMAND: HTTP FILE DOWNLOADER
+// =============================
+
+void cmdDownload(Player &p, const String &filename) {
+    String fname = filename;
+    fname.trim();
+    
+    // LIST mode: no filename provided
+    if (fname.length() == 0) {
+        p.client.println("Fetching file list from server...");
+        
+        HTTPClient http;
+        http.begin("http://www.storyboardacs.com/download.php");
+        http.setConnectTimeout(10000);
+        http.setTimeout(15000);
+        
+        int httpCode = http.GET();
+        
+        Serial.println("[DOWNLOAD] List request HTTP code: " + String(httpCode));
+        
+        if (httpCode != 200) {
+            p.client.println("Error: HTTP " + String(httpCode));
+            http.end();
+            return;
+        }
+        
+        String response = http.getString();
+        http.end();
+        
+        // Parse JSON and format for display
+        p.client.println("");
+        p.client.println("Filename              Size(KB)      Modified");
+        p.client.println("---------------------------------------------");
+        
+        // Simple JSON parsing for array of objects
+        int pos = 0;
+        while (true) {
+            // Find next "name" field
+            int namePos = response.indexOf("\"name\":", pos);
+            if (namePos == -1) break;
+            
+            // Extract filename
+            int nameStartPos = response.indexOf("\"", namePos + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String filename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            // Find size field after this name
+            int sizePos = response.indexOf("\"size\":", nameEndPos);
+            int sizeStartPos = response.indexOf(":", sizePos) + 1;
+            while (response[sizeStartPos] == ' ') sizeStartPos++;
+            int sizeEndPos = sizeStartPos;
+            while (sizeEndPos < response.length() && isdigit(response[sizeEndPos])) sizeEndPos++;
+            int sizeBytes = response.substring(sizeStartPos, sizeEndPos).toInt();
+            float sizeKB = sizeBytes / 1024.0;
+            
+            // Find modified field
+            int modPos = response.indexOf("\"modified\":", sizeEndPos);
+            int modStartPos = response.indexOf("\"", modPos + 11);
+            int modEndPos = response.indexOf("\"", modStartPos + 1);
+            String modified = response.substring(modStartPos + 1, modEndPos);
+            
+            // Format and print line
+            String line = filename;
+            while (line.length() < 22) line += " ";
+            line += String(sizeKB, 1);
+            while (line.length() < 38) line += " ";
+            line += modified;
+            p.client.println(line);
+            
+            pos = modEndPos;
+        }
+        p.client.println("");
+        return;
+    }
+    
+    // DOWNLOAD ALL FILES mode: check if "all" was specified
+    if (fname.equalsIgnoreCase("all")) {
+        p.client.println("Downloading all files from server...");
+        
+        // First, get the list to check file sizes
+        HTTPClient httpList;
+        httpList.begin("http://www.storyboardacs.com/download.php");
+        httpList.setConnectTimeout(10000);
+        httpList.setTimeout(15000);
+        
+        int httpCode = httpList.GET();
+        if (httpCode != 200) {
+            p.client.println("Error: Could not get file list (HTTP " + String(httpCode) + ")");
+            httpList.end();
+            return;
+        }
+        
+        String listResponse = httpList.getString();
+        httpList.end();
+        
+        // Parse list to find large files (> 100KB) that should be downloaded individually
+        std::vector<String> largeFiles;
+        int pos = 0;
+        while (true) {
+            int namePos = listResponse.indexOf("\"name\":", pos);
+            if (namePos == -1) break;
+            
+            int nameStartPos = listResponse.indexOf("\"", namePos + 7);
+            int nameEndPos = listResponse.indexOf("\"", nameStartPos + 1);
+            String filename = listResponse.substring(nameStartPos + 1, nameEndPos);
+            
+            int sizePos = listResponse.indexOf("\"size\":", nameEndPos);
+            int sizeStartPos = listResponse.indexOf(":", sizePos) + 1;
+            while (sizeStartPos < listResponse.length() && listResponse[sizeStartPos] == ' ') sizeStartPos++;
+            int sizeEndPos = sizeStartPos;
+            while (sizeEndPos < listResponse.length() && isdigit(listResponse[sizeEndPos])) sizeEndPos++;
+            int sizeBytes = listResponse.substring(sizeStartPos, sizeEndPos).toInt();
+            
+            // Files > 100KB will be downloaded individually (to avoid RAM overflow)
+            if (sizeBytes > 100 * 1024) {
+                largeFiles.push_back(filename);
+                p.client.println("Note: " + filename + " (" + String(sizeBytes/1024) + "KB) will be downloaded separately...");
+            }
+            
+            pos = sizeEndPos;
+        }
+        
+        // Download small files via batch mode (download.php?all=1)
+        HTTPClient http;
+        http.begin("http://www.storyboardacs.com/download.php?all=1");
+        http.setConnectTimeout(10000);
+        http.setTimeout(30000);
+        
+        httpCode = http.GET();
+        
+        Serial.println("[DOWNLOAD ALL] HTTP code: " + String(httpCode));
+        
+        if (httpCode != 200) {
+            p.client.println("Error: HTTP " + String(httpCode));
+            http.end();
+            return;
+        }
+        
+        String response = http.getString();
+        http.end();
+        
+        int fileCount = 0;
+        int filesDownloaded = 0;
+        unsigned long totalBytes = 0;
+        unsigned long startTime = millis();
+        
+        // Count small files in response (exclude large files)
+        int pos2 = 0;
+        while ((pos2 = response.indexOf("\"name\":", pos2)) != -1) {
+            int nameStartPos = response.indexOf("\"", pos2 + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String filename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            bool isLarge = false;
+            for (const String &lf : largeFiles) {
+                if (filename == lf) {
+                    isLarge = true;
+                    break;
+                }
+            }
+            
+            if (!isLarge) fileCount++;
+            pos2 += 7;
+        }
+        
+        if (fileCount == 0 && largeFiles.size() == 0) {
+            p.client.println("Error: No files in response or invalid JSON");
+            return;
+        }
+        
+        // Download small files from batch
+        pos2 = 0;
+        int currentFile = 1;
+        
+        while (true) {
+            int namePos = response.indexOf("\"name\":", pos2);
+            if (namePos == -1) break;
+            
+            int nameStartPos = response.indexOf("\"", namePos + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String remoteFilename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            // Skip large files (download them individually later)
+            bool isLarge = false;
+            for (const String &lf : largeFiles) {
+                if (remoteFilename == lf) {
+                    isLarge = true;
+                    break;
+                }
+            }
+            
+            if (isLarge) {
+                pos2 = nameEndPos;
+                continue;
+            }
+            
+            // Find content field
+            int contentPos = response.indexOf("\"content\":", nameEndPos);
+            if (contentPos == -1) {
+                pos2 = nameEndPos;
+                continue;
+            }
+            
+            int contentStartPos = response.indexOf("\"", contentPos + 10);
+            int contentEndPos = response.indexOf("\"", contentStartPos + 1);
+            String base64Content = response.substring(contentStartPos + 1, contentEndPos);
+            
+            // Decode base64 content
+            p.client.print("[" + String(currentFile) + "/" + String(fileCount) + "] Downloading " + remoteFilename + "... ");
+            
+            int decodedSize = (base64Content.length() * 3) / 4;
+            uint8_t *decodedData = new uint8_t[decodedSize];
+            
+            int actualSize = base64_decode(decodedData, decodedSize, (const char*)base64Content.c_str());
+            
+            if (actualSize <= 0) {
+                p.client.println("(base64 decode error)");
+                delete[] decodedData;
+                pos2 = contentEndPos;
+                currentFile++;
+                continue;
+            }
+            
+            File file = LittleFS.open("/" + remoteFilename, "w");
+            if (!file) {
+                p.client.println("(file create error)");
+                delete[] decodedData;
+                pos2 = contentEndPos;
+                currentFile++;
+                continue;
+            }
+            
+            int written = file.write(decodedData, actualSize);
+            file.close();
+            
+            if (written == actualSize) {
+                p.client.println(String(actualSize) + " bytes");
+                filesDownloaded++;
+                totalBytes += actualSize;
+            } else {
+                p.client.println("(write error)");
+            }
+            
+            delete[] decodedData;
+            pos2 = contentEndPos;
+            currentFile++;
+        }
+        
+        // Download large files individually with streaming
+        for (const String &largeFile : largeFiles) {
+            p.client.println("Downloading " + largeFile + " (streaming)...");
+            
+            HTTPClient streamHttp;
+            String downloadUrl = "http://www.storyboardacs.com/download.php?file=" + largeFile;
+            
+            streamHttp.begin(downloadUrl);
+            streamHttp.setConnectTimeout(10000);
+            streamHttp.setTimeout(30000);
+            
+            int streamCode = streamHttp.GET();
+            
+            if (streamCode != 200) {
+                p.client.println("  Error: HTTP " + String(streamCode));
+                streamHttp.end();
+                continue;
+            }
+            
+            int fileSize = streamHttp.getSize();
+            if (fileSize <= 0) {
+                p.client.println("  Error: Could not determine file size");
+                streamHttp.end();
+                continue;
+            }
+            
+            File file = LittleFS.open("/" + largeFile, "w");
+            if (!file) {
+                p.client.println("  Error: Could not create file");
+                streamHttp.end();
+                continue;
+            }
+            
+            WiFiClient *stream = streamHttp.getStreamPtr();
+            int bytesWritten = 0;
+            uint8_t buffer[4096];
+            int bytesRead = 0;
+            unsigned long fileStartTime = millis();
+            const unsigned long TIMEOUT = 60000;  // 60 second timeout for large files
+            
+            while (streamHttp.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+                file.write(buffer, bytesRead);
+                bytesWritten += bytesRead;
+                
+                if (millis() - fileStartTime > TIMEOUT) {
+                    p.client.println("  Error: Download timeout");
+                    file.close();
+                    LittleFS.remove("/" + largeFile);
+                    streamHttp.end();
+                    break;
+                }
+            }
+            
+            file.close();
+            streamHttp.end();
+            
+            if (bytesWritten == fileSize) {
+                p.client.println("  Downloaded " + String(bytesWritten) + " bytes");
+                filesDownloaded++;
+                totalBytes += bytesWritten;
+            } else {
+                p.client.println("  Error: Incomplete download (" + String(bytesWritten) + "/" + String(fileSize) + " bytes)");
+            }
+        }
+        
+        unsigned long elapsed = millis() - startTime;
+        float speed = (totalBytes / 1024.0) / (elapsed / 1000.0);
+        
+        p.client.println("");
+        p.client.println("Download complete: " + String(filesDownloaded) + " files synced");
+        p.client.println("Total: " + String(totalBytes) + " bytes in " + String(elapsed) + "ms");
+        p.client.println("Speed: " + String(speed, 1) + " KB/s");
+        
+        // Force rebuild of room indexes after download all
+        p.client.println("");
+        p.client.println("Rebuilding room indexes...");
+        buildRoomIndexesIfNeeded(true);  // Force rebuild
+        p.client.println("Room indexes rebuilt.");
+        
+        return;
+    }
+
+    // DOWNLOAD SINGLE FILE mode: filename provided - prevent directory traversal
+    if (fname.indexOf("..") >= 0 || fname.indexOf("/") >= 0) {
+        p.client.println("Invalid filename.");
+        return;
+    }
+    
+    p.client.println("Downloading " + fname + "...");
+    
+    HTTPClient http;
+    String downloadUrl = "http://www.storyboardacs.com/download.php?file=" + fname;
+    
+    http.begin(downloadUrl);
+    http.setConnectTimeout(10000);
+    http.setTimeout(15000);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode != 200) {
+        p.client.println("Error: HTTP " + String(httpCode));
+        Serial.println("[DOWNLOAD] HTTP Error: " + String(httpCode));
+        http.end();
+        return;
+    }
+    
+    int fileSize = http.getSize();
+    if (fileSize <= 0) {
+        p.client.println("Error: Could not determine file size.");
+        http.end();
+        return;
+    }
+    
+    // Create/open file in LittleFS
+    File file = LittleFS.open("/" + fname, "w");
+    if (!file) {
+        p.client.println("Error: Could not create file on device.");
+        http.end();
+        return;
+    }
+    
+    // Stream data to file with larger buffer for better performance
+    WiFiClient *stream = http.getStreamPtr();
+    int bytesWritten = 0;
+    uint8_t buffer[4096];  // Increased from 256 to 4096 bytes for better throughput
+    int bytesRead = 0;
+    unsigned long startTime = millis();
+    const unsigned long TIMEOUT = 30000;
+    
+    while (http.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+        file.write(buffer, bytesRead);
+        bytesWritten += bytesRead;
+        
+        if (millis() - startTime > TIMEOUT) {
+            p.client.println("Error: Download timeout.");
+            file.close();
+            LittleFS.remove("/" + fname);
+            http.end();
+            return;
+        }
+    }
+    
+    file.close();
+    http.end();
+    
+    unsigned long elapsed = millis() - startTime;
+    float speed = (bytesWritten / 1024.0) / (elapsed / 1000.0);  // KB/s
+    
+    p.client.println("Downloaded " + String(bytesWritten) + " bytes in " + String(elapsed) + "ms");
+    p.client.println("Speed: " + String(speed, 1) + " KB/s to /" + fname);
+}
+
+// =============================
+// AUTO-SYNC FILES DURING STARTUP
+// =============================
+void autoSyncFilesAtBoot() {
+    Serial.println("[AUTOSYNC] Attempting to download latest files from server...");
+    
+    HTTPClient http;
+    http.begin("http://www.storyboardacs.com/download.php?all=1");
+    http.setConnectTimeout(5000);
+    http.setTimeout(15000);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode != 200) {
+        Serial.println("[AUTOSYNC] Server unavailable (HTTP " + String(httpCode) + ") - continuing with local files.");
+        http.end();
+        return;
+    }
+    
+    String response = http.getString();
+    http.end();
+    
+    // Count files in response
+    int fileCount = 0;
+    int pos = 0;
+    while ((pos = response.indexOf("\"name\":", pos)) != -1) {
+        fileCount++;
+        pos += 7;
+    }
+    
+    if (fileCount == 0) {
+        Serial.println("[AUTOSYNC] No files in server response - continuing with local files.");
+        return;
+    }
+    
+    Serial.println("[AUTOSYNC] Syncing " + String(fileCount) + " file(s)...");
+    
+    // Download each file
+    pos = 0;
+    int filesDownloaded = 0;
+    unsigned long totalBytes = 0;
+    unsigned long startTime = millis();
+    int currentFile = 1;
+    
+    while (true) {
+        // Find next file entry
+        int namePos = response.indexOf("\"name\":", pos);
+        if (namePos == -1) break;
+        
+        // Extract filename
+        int nameStartPos = response.indexOf("\"", namePos + 7);
+        int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+        String remoteFilename = response.substring(nameStartPos + 1, nameEndPos);
+        
+        // Find content field
+        int contentPos = response.indexOf("\"content\":", nameEndPos);
+        if (contentPos == -1) {
+            pos = nameEndPos;
+            continue;
+        }
+        
+        int contentStartPos = response.indexOf("\"", contentPos + 10);
+        int contentEndPos = response.indexOf("\"", contentStartPos + 1);
+        String base64Content = response.substring(contentStartPos + 1, contentEndPos);
+        
+        Serial.print("  [" + String(currentFile) + "/" + String(fileCount) + "] " + remoteFilename + "... ");
+        
+        // Simple base64 decode
+        int decodedSize = (base64Content.length() * 3) / 4;
+        uint8_t *decodedData = new uint8_t[decodedSize];
+        
+        int actualSize = base64_decode(decodedData, decodedSize, (const char*)base64Content.c_str());
+        
+        if (actualSize <= 0) {
+            Serial.println("decode error");
+            delete[] decodedData;
+            pos = contentEndPos;
+            currentFile++;
+            continue;
+        }
+        
+        // Write to LittleFS
+        File file = LittleFS.open("/" + remoteFilename, "w");
+        if (!file) {
+            Serial.println("create error");
+            delete[] decodedData;
+            pos = contentEndPos;
+            currentFile++;
+            continue;
+        }
+        
+        int written = file.write(decodedData, actualSize);
+        file.close();
+        
+        if (written == actualSize) {
+            Serial.println(String(actualSize) + " bytes OK");
+            filesDownloaded++;
+            totalBytes += actualSize;
+        } else {
+            Serial.println("write error");
+        }
+        
+        delete[] decodedData;
+        pos = contentEndPos;
+        currentFile++;
+    }
+    
+    unsigned long elapsed = millis() - startTime;
+    float speed = (totalBytes / 1024.0) / (elapsed / 1000.0);
+    
+    Serial.println("[AUTOSYNC] Complete: " + String(filesDownloaded) + "/" + String(fileCount) + " files synced");
+    Serial.println("[AUTOSYNC] Total: " + String(totalBytes) + " bytes in " + String(elapsed) + "ms (" + String(speed, 1) + " KB/s)");
 }
 
 // =============================
@@ -9338,7 +9978,7 @@ String getMapBlock(int exit_n, int exit_s, int exit_e, int exit_w,
 
 char getLocationCode(int x, int y) {
     // Map coordinates to location codes
-    if (x == 250 && y == 205) return 'C';  // Church
+    if (x == 250 && y == 250) return 'C';  // Church
     if (x == 249 && y == 248) return 'E';  // Esperthertu Inn
     if (x == 247 && y == 248) return 'G';  // Game Parlor
     if (x == 246 && y == 246) return 'D';  // Doctor's Office
@@ -10529,9 +11169,10 @@ void doCombatRound(Player &p) {
                         line += "!";
                     }
 
-                    announceToRoom(
+                    announceDialogToRoom(
                         npc->x, npc->y, npc->z,
-                        "The " + npcName + " yells: \"" + line + "\"",
+                        "The " + npcName + " yells",
+                        line,
                         -1
                     );
                 }
@@ -11861,6 +12502,33 @@ void initializeShops() {
     wares.addItem("map_fragment", "Map Fragment", 3, 10);
     
     shops.push_back(wares);
+
+    // ENCHANTED ARCANA MAGIC SHOP at voxel 254,247,50
+    Shop magicShop;
+    magicShop.x = 254;
+    magicShop.y = 247;
+    magicShop.z = 50;
+    magicShop.shopName = "Enchanted Arcana";
+    magicShop.shopType = "magic";
+    
+    // Add magical items (itemId, displayName, initialQty, price)
+    // Potions & Elixirs (20-50gp)
+    magicShop.addItem("potion_healing", "Potion of Healing", 8, 25);
+    magicShop.addItem("potion_mana", "Potion of Mana", 6, 35);
+    magicShop.addItem("potion_strength", "Potion of Strength", 4, 45);
+    magicShop.addItem("potion_invisible", "Potion of Invisibility", 3, 50);
+    
+    // Magic Rings & Amulets (100-400gp)
+    magicShop.addItem("ring_protection", "Ring of Protection", 2, 150);
+    magicShop.addItem("amulet_wisdom", "Amulet of Wisdom", 2, 200);
+    
+    // Magic Wands & Staves (500-3000gp)
+    magicShop.addItem("wand_fireball", "Wand of Fireball", 1, 800);
+    magicShop.addItem("wand_lightning", "Wand of Lightning", 1, 1200);
+    magicShop.addItem("staff_frost", "Staff of Frost", 1, 2000);
+    magicShop.addItem("wand_magic_missile", "Wand of Magic Missile", 2, 650);
+    
+    shops.push_back(magicShop);
     
     // NOTE: Tavern Libations at (249,242,50) is handled by taverns system, not shops
 }
@@ -16137,6 +16805,14 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
 // -----------------------------------------
+// WIZARD COMMAND: DOWNLOAD FILES
+// -----------------------------------------
+    if (cmd == "download") {
+        cmdDownload(p, args);
+        return;
+    }
+
+// -----------------------------------------
 // GAME PARLOR: HIGH-LOW CARD GAME
 // -----------------------------------------
     if (cmd == "play") {
@@ -17583,6 +18259,11 @@ void setup() {
     // =====================================================
     initializeTimezone();
 
+    // =====================================================
+    // AUTO-SYNC FILES FROM SERVER (optional, non-blocking)
+    // =====================================================
+    //autoSyncFilesAtBoot();
+
     {
         int mudPort = portStr.toInt();
         server = new WiFiServer(mudPort);
@@ -17590,18 +18271,6 @@ void setup() {
 
         Serial.print("MUD server started on port ");
         Serial.println(mudPort);
-    }
-
-    // =====================================================
-    // INITIALIZE FILE UPLOAD SERVER (Port 8080)
-    // =====================================================
-    {
-        fileUploadServer = new WiFiServer(FILE_UPLOAD_PORT);
-        fileUploadServer->begin();
-
-        Serial.print("File upload server started on port ");
-        Serial.println(FILE_UPLOAD_PORT);
-        Serial.println("  Access: http://<device-ip>:8080");
     }
 
     // Initialize players
@@ -17912,21 +18581,20 @@ for (auto &npc : npcInstances) {
         if (item.ownerName.length() > 0) continue;
         
         // Check if item has any dialog attributes (using dialog_1, dialog_2, dialog_3 format)
-        auto dialog1 = item.attributes.find("dialog_1");
-        auto dialog2 = item.attributes.find("dialog_2");
-        auto dialog3 = item.attributes.find("dialog_3");
+        // Use getAttr() to fetch from itemDefs template
+        String dialog1 = item.getAttr("dialog_1", itemDefs);
+        String dialog2 = item.getAttr("dialog_2", itemDefs);
+        String dialog3 = item.getAttr("dialog_3", itemDefs);
         
-        if (dialog1 == item.attributes.end() && 
-            dialog2 == item.attributes.end() && 
-            dialog3 == item.attributes.end()) {
+        if (dialog1.length() == 0 && dialog2.length() == 0 && dialog3.length() == 0) {
             continue;  // No dialogs for this item
         }
         
         // Count how many dialogs this item has
         int dialogCount = 0;
-        if (dialog1 != item.attributes.end()) dialogCount++;
-        if (dialog2 != item.attributes.end()) dialogCount++;
-        if (dialog3 != item.attributes.end()) dialogCount++;
+        if (dialog1.length() > 0) dialogCount++;
+        if (dialog2.length() > 0) dialogCount++;
+        if (dialog3.length() > 0) dialogCount++;
         
         // Initialize dialog timer if needed
         if (item.attributes.find("nextDialogTime") == item.attributes.end()) {
@@ -17942,22 +18610,18 @@ for (auto &npc : npcInstances) {
             // Pick dialog based on cycle order - only cycle through actual dialogs
             int dialogNum = item.dialogOrder[item.dialogIndex] + 1;  // Convert 0-2 to 1-3
             String dialogKey = "dialog_" + String(dialogNum);
-            std::string skey = std::string(dialogKey.c_str());
             
-            auto dialogIt = item.attributes.find(skey);
-            if (dialogIt != item.attributes.end()) {
-                String itemName = item.name;
-                
-                // Check if item has a custom "name" attribute
-                auto nameIt = item.attributes.find("name");
-                if (nameIt != item.attributes.end()) {
-                    itemName = String(nameIt->second.c_str());
+            // Use getAttr() to fetch from itemDefs template
+            String line = item.getAttr(dialogKey, itemDefs);
+            
+            if (line.length() > 0) {
+                // Get display name from itemDefs
+                String itemName = item.getAttr("name", itemDefs);
+                if (itemName.length() == 0) {
+                    itemName = item.name;
                 }
                 
-                String line = String(dialogIt->second.c_str());
-                String msg = "The " + itemName + " says: \"" + line + "\"";
-                
-                announceToRoom(item.x, item.y, item.z, msg, -1);
+                announceDialogToRoom(item.x, item.y, item.z, "The " + itemName, line, -1);
             }
             
             // Move to next dialog - only cycle through the dialogs that exist
@@ -17999,17 +18663,7 @@ for (auto &npc : npcInstances) {
         const int JOKE_ROOM_Y = 248;
         const int JOKE_ROOM_Z = 50;
         
-        static unsigned long lastDebugTime = 0;
-        bool shouldDebug = (now - lastDebugTime >= 5000UL);  // Debug every 5 seconds
-        if (shouldDebug) lastDebugTime = now;
-        
         int playersInRoom = countPlayersInRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z);
-        
-        if (shouldDebug) {
-            Serial.printf("[JOKE DEBUG] playersInRoom=%d, active=%d, requestPending=%d, nextJokeTime=%lu, now=%lu, diff=%ld\n",
-                playersInRoom, innKeeperJokes.active, innKeeperJokes.requestPending,
-                innKeeperJokes.nextJokeTime, now, (long)(innKeeperJokes.nextJokeTime - now));
-        }
         
         if (playersInRoom > 0) {
             // Players are in the Inn Keeper room - activate joke system
@@ -18017,7 +18671,6 @@ for (auto &npc : npcInstances) {
             
             // Check if async fetch completed (non-blocking check)
             if (innKeeperJokes.requestPending) {
-                if (shouldDebug) Serial.println("[JOKE DEBUG] Request is pending, checking completion...");
                 if (checkJokeFetchComplete()) {
                     Serial.println("[JOKE SUCCESS] Fetch completed!");
                     // Successfully received and parsed joke - broadcast it to the room
@@ -18051,14 +18704,8 @@ for (auto &npc : npcInstances) {
                 startJokeFetch();  // Just initiate, doesn't block
                 // Schedule timeout fallback (try again in 3 seconds if request fails)
                 innKeeperJokes.nextJokeTime = now + 3000;
-            } else if (shouldDebug && !innKeeperJokes.requestPending) {
-                long remaining = (long)(innKeeperJokes.nextJokeTime - now);
-                if (remaining > 0) {
-                    Serial.printf("[JOKE DEBUG] Waiting %.1f seconds for next fetch\n", remaining / 1000.0);
-                }
             }
         } else {
-            if (shouldDebug) Serial.println("[JOKE DEBUG] No players in room");
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
             // Cancel any pending request
