@@ -3080,7 +3080,77 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
  */
 void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex = -1) {
     String cleaned = ensurePunctuation(dialog);
-    String wrappedDialog = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
+    
+    // Calculate prefix length: "The Speaker says: \"" 
+    String prefix = speaker + " says: \"";
+    int prefixLen = prefix.length();
+    int firstLineMaxWidth = MAX_OUTPUT_WIDTH - prefixLen;
+    
+    // Manually wrap first line to fit with prefix, then wrap rest at full width
+    std::vector<String> lines;
+    
+    // Extract and wrap first portion to fit in firstLineMaxWidth
+    String firstLinePart = "";
+    String remainingDialog = cleaned;
+    String word = "";
+    bool firstLineComplete = false;
+    
+    for (int i = 0; i < cleaned.length() && !firstLineComplete; i++) {
+        char c = cleaned[i];
+        
+        if (c == ' ') {
+            if (!word.isEmpty()) {
+                if (firstLinePart.isEmpty()) {
+                    if ((int)word.length() <= firstLineMaxWidth) {
+                        firstLinePart = word;
+                    } else {
+                        firstLinePart = word;
+                        firstLineComplete = true;
+                    }
+                } else if ((int)(firstLinePart.length() + 1 + word.length()) <= firstLineMaxWidth) {
+                    firstLinePart += " " + word;
+                } else {
+                    firstLineComplete = true;
+                    remainingDialog = word + cleaned.substring(i);
+                    i = cleaned.length();
+                    break;
+                }
+                word = "";
+            }
+        } else {
+            word += c;
+        }
+        
+        if (i == cleaned.length() - 1 && !word.isEmpty()) {
+            if (firstLinePart.isEmpty()) {
+                firstLinePart = word;
+            } else if ((int)(firstLinePart.length() + 1 + word.length()) <= firstLineMaxWidth) {
+                firstLinePart += " " + word;
+            } else {
+                firstLineComplete = true;
+                remainingDialog = word + cleaned.substring(i + 1);
+                break;
+            }
+            word = "";
+        }
+    }
+    
+    lines.push_back(firstLinePart);
+    
+    // Wrap remaining dialog at full width
+    if (remainingDialog.length() > 0) {
+        String wrappedRest = wordWrap(remainingDialog, MAX_OUTPUT_WIDTH);
+        int start = 0;
+        for (int j = 0; j <= wrappedRest.length(); j++) {
+            if (j == wrappedRest.length() || wrappedRest[j] == '\n') {
+                String line = wrappedRest.substring(start, j);
+                if (line.length() > 0) {
+                    lines.push_back(line);
+                }
+                start = j + 1;
+            }
+        }
+    }
     
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!players[i].active || !players[i].loggedIn) continue;
@@ -3090,23 +3160,12 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             players[i].roomY == y &&
             players[i].roomZ == z) {
             
-            // Collect all wrapped lines
-            std::vector<String> lines;
-            int start = 0;
-            for (int j = 0; j <= wrappedDialog.length(); j++) {
-                if (j == wrappedDialog.length() || wrappedDialog[j] == '\n') {
-                    String line = wrappedDialog.substring(start, j);
-                    lines.push_back(line);
-                    start = j + 1;
-                }
-            }
-            
             // Build complete message with all lines and proper formatting
             String fullMsg = "";
             for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
                 if (lineIdx == 0) {
                     // First line gets the prefix and opening quote
-                    fullMsg += speaker + " says: \"" + lines[lineIdx];
+                    fullMsg += prefix + lines[lineIdx];
                 } else if (lineIdx == lines.size() - 1) {
                     // Last line gets the closing quote
                     fullMsg += "\r\n" + lines[lineIdx] + "\"";
