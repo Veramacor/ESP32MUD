@@ -1,12 +1,12 @@
 ````markdown
 # ESP32 MUD - Project Memory
 
-**Last Updated:** January 29, 2026 (Late Afternoon - Global Prompt System)  
+**Last Updated:** January 29, 2026 (Evening - Dialog Wrapping Finalized)  
 **Status:** ✅ ALL SYSTEMS OPERATIONAL  
 **Firmware Version:** v26.01.29  
-**Flash Usage:** 65.8% (1,379,202 bytes / 2,097,152)  
+**Flash Usage:** 65.8% (1,380,700 bytes / 2,097,152)  
 **RAM Usage:** 18.6% (60,844 bytes / 327,680)  
-**Build Time:** 27.86 seconds  
+**Build Time:** 27.52 seconds  
 **GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
@@ -53,6 +53,46 @@ Persistent injury tracking affecting gameplay:
 
 ---
 
+## Recent Session Work (January 29, 2026 - Dialog Wrapping Finalization)
+
+### ✅ Dialog Formatting Perfected - Fresh Line & Smart Wrapping
+**Location:** [Line 3081](src/ESP32MUD.cpp#L3081) - `announceDialogToRoom()` function  
+**Status:** ✅ COMPLETE - All dialogs now wrap perfectly at 80 columns
+
+**Key Improvements:**
+1. **Fresh Telnet Line Start:** Dialog now begins on a new line (not after prompt character)
+   - Adds `println("")` before dialog to clear the line after previous prompt
+   - Ensures full 80 columns available for first line calculation
+
+2. **Smart Width Calculation:** First line wraps with reduced width
+   - Calculates prefix length: `"The Speaker says: \""`
+   - First line: `80 - prefix_length` characters for dialog
+   - Subsequent lines: Full 80-character width
+   - All breaks ONLY occur at word boundaries (spaces)
+
+3. **Perfect Word Wrapping:**
+   - No mid-word splits (words never break at character position)
+   - Complete re-wrap at fresh telnet lines for optimal display
+   - Pattern: Single unified algorithm with adaptive line width
+
+**Example Output (80 columns):**
+```
+The Part of a Statue says: "I've been treated very unfairly. Those killings
+were strictly for entertainment."
+```
+
+**Build & Deployment v26.01.29 (Final):**
+- **Compilation Time:** 27.52 seconds  
+- **Binary Size:** 1,380,700 bytes (65.8% of Flash)
+- **Memory Usage:** 60,844 bytes (18.6% of RAM)
+- **Upload Time:** 10.4 seconds via COM5
+- **Build Status:** ✅ 0 errors, 0 warnings
+- **GitHub:** Commit 3549802 pushed successfully
+
+---
+
+---
+
 ## Recent Session Work (January 29, 2026 - Global Prompt System Complete)
 
 ### ✅ Universal Prompt Display After All Room Announcements
@@ -60,9 +100,9 @@ Persistent injury tracking affecting gameplay:
 **Implementation Status:** ✅ COMPLETE
 
 **Updated Functions:**
-- `announceToRoomWrapped()` [Line 3019](src/ESP32MUD.cpp#L3019): Added blank line + prompt
+- `announceToRoomWrapped()` [Line 3023](src/ESP32MUD.cpp#L3023): Added blank line + prompt
 - `announceToRoomExcept()` [Line 2099](src/ESP32MUD.cpp#L2099): Added blank line + prompt
-- `announceDialogToRoom()` [Line 3067](src/ESP32MUD.cpp#L3067): Already has prompt (from dialog phase)
+- `announceDialogToRoom()` [Line 3081](src/ESP32MUD.cpp#L3081): Dialog with full wrapping + prompt
 
 **Pattern Applied to All:**
 ```cpp
@@ -89,29 +129,18 @@ players[i].client.print("> ");  // prompt on fresh line
 
 ---
 
+---
+
 ## Recent Session Work (January 29, 2026 - Dialog Wrapping & Magic Shop)
 
 ### ✅ NPC/Item Dialog Word-Wrapping Implementation
 **Feature:** All NPC combat dialogs and item dialogs now wrap at 80 characters
-**Code Location:** [Line 3067](src/ESP32MUD.cpp#L3067) - `announceDialogToRoom()` function
+**Code Location:** [Line 3081](src/ESP32MUD.cpp#L3081) - `announceDialogToRoom()` function
 
 **How It Works:**
-- Separates speaker prefix from dialog content
-- Wraps dialog text at 80-char boundary by word
-- First line: `The <speaker> says: "dialog text...`
-- Continuation lines: Start at column 1 (no indentation)
-- Last line: `...closing quote"`
-- Works for both NPC combat yells and world item dialogs
-
-**Updated Locations:**
-- NPC combat dialogs: [Line 11172](src/ESP32MUD.cpp#L11172)
-- World item dialogs: [Line 18610](src/ESP32MUD.cpp#L18610)
-
-**Example Output:**
-```
-The Statue of Ploi The Insane says: "I could be watching the Wings. I didn't ask
-to be here."
-```
+- Starts dialog on fresh telnet line (after previous prompt)
+- Calculates width based on speaker prefix length
+- Wraps dialog text at 80-char boundary by word only
 
 ### ✅ Enchanted Arcana Magic Shop Created
 **Location:** Voxel (254, 247, 50)  
