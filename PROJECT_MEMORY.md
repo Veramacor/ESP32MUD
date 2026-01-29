@@ -1,12 +1,12 @@
 ````markdown
 # ESP32 MUD - Project Memory
 
-**Last Updated:** January 28, 2026 (Late Morning - File Sync & Server Cleanup Complete)  
+**Last Updated:** January 29, 2026 (Late Morning - Dialog Wrapping & Magic Shop)  
 **Status:** ✅ ALL SYSTEMS OPERATIONAL  
-**Firmware Version:** v26.01.28  
-**Flash Usage:** 65.5% (1,373,564 bytes / 2,097,152)  
+**Firmware Version:** v26.01.29  
+**Flash Usage:** 65.8% (1,379,094 bytes / 2,097,152)  
 **RAM Usage:** 18.6% (60,844 bytes / 327,680)  
-**Build Time:** 27.66 seconds  
+**Build Time:** 26.93 seconds  
 **GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
@@ -53,7 +53,69 @@ Persistent injury tracking affecting gameplay:
 
 ---
 
-## Recent Session Work (January 28, 2026 - File Sync & Cleanup)
+## Recent Session Work (January 29, 2026 - Dialog Wrapping & Magic Shop)
+
+### ✅ NPC/Item Dialog Word-Wrapping Implementation
+**Feature:** All NPC combat dialogs and item dialogs now wrap at 80 characters
+**Code Location:** [Line 3067](src/ESP32MUD.cpp#L3067) - `announceDialogToRoom()` function
+
+**How It Works:**
+- Separates speaker prefix from dialog content
+- Wraps dialog text at 80-char boundary by word
+- First line: `The <speaker> says: "dialog text...`
+- Continuation lines: Start at column 1 (no indentation)
+- Last line: `...closing quote"`
+- Works for both NPC combat yells and world item dialogs
+
+**Updated Locations:**
+- NPC combat dialogs: [Line 11172](src/ESP32MUD.cpp#L11172)
+- World item dialogs: [Line 18610](src/ESP32MUD.cpp#L18610)
+
+**Example Output:**
+```
+The Statue of Ploi The Insane says: "I could be watching the Wings. I didn't ask
+to be here."
+```
+
+### ✅ Enchanted Arcana Magic Shop Created
+**Location:** Voxel (254, 247, 50)  
+**Shop Type:** Magic items, potions, and enchanted weapons
+
+**Inventory (10 Items):**
+- **Potions (20-50gp):** Healing, Mana, Strength, Invisibility (4 items)
+- **Rings & Amulets (100-200gp):** Protection, Wisdom (2 items)
+- **Wands & Staves (500-2000gp):** Magic Missile, Fireball, Lightning, Frost (4 items)
+
+**Shop Features:**
+- Buys: Type=magic, Type=weapon, Type=misc items
+- Sells: All 10 magical items at specified prices
+- Sign: Medieval-flavored with detailed item listing
+- Integration: Fully integrated with town map ('M' code)
+
+**Code Locations:**
+- Shop initialization: [Line 12387](src/ESP32MUD.cpp#L12387) in `initializeShops()`
+- Sign display: [Line 5947](src/ESP32MUD.cpp#L5947) in `cmdReadSign()`
+- Sell filtering: [Line 6153](src/ESP32MUD.cpp#L6153) in `cmdSell()`
+
+### 📊 Performance Metrics (Latest Build v26.01.29)
+- **Compilation Time:** 26.93 seconds
+- **Binary Size:** 1,379,094 bytes (65.8% of Flash)
+- **Memory Usage:** 60,844 bytes (18.6% of RAM)
+- **Upload Time:** 10.4 seconds via COM5
+- **Build Status:** ✅ 0 errors, 0 warnings
+- **SHA Verification:** ✅ Passed
+- **GitHub:** Commit 4dda670 pushed successfully
+
+### ✅ Build & Deployment Successful
+- **Task:** 🔄 Reset and Upload (executed successfully)
+- **Serial Port:** COM5
+- **Baud Rate:** 460800 kbit/s effective write speed
+- **All Features:** Working (dialog wrapping, magic shop)
+- **GitHub Status:** Latest commit pushed
+
+---
+
+## Recent Session Work (January 28, 2026 - File Sync & Server Cleanup)
 
 ### ✅ File Upload Server Removed
 **Removed:** Port 8080 file upload server initialization from setup()

@@ -2115,6 +2115,10 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
                     start = j + 1;
                 }
             }
+            
+            // Print prompt after announcement
+            players[i].client.println("");
+            players[i].client.print("> ");
         }
     }
 }
@@ -3036,6 +3040,10 @@ void announceToRoomWrapped(int x, int y, int z, const String &msg, int excludeIn
                     start = j + 1;
                 }
             }
+            
+            // Print prompt after announcement
+            players[i].client.println("");
+            players[i].client.print("> ");
         }
     }
 }
@@ -3068,6 +3076,7 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
  * Announce dialog from an NPC/item with proper wrapping
  * Prints: "The X says: "dialog line 1
  * dialog line 2" (continuation at column 1)
+ * Automatically re-prints the prompt after dialog
  */
 void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex = -1) {
     String cleaned = ensurePunctuation(dialog);
@@ -3105,6 +3114,11 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
                     players[i].client.println(lines[lineIdx]);
                 }
             }
+            
+            // Re-print the prompt after dialog on a fresh line
+            // This ensures if multiple dialogs print in succession, each gets its own prompt
+            players[i].client.println("");  // blank line
+            players[i].client.print("> ");
         }
     }
 }
