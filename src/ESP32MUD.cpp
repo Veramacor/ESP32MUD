@@ -3081,17 +3081,14 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
 void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex = -1) {
     String cleaned = ensurePunctuation(dialog);
     
-    // Calculate prefix: "The Speaker says: \""
-    String prefix = speaker + " says: \"";
-    int prefixLen = prefix.length();
-    int firstLineMaxWidth = MAX_OUTPUT_WIDTH - prefixLen;
+    // Speaker prefix on its own line (without the quote)
+    String prefix = speaker + " says:";
     
-    // Wrap dialog with reduced first line width
+    // Wrap dialog text at full 80 columns with opening quote on first line
     String result = "";
     String currentLine = "";
     String word = "";
     bool isFirstLine = true;
-    int currentLineMaxWidth = firstLineMaxWidth;
     
     for (int i = 0; i < cleaned.length(); i++) {
         char c = cleaned[i];
@@ -3101,7 +3098,7 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             if (!word.isEmpty()) {
                 if (currentLine.isEmpty()) {
                     currentLine = word;
-                } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+                } else if ((int)(currentLine.length() + 1 + word.length()) <= MAX_OUTPUT_WIDTH) {
                     currentLine += " " + word;
                 } else {
                     // Trim and add line
@@ -3110,7 +3107,6 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
                     }
                     result += currentLine + "\n";
                     isFirstLine = false;
-                    currentLineMaxWidth = MAX_OUTPUT_WIDTH;
                     currentLine = word;
                 }
                 word = "";
@@ -3120,7 +3116,6 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             }
             result += currentLine + "\n";
             isFirstLine = false;
-            currentLineMaxWidth = MAX_OUTPUT_WIDTH;
             currentLine = "";
             continue;
         }
@@ -3130,7 +3125,7 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             if (!word.isEmpty()) {
                 if (currentLine.isEmpty()) {
                     currentLine = word;
-                } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+                } else if ((int)(currentLine.length() + 1 + word.length()) <= MAX_OUTPUT_WIDTH) {
                     currentLine += " " + word;
                 } else {
                     // Word doesn't fit - move to next line
@@ -3139,7 +3134,6 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
                     }
                     result += currentLine + "\n";
                     isFirstLine = false;
-                    currentLineMaxWidth = MAX_OUTPUT_WIDTH;
                     currentLine = word;
                 }
                 word = "";
@@ -3155,7 +3149,7 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
     if (!word.isEmpty()) {
         if (currentLine.isEmpty()) {
             currentLine = word;
-        } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+        } else if ((int)(currentLine.length() + 1 + word.length()) <= MAX_OUTPUT_WIDTH) {
             currentLine += " " + word;
         } else {
             while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
@@ -3163,7 +3157,6 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             }
             result += currentLine + "\n";
             isFirstLine = false;
-            currentLineMaxWidth = MAX_OUTPUT_WIDTH;
             currentLine = word;
         }
     }
@@ -3176,7 +3169,7 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
         result += currentLine;
     }
     
-    // Now split result by newlines and format with quotes/prefix
+    // Now split result by newlines and format with quotes
     std::vector<String> lines;
     int start = 0;
     for (int j = 0; j <= result.length(); j++) {
@@ -3200,17 +3193,20 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             // Start dialog on a fresh telnet line (not after the > prompt from previous announcement)
             players[i].client.println("");
             
-            // Build complete message with all lines and proper formatting
+            // Print speaker prefix on its own line
+            players[i].client.println(prefix);
+            
+            // Build complete message with dialog lines and proper formatting
             String fullMsg = "";
             for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
                 if (lineIdx == 0) {
-                    // First line gets the prefix and opening quote
-                    fullMsg += prefix + lines[lineIdx];
+                    // First line gets the opening quote
+                    fullMsg += "\"" + lines[lineIdx];
                 } else if (lineIdx == lines.size() - 1) {
                     // Last line gets the closing quote
                     fullMsg += "\r\n" + lines[lineIdx] + "\"";
                 } else {
-                    // Middle lines - newline before, no prefix or quotes
+                    // Middle lines - newline before, no quotes
                     fullMsg += "\r\n" + lines[lineIdx];
                 }
             }
