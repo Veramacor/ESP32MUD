@@ -3081,74 +3081,111 @@ void printWrapped(Client &client, const String &text, int width = MAX_OUTPUT_WID
 void announceDialogToRoom(int x, int y, int z, const String &speaker, const String &dialog, int excludeIndex = -1) {
     String cleaned = ensurePunctuation(dialog);
     
-    // Calculate prefix length: "The Speaker says: \"" 
+    // Calculate prefix: "The Speaker says: \""
     String prefix = speaker + " says: \"";
     int prefixLen = prefix.length();
     int firstLineMaxWidth = MAX_OUTPUT_WIDTH - prefixLen;
     
-    // Manually wrap first line to fit with prefix, then wrap rest at full width
-    std::vector<String> lines;
-    
-    // Extract and wrap first portion to fit in firstLineMaxWidth
-    String firstLinePart = "";
-    String remainingDialog = cleaned;
+    // Wrap dialog with reduced first line width
+    String result = "";
+    String currentLine = "";
     String word = "";
-    bool firstLineComplete = false;
+    bool isFirstLine = true;
+    int currentLineMaxWidth = firstLineMaxWidth;
     
-    for (int i = 0; i < cleaned.length() && !firstLineComplete; i++) {
+    for (int i = 0; i < cleaned.length(); i++) {
         char c = cleaned[i];
         
-        if (c == ' ') {
+        // Handle newlines - preserve them
+        if (c == '\n') {
             if (!word.isEmpty()) {
-                if (firstLinePart.isEmpty()) {
-                    if ((int)word.length() <= firstLineMaxWidth) {
-                        firstLinePart = word;
-                    } else {
-                        firstLinePart = word;
-                        firstLineComplete = true;
-                    }
-                } else if ((int)(firstLinePart.length() + 1 + word.length()) <= firstLineMaxWidth) {
-                    firstLinePart += " " + word;
+                if (currentLine.isEmpty()) {
+                    currentLine = word;
+                } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+                    currentLine += " " + word;
                 } else {
-                    firstLineComplete = true;
-                    remainingDialog = word + cleaned.substring(i);
-                    i = cleaned.length();
-                    break;
+                    // Trim and add line
+                    while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                        currentLine = currentLine.substring(0, currentLine.length() - 1);
+                    }
+                    result += currentLine + "\n";
+                    isFirstLine = false;
+                    currentLineMaxWidth = MAX_OUTPUT_WIDTH;
+                    currentLine = word;
                 }
                 word = "";
             }
-        } else {
-            word += c;
+            while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                currentLine = currentLine.substring(0, currentLine.length() - 1);
+            }
+            result += currentLine + "\n";
+            isFirstLine = false;
+            currentLineMaxWidth = MAX_OUTPUT_WIDTH;
+            currentLine = "";
+            continue;
         }
         
-        if (i == cleaned.length() - 1 && !word.isEmpty()) {
-            if (firstLinePart.isEmpty()) {
-                firstLinePart = word;
-            } else if ((int)(firstLinePart.length() + 1 + word.length()) <= firstLineMaxWidth) {
-                firstLinePart += " " + word;
-            } else {
-                firstLineComplete = true;
-                remainingDialog = word + cleaned.substring(i + 1);
-                break;
+        // Handle spaces - they mark word boundaries
+        if (c == ' ') {
+            if (!word.isEmpty()) {
+                if (currentLine.isEmpty()) {
+                    currentLine = word;
+                } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+                    currentLine += " " + word;
+                } else {
+                    // Word doesn't fit - move to next line
+                    while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                        currentLine = currentLine.substring(0, currentLine.length() - 1);
+                    }
+                    result += currentLine + "\n";
+                    isFirstLine = false;
+                    currentLineMaxWidth = MAX_OUTPUT_WIDTH;
+                    currentLine = word;
+                }
+                word = "";
             }
-            word = "";
+            continue;
+        }
+        
+        // Accumulate characters into word
+        word += c;
+    }
+    
+    // Handle remaining word
+    if (!word.isEmpty()) {
+        if (currentLine.isEmpty()) {
+            currentLine = word;
+        } else if ((int)(currentLine.length() + 1 + word.length()) <= currentLineMaxWidth) {
+            currentLine += " " + word;
+        } else {
+            while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                currentLine = currentLine.substring(0, currentLine.length() - 1);
+            }
+            result += currentLine + "\n";
+            isFirstLine = false;
+            currentLineMaxWidth = MAX_OUTPUT_WIDTH;
+            currentLine = word;
         }
     }
     
-    lines.push_back(firstLinePart);
+    // Add final line
+    while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+        currentLine = currentLine.substring(0, currentLine.length() - 1);
+    }
+    if (!currentLine.isEmpty()) {
+        result += currentLine;
+    }
     
-    // Wrap remaining dialog at full width
-    if (remainingDialog.length() > 0) {
-        String wrappedRest = wordWrap(remainingDialog, MAX_OUTPUT_WIDTH);
-        int start = 0;
-        for (int j = 0; j <= wrappedRest.length(); j++) {
-            if (j == wrappedRest.length() || wrappedRest[j] == '\n') {
-                String line = wrappedRest.substring(start, j);
-                if (line.length() > 0) {
-                    lines.push_back(line);
-                }
-                start = j + 1;
+    // Now split result by newlines and format with quotes/prefix
+    std::vector<String> lines;
+    int start = 0;
+    for (int j = 0; j <= result.length(); j++) {
+        if (j == result.length() || result[j] == '\n') {
+            String line = result.substring(start, j);
+            if (line.length() > 0) {
+                lines.push_back(line);
             }
+            start = j + 1;
         }
     }
     
