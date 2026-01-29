@@ -3090,7 +3090,7 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             players[i].roomY == y &&
             players[i].roomZ == z) {
             
-            // Collect all wrapped lines into a vector first
+            // Collect all wrapped lines
             std::vector<String> lines;
             int start = 0;
             for (int j = 0; j <= wrappedDialog.length(); j++) {
@@ -3101,22 +3101,25 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
                 }
             }
             
-            // Print each line separately
+            // Build complete message with all lines and proper formatting
+            String fullMsg = "";
             for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
                 if (lineIdx == 0) {
                     // First line gets the prefix and opening quote
-                    players[i].client.println(speaker + " says: \"" + lines[lineIdx]);
+                    fullMsg += speaker + " says: \"" + lines[lineIdx];
                 } else if (lineIdx == lines.size() - 1) {
                     // Last line gets the closing quote
-                    players[i].client.println(lines[lineIdx] + "\"");
+                    fullMsg += "\r\n" + lines[lineIdx] + "\"";
                 } else {
-                    // Middle lines - no prefix or quotes
-                    players[i].client.println(lines[lineIdx]);
+                    // Middle lines - newline before, no prefix or quotes
+                    fullMsg += "\r\n" + lines[lineIdx];
                 }
             }
             
-            // Re-print the prompt after dialog on a fresh line
-            // This ensures if multiple dialogs print in succession, each gets its own prompt
+            // Print entire message at once to avoid telnet client indentation
+            players[i].client.println(fullMsg);
+            
+            // Prompt after dialog on a fresh line
             players[i].client.println("");  // blank line
             players[i].client.print("> ");
         }
