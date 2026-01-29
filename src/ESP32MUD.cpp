@@ -3197,6 +3197,9 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             players[i].roomY == y &&
             players[i].roomZ == z) {
             
+            // Start dialog on a fresh telnet line (not after the > prompt from previous announcement)
+            players[i].client.println("");
+            
             // Build complete message with all lines and proper formatting
             String fullMsg = "";
             for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
