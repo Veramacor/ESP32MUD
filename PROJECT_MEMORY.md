@@ -1,12 +1,12 @@
 ````markdown
 # ESP32 MUD - Project Memory
 
-**Last Updated:** January 29, 2026 (Late Morning - Dialog Wrapping & Magic Shop)  
+**Last Updated:** January 29, 2026 (Late Afternoon - Global Prompt System)  
 **Status:** ✅ ALL SYSTEMS OPERATIONAL  
 **Firmware Version:** v26.01.29  
-**Flash Usage:** 65.8% (1,379,094 bytes / 2,097,152)  
+**Flash Usage:** 65.8% (1,379,202 bytes / 2,097,152)  
 **RAM Usage:** 18.6% (60,844 bytes / 327,680)  
-**Build Time:** 26.93 seconds  
+**Build Time:** 27.86 seconds  
 **GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
@@ -50,6 +50,42 @@ Persistent injury tracking affecting gameplay:
 - `summon <player>` - Bring player to wizard's location  
 
 ---
+
+---
+
+## Recent Session Work (January 29, 2026 - Global Prompt System Complete)
+
+### ✅ Universal Prompt Display After All Room Announcements
+**Requirement:** After EVERY announcement to room, display `>` prompt on new line with no exceptions
+**Implementation Status:** ✅ COMPLETE
+
+**Updated Functions:**
+- `announceToRoomWrapped()` [Line 3019](src/ESP32MUD.cpp#L3019): Added blank line + prompt
+- `announceToRoomExcept()` [Line 2099](src/ESP32MUD.cpp#L2099): Added blank line + prompt
+- `announceDialogToRoom()` [Line 3067](src/ESP32MUD.cpp#L3067): Already has prompt (from dialog phase)
+
+**Pattern Applied to All:**
+```cpp
+// After announcement content
+players[i].client.println("");  // blank line separator
+players[i].client.print("> ");  // prompt on fresh line
+```
+
+**Coverage:**
+- ✅ Dialog announcements (NPC yells, item messages)
+- ✅ Regular room announcements (text output)
+- ✅ Announcements excluding specific players
+- ✅ All combat-related messages
+- ✅ All item/world messages
+- ✅ All system announcements
+
+**Build & Deployment v26.01.29 (Updated):**
+- **Compilation Time:** 27.86 seconds
+- **Binary Size:** 1,379,202 bytes (65.8% of Flash)
+- **Memory Usage:** 60,844 bytes (18.6% of RAM)
+- **Upload Time:** 10.4 seconds via COM5
+- **Build Status:** ✅ 0 errors, 0 warnings
+- **GitHub:** Commit 5536fda pushed successfully
 
 ---
 
