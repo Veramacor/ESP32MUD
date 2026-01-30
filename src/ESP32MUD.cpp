@@ -2386,6 +2386,21 @@ void logSessionLogin(const char* playerName) {
     logFile.close();
 }
 
+void logSessionNewLogin(const char* playerName) {
+    File logFile = LittleFS.open("/session_log.txt", "a");
+    if (!logFile) {
+        Serial.println("[ERROR] Could not open session_log.txt for writing");
+        return;
+    }
+    
+    time_t now = time(nullptr);
+    String timestamp = formatDateTimeWithTimezone(now);
+    
+    String logEntry = String(timestamp) + " | NEWLOG | " + String(playerName) + "\n";
+    logFile.print(logEntry);
+    logFile.close();
+}
+
 void logSessionLogout(const char* playerName) {
     File logFile = LittleFS.open("/session_log.txt", "a");
     if (!logFile) {
@@ -3175,7 +3190,32 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
     for (int j = 0; j <= result.length(); j++) {
         if (j == result.length() || result[j] == '\n') {
             String line = result.substring(start, j);
-            if (line.length() > 0) {
+            // Trim trailing spaces
+            while (line.length() > 0 && line[line.length() - 1] == ' ') {
+                line = line.substring(0, line.length() - 1);
+            }
+            // Skip empty lines, but try to merge short lines with previous line
+            if (line.length() > 0 && lines.size() > 0) {
+                String prevLine = lines[lines.size() - 1];
+                
+                // Check if this is punctuation or very short - should merge regardless
+                bool isPunctuation = (line.length() <= 2) && (line[0] == '.' || line[0] == '!' || line[0] == '?' || line[0] == ',' || line[0] == '"' || line[0] == '*');
+                
+                if (isPunctuation && prevLine.length() > 0) {
+                    // Punctuation - attach WITHOUT space
+                    lines[lines.size() - 1] += line;
+                } else {
+                    // Try normal merge with space
+                    int spacesNeeded = (prevLine.length() > 0) ? 1 : 0;
+                    if ((int)(prevLine.length() + spacesNeeded + line.length()) <= MAX_OUTPUT_WIDTH && prevLine.length() > 0) {
+                        // Line fits on previous line - merge it with space
+                        lines[lines.size() - 1] += " " + line;
+                    } else {
+                        // Doesn't fit - add as new line
+                        lines.push_back(line);
+                    }
+                }
+            } else if (line.length() > 0) {
                 lines.push_back(line);
             }
             start = j + 1;
@@ -3190,17 +3230,16 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
             players[i].roomY == y &&
             players[i].roomZ == z) {
             
-            // Start dialog on a fresh telnet line (not after the > prompt from previous announcement)
-            players[i].client.println("");
+            // Build complete message: speaker and dialog on fresh line, prompt at end only
+            String fullMsg = "\r\n" + prefix + "\r\n";
             
-            // Print speaker prefix on its own line
-            players[i].client.println(prefix);
-            
-            // Build complete message with dialog lines and proper formatting
-            String fullMsg = "";
+            // Add dialog lines with opening and closing quotes
             for (size_t lineIdx = 0; lineIdx < lines.size(); lineIdx++) {
-                if (lineIdx == 0) {
-                    // First line gets the opening quote
+                if (lines.size() == 1) {
+                    // Single line dialog: opening and closing quotes on same line
+                    fullMsg += "\"" + lines[lineIdx] + "\"";
+                } else if (lineIdx == 0) {
+                    // First line of multi-line dialog gets the opening quote
                     fullMsg += "\"" + lines[lineIdx];
                 } else if (lineIdx == lines.size() - 1) {
                     // Last line gets the closing quote
@@ -3211,12 +3250,11 @@ void announceDialogToRoom(int x, int y, int z, const String &speaker, const Stri
                 }
             }
             
-            // Print entire message at once to avoid telnet client indentation
-            players[i].client.println(fullMsg);
+            // Add final prompt on new line
+            fullMsg += "\r\n> ";
             
-            // Prompt after dialog on a fresh line
-            players[i].client.println("");  // blank line
-            players[i].client.print("> ");
+            // Print entire message at once to avoid telnet client indentation
+            players[i].client.print(fullMsg);
         }
     }
 }
@@ -15713,6 +15751,8 @@ struct LoginState {
     // ADD THESE TWO:
   int newPasswordAttempts = 0;
   int raceAttempts = 0;
+  
+  bool isNewPlayer = false;  // Track if this is a new character creation
 
   String tempName;
   String tempPassword;
@@ -15819,10 +15859,12 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 linkWorldItemParents();
 
                 st.stage = LOGIN_PASSWORD;
+                st.isNewPlayer = false;
                 p.client.println("Enter your password:");
             } else {
                 // New player
                 st.stage = LOGIN_NEW_PASSWORD;
+                st.isNewPlayer = true;
                 p.client.println("New character! Enter a password:");
             }
             return;
@@ -15872,8 +15914,12 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
             
-            // Log session login
-            logSessionLogin(p.name);
+            // Log session login (with distinction for new vs existing players)
+            if (st.isNewPlayer) {
+                logSessionNewLogin(p.name);
+            } else {
+                logSessionLogin(p.name);
+            }
 
             // --- Welcome message ---
             sendWelcome(p);
@@ -16054,6 +16100,9 @@ void handleLogin(Player &p, int index, const String &rawLine) {
 
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
+            
+            // Log new character login
+            logSessionNewLogin(p.name);
 
             // --- Welcome message ---
             sendWelcome(p);
@@ -18655,13 +18704,11 @@ for (auto &npc : npcInstances) {
                 // Convert NPC name (std::string) → Arduino String
                 String npcName = String(def.attributes.at("name").c_str());
 
-                String msg =
-                    "The " + npcName +
-                    " says: \"" + line + "\"";
-
-                announceToRoom(
+                // Use announceDialogToRoom for proper formatting
+                announceDialogToRoom(
                     npc.x, npc.y, npc.z,
-                    msg,
+                    npcName,
+                    line,
                     -1
                 );
             }
