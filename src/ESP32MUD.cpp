@@ -143,7 +143,7 @@ void resetMUDActivityTimer() {
     mudActivityStartTime = millis();
 }
 
-// Function to get engine thinking time based on current activity (1-5 seconds)
+// Function to get engine thinking time based on current activity (1-3 seconds)
 int getEngineThinkingTimeMs() {
     unsigned long activityMs = getMUDActivityDuration();
     
@@ -151,12 +151,8 @@ int getEngineThinkingTimeMs() {
     if (activityMs < 1000) return 1000;
     // 1-2 seconds: give engine 2 seconds
     else if (activityMs < 2000) return 2000;
-    // 2-3 seconds: give engine 3 seconds
-    else if (activityMs < 3000) return 3000;
-    // 3-4 seconds: give engine 4 seconds
-    else if (activityMs < 4000) return 4000;
-    // 4+ seconds: give engine full 5 seconds
-    else return 5000;
+    // 2+ seconds: give engine full 3 seconds (max think time)
+    else return 3000;
 }
 
 // =============================================================
@@ -9419,7 +9415,7 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     }
     
     // Engine's turn - using minimax with alpha-beta pruning
-    p.client.println("Local Game Parlor local thinking about his move...");
+    p.client.println("Game Parlor local thinking about his move...");
     
     bool foundEngineMove = false;
     bool moveFromOpeningBook = false;
