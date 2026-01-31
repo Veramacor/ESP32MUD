@@ -394,6 +394,10 @@ void debugDumpSinglePlayerToSerial(const String &name);
 void debugListAllFiles(Player &p);
 void debugPrint(Player &p, const String &msg);
 void debugPrintNoNL(Player &p, const String &msg);
+void logSessionLogin(const char* playerName);
+void logSessionNewLogin(const char* playerName);
+void logSessionLogout(const char* playerName);
+void logSessionReboot();
 
 // World state
 void resetWorldState();
@@ -1233,6 +1237,7 @@ void checkGlobalRebootCountdown(unsigned long now) {
     if (remaining <= 0) {
         broadcastToAll("The world collapses in blinding light!");
         delay(200);
+        logSessionReboot();  // Log the reboot
         saveWorldItems();  // Save world state before reboot
         safeReboot();   // ESP.restart() inside here
         return;
@@ -2408,6 +2413,21 @@ void logSessionLogout(const char* playerName) {
     String timestamp = formatDateTimeWithTimezone(now);
     
     String logEntry = String(timestamp) + " | LOGOUT | " + String(playerName) + "\n";
+    logFile.print(logEntry);
+    logFile.close();
+}
+
+void logSessionReboot() {
+    File logFile = LittleFS.open("/session_log.txt", "a");
+    if (!logFile) {
+        Serial.println("[ERROR] Could not open session_log.txt for writing");
+        return;
+    }
+    
+    time_t now = time(nullptr);
+    String timestamp = formatDateTimeWithTimezone(now);
+    
+    String logEntry = String(timestamp) + " | REBOOT | System\n";
     logFile.print(logEntry);
     logFile.close();
 }
@@ -17810,6 +17830,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         broadcastToAll("The world shimmers and reforms...");
         delay(200);
 
+        logSessionReboot();  // Log the reboot
         savePlayerToFS(p);
         saveWorldItems();  // Save world state before reboot
         
