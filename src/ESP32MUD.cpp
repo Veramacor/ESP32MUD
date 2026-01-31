@@ -10887,7 +10887,10 @@ void cmdPassword(Player &p, int index) {
     while (!p.client.available()) delay(1);
     String oldpw = cleanInput(p.client.readStringUntil('\n'));
 
-    if (oldpw != String(p.storedPassword)) {
+    // Case-insensitive password comparison
+    String lowerOldpw = oldpw;
+    lowerOldpw.toLowerCase();
+    if (lowerOldpw != String(p.storedPassword)) {
         p.client.println("Incorrect password. Cancelled.");
         return;
     }
@@ -10907,13 +10910,18 @@ void cmdPassword(Player &p, int index) {
     while (!p.client.available()) delay(1);
     String confirm = cleanInput(p.client.readStringUntil('\n'));
 
-    if (confirm != newpw) {
+    // Case-insensitive password comparison for confirmation
+    String lowerNewpw = newpw;
+    lowerNewpw.toLowerCase();
+    String lowerConfirm = confirm;
+    lowerConfirm.toLowerCase();
+    if (lowerConfirm != lowerNewpw) {
         p.client.println("Passwords do not match. Cancelled.");
         return;
     }
 
-    // 4) Save
-    strncpy(p.storedPassword, newpw.c_str(), sizeof(p.storedPassword)-1);
+    // 4) Save (convert to lowercase before storing)
+    strncpy(p.storedPassword, lowerNewpw.c_str(), sizeof(p.storedPassword)-1);
     savePlayerToFS(p);
 
     p.client.println("Password updated successfully.");
@@ -15495,13 +15503,54 @@ void savePlayerToFS(Player &p) {
 
 
 // =============================================================
+// FIND PLAYER FILE (CASE-INSENSITIVE)
+// =============================================================
+
+
+String findPlayerFileCase(const String &name) {
+    String lowerName = name;
+    lowerName.toLowerCase();
+    
+    File root = LittleFS.open("/", "r");
+    if (!root) return "";
+    
+    File file = root.openNextFile();
+    while (file) {
+        String fileName = file.name();
+        // Check if it matches the pattern user_*.txt
+        if (fileName.startsWith("user_") && fileName.endsWith(".txt")) {
+            // Extract the name part (between "user_" and ".txt")
+            String nameInFile = fileName.substring(5, fileName.length() - 4);
+            // Compare lowercase versions
+            String lowerFileNamePart = nameInFile;
+            lowerFileNamePart.toLowerCase();
+            
+            // If it matches (case-insensitive), return the actual filename found
+            if (lowerFileNamePart == lowerName) {
+                file.close();
+                root.close();
+                return nameInFile;
+            }
+        }
+        file.close();
+        file = root.openNextFile();
+    }
+    root.close();
+    return "";
+}
+
+
+// =============================================================
 // LOAD PLAYER (CLEAN MODERN FORMAT)
 // =============================================================
 
 
 bool loadPlayerFromFS(Player &p, const String &name) {
-    String path = "/user_" + name + ".txt";
-    if (!LittleFS.exists(path)) return false;
+    // Find the actual player file (case-insensitive)
+    String actualName = findPlayerFileCase(name);
+    if (actualName == "") return false;  // Player file not found
+    
+    String path = "/user_" + actualName + ".txt";
 
     File f = LittleFS.open(path, "r");
     if (!f) return false;
@@ -15886,7 +15935,7 @@ void handleLogin(Player &p, int index, const String &rawLine) {
 
             initPlayer(p);
 
-            if (loadPlayerFromFS(p, line)) {
+            if (loadPlayerFromFS(p, lowerName)) {
                 // Existing player
                 recalcBonuses(p);   // ⭐ ADD THIS LINE ⭐
                 
@@ -15916,7 +15965,10 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 return;
             }
 
-            if (line != String(p.storedPassword)) {
+            // Case-insensitive password comparison
+            String lowerInputPassword = line;
+            lowerInputPassword.toLowerCase();
+            if (lowerInputPassword != String(p.storedPassword)) {
                 st.passwordAttempts++;
                 if (st.passwordAttempts >= 3) {
                     p.client.println("Too many failed attempts. Disconnecting.");
@@ -16082,8 +16134,12 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 return;
             }
 
-            st.tempPassword = line;
-            strncpy(p.storedPassword, line.c_str(), sizeof(p.storedPassword)-1);
+            // Convert password to lowercase before storing
+            String lowerPassword = line;
+            lowerPassword.toLowerCase();
+            
+            st.tempPassword = lowerPassword;
+            strncpy(p.storedPassword, lowerPassword.c_str(), sizeof(p.storedPassword)-1);
 
             // Race selection
             p.client.println("Choose your race:");
