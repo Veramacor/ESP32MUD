@@ -15353,6 +15353,37 @@ String sanitizeMsg(const String &in) {
 
 void savePlayerToFS(Player &p) {
     String path = String("/user_") + String(p.name) + ".txt";
+    
+    // Check for and delete any existing file with uppercase variants
+    // Create lowercase version of the filename for comparison
+    String lowerName = String(p.name);
+    lowerName.toLowerCase();
+    
+    // List all files and check for case-variant matches
+    File root = LittleFS.open("/", "r");
+    if (root) {
+        File file = root.openNextFile();
+        while (file) {
+            String fileName = file.name();
+            // Check if it matches the pattern user_*.txt with our player name
+            if (fileName.startsWith("user_") && fileName.endsWith(".txt")) {
+                // Extract the name part (between "user_" and ".txt")
+                String nameInFile = fileName.substring(5, fileName.length() - 4);
+                // Compare lowercase versions
+                String lowerFileNamePart = nameInFile;
+                lowerFileNamePart.toLowerCase();
+                
+                // If it's the same character but different case, delete it
+                if (lowerFileNamePart == lowerName && nameInFile != lowerName) {
+                    String oldPath = String("/") + fileName;
+                    LittleFS.remove(oldPath);
+                }
+            }
+            file.close();
+            file = root.openNextFile();
+        }
+        root.close();
+    }
 
     File f = LittleFS.open(path, "w");
     if (!f) {
@@ -15846,8 +15877,12 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 return;
             }
 
-            st.tempName = line;
-            strncpy(p.name, line.c_str(), sizeof(p.name)-1);
+            // Convert name to lowercase
+            String lowerName = line;
+            lowerName.toLowerCase();
+            
+            st.tempName = lowerName;
+            strncpy(p.name, lowerName.c_str(), sizeof(p.name)-1);
 
             initPlayer(p);
 
