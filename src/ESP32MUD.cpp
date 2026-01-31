@@ -12461,6 +12461,10 @@ void cmdGet(Player &p, const String &input) {
         if (wi.x != p.roomX || wi.y != p.roomY || wi.z != p.roomZ)
             continue;
 
+        // Skip invisible items - cannot pick up hidden items from the room
+        if (wi.getAttr("invisible", itemDefs) == "1")
+            continue;
+
         String id   = wi.name;
         String disp = getItemDisplayName(wi);
 
