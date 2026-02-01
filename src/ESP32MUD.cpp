@@ -197,6 +197,7 @@ struct HighLowSession {
     bool awaitingContinue;       // waiting for player to press Enter or type 'end'
     bool betWasPot;              // true if player bet the entire pot
     int gameRoomX, gameRoomY, gameRoomZ;  // track which room the game started in
+    String cardCodeString;       // coded string to send to client (e.g., "c1:A-spades" or "c1:2-clubs|8-spades")
 };
 
 struct ChessSession {
@@ -7843,6 +7844,15 @@ String getCardName(const Card &card) {
     return names[card.value] + " of " + suits[card.suit];
 }
 
+// Convert a card to coded string format for interface (e.g., "A-spades", "K-hearts")
+String getCardCodeString(const Card &card) {
+    String suitNames[] = {"hearts", "spades", "diamonds", "clubs"};
+    String ranks[] = {"", "", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+    
+    String rank = card.isAce ? "A" : ranks[card.value];
+    return rank + "-" + suitNames[card.suit];
+}
+
 // Clear telnet screen using ANSI escape sequence
 void clearScreen(Player &p) {
     // ANSI/telnet clear screen: move cursor home and clear entire screen
@@ -7966,6 +7976,7 @@ void initializeHighLowSession(int playerIndex) {
     session.awaitingAceDeclaration = false;
     session.awaitingContinue = false;
     session.betWasPot = false;
+    session.cardCodeString = "";  // Initialize card code string
     
     // Create 104-card deck (double deck)
     for (int suit = 0; suit < 4; suit++) {
@@ -8042,6 +8053,12 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // Check if first card is an Ace - if so, show ONLY first card and wait for declaration
     if (session.card1.isAce) {
+        // Send coded card string before printing
+        session.cardCodeString = "c1:" + getCardCodeString(session.card1);
+        if (p.sendVoxel) {
+            p.client.println(session.cardCodeString);
+        }
+        
         printCard(p, session.card1);
         p.client.println("");
         session.awaitingAceDeclaration = true;
@@ -8051,6 +8068,12 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // First card is NOT an Ace - check if second card is an Ace
     if (session.card2.isAce) {
+        // Send coded card string: both cards on same code line
+        session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|" + getCardCodeString(session.card2);
+        if (p.sendVoxel) {
+            p.client.println(session.cardCodeString);
+        }
+        
         printTwoCardsSideBySide(p, session.card1, session.card2);
         p.client.println("");
         session.awaitingAceDeclaration = true;
@@ -8060,6 +8083,12 @@ void dealHighLowHand(Player &p, int playerIndex) {
     }
     
     // Neither card is an Ace - show both cards side-by-side and prompt for bet
+    // Send coded card string: both cards on same code line
+    session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|" + getCardCodeString(session.card2);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
+    
     printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
     p.client.println("Enter bet amount, 'pot' or 'end':");
@@ -8103,6 +8132,13 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
     session.deck.pop_back();
     
     p.client.println("");
+    
+    // Send coded card string for third card
+    session.cardCodeString = "c3:" + getCardCodeString(session.card3);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
+    
     renderThreeCardsSideBySide(p, session.card1, session.card2, session.card3);
     
     // Determine win/loss
