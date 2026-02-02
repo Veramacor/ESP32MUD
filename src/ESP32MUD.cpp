@@ -10042,12 +10042,11 @@ void cmdQrCode(Player &p, const String &input) {
                 break;
             }
         }
-    }
-    
-    // If no valid message (single word only), treat it as message
-    if (targetPlayer == nullptr && spacePos < 0) {
-        message = args;
-        firstWord = "";
+        
+        // If first word is not a valid player name, include it in the message
+        if (targetPlayer == nullptr) {
+            message = args;  // Use entire input as message
+        }
     }
     
     // Limit message length to avoid excessive QR codes
