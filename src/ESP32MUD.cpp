@@ -2175,6 +2175,15 @@ void checkSpace() {
 
 
 void resetPlayer(Player &p) {
+    int playerIndex = -1;
+    // Find the player's index so we can reset game sessions
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (&players[i] == &p) {
+            playerIndex = i;
+            break;
+        }
+    }
+    
     memset(&p, 0, sizeof(Player));
 
     p.active = false;
@@ -2190,6 +2199,18 @@ void resetPlayer(Player &p) {
 
     p.EnterMsg = "";
     p.ExitMsg = "";
+    
+    // Reset game sessions for this player
+    if (playerIndex >= 0 && playerIndex < MAX_PLAYERS) {
+        highLowSessions[playerIndex].gameActive = false;
+        highLowSessions[playerIndex].awaitingAceDeclaration = false;
+        highLowSessions[playerIndex].awaitingContinue = false;
+        highLowSessions[playerIndex].betWasPot = false;
+        highLowSessions[playerIndex].cardCodeString = "";
+        
+        chessSessions[playerIndex].gameActive = false;
+        chessSessions[playerIndex].gameEnded = false;
+    }
 }
 
 // =============================
@@ -18718,6 +18739,16 @@ void loop() {
         if (!p.active) continue;
 
         if (!p.client.connected()) {
+            // Reset game sessions before disconnecting
+            highLowSessions[i].gameActive = false;
+            highLowSessions[i].awaitingAceDeclaration = false;
+            highLowSessions[i].awaitingContinue = false;
+            highLowSessions[i].betWasPot = false;
+            highLowSessions[i].cardCodeString = "";
+            
+            chessSessions[i].gameActive = false;
+            chessSessions[i].gameEnded = false;
+            
             p.active = false;
             continue;
         }
