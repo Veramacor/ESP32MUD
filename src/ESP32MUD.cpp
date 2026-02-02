@@ -8332,6 +8332,12 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     session.awaitingAceDeclaration = false;
     
     // Ready for betting - show both cards side-by-side
+    // Send coded card string for second card before printing
+    session.cardCodeString = "c2:" + getCardCodeString(session.card2);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
+    
     p.client.println("");
     printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
