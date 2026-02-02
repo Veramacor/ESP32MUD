@@ -8068,8 +8068,8 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // First card is NOT an Ace - check if second card is an Ace
     if (session.card2.isAce) {
-        // Send coded card string: both cards on same code line
-        session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|" + getCardCodeString(session.card2);
+        // Send coded card string: both cards on same code line with c2: prefix
+        session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
         if (p.sendVoxel) {
             p.client.println(session.cardCodeString);
         }
@@ -8083,8 +8083,8 @@ void dealHighLowHand(Player &p, int playerIndex) {
     }
     
     // Neither card is an Ace - show both cards side-by-side and prompt for bet
-    // Send coded card string: both cards on same code line
-    session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|" + getCardCodeString(session.card2);
+    // Send coded card string: both cards on same code line with c2: prefix
+    session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
     if (p.sendVoxel) {
         p.client.println(session.cardCodeString);
     }
