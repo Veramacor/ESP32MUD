@@ -8081,10 +8081,10 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // Check if first card is an Ace - if so, show ONLY first card and wait for declaration
     if (session.card1.isAce) {
         // Send coded card string before printing
-        //session.cardCodeString = "c1:" + getCardCodeString(session.card1);
-        //if (p.sendVoxel) {
-        //    p.client.println(session.cardCodeString);
-        //}
+        session.cardCodeString = "c1:" + getCardCodeString(session.card1);
+        if (p.sendVoxel) {
+            p.client.println(session.cardCodeString);
+        }
         
         printCard(p, session.card1);
         p.client.println("");
@@ -8096,10 +8096,10 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // First card is NOT an Ace - check if second card is an Ace
     if (session.card2.isAce) {
         // Send coded card string: both cards on same code line with c2: prefix
-        //session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
-        //if (p.sendVoxel) {
-        //    p.client.println(session.cardCodeString);
-        //}
+        session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
+        if (p.sendVoxel) {
+            p.client.println(session.cardCodeString);
+        }
         
         printTwoCardsSideBySide(p, session.card1, session.card2);
         p.client.println("");
@@ -8111,10 +8111,10 @@ void dealHighLowHand(Player &p, int playerIndex) {
     
     // Neither card is an Ace - show both cards side-by-side and prompt for bet
     // Send coded card string: both cards on same code line with c2: prefix
-    //session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
-    //if (p.sendVoxel) {
-    //    p.client.println(session.cardCodeString);
-    //}
+    session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
     
     printTwoCardsSideBySide(p, session.card1, session.card2);
     p.client.println("");
@@ -8161,10 +8161,10 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
     p.client.println("");
     
     // Send coded card string for third card
-    //session.cardCodeString = "c3:" + getCardCodeString(session.card3);
-    //if (p.sendVoxel) {
-    //    p.client.println(session.cardCodeString);
-    //}
+    session.cardCodeString = "c3:" + getCardCodeString(session.card3);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
     
     renderThreeCardsSideBySide(p, session.card1, session.card2, session.card3);
     
@@ -8360,10 +8360,10 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     
     // Ready for betting - show both cards side-by-side
     // Send coded card string for second card before printing
-    //session.cardCodeString = "c2:" + getCardCodeString(session.card2);
-    //if (p.sendVoxel) {
-    //    p.client.println(session.cardCodeString);
-    //}
+    session.cardCodeString = "c2:" + getCardCodeString(session.card2);
+    if (p.sendVoxel) {
+        p.client.println(session.cardCodeString);
+    }
     
     p.client.println("");
     printTwoCardsSideBySide(p, session.card1, session.card2);
