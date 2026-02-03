@@ -4805,6 +4805,12 @@ void cmdInventory(Player &p, const String &input) {
         // NEVER show gold coins in inventory display - they should only be in p.coins
         if (wi.name == "gold_coin") continue;
         
+        // SAFETY CHECK: skip items with empty or invalid names
+        if (wi.name.length() == 0) {
+            debugPrint(p, "WARNING: Inventory item " + String(idx) + " has empty name, skipping");
+            continue;
+        }
+        
         String name = getItemDisplayName(wi);
 
         bool isWielded = (idx == p.wieldedItemIndex);
@@ -15522,14 +15528,22 @@ void savePlayerToFS(Player &p) {
 
     // -----------------------------
     // Inventory (save item names)
-    // -----------------------------
-    f.println(p.invCount);
+    // SAFETY: validate indices and skip invalid items
+    // Count valid items first
+    int validInvCount = 0;
     for (int i = 0; i < p.invCount; i++) {
         int idx = p.invIndices[i];
-        if (idx >= 0 && idx < (int)worldItems.size())
+        if (idx >= 0 && idx < (int)worldItems.size() && worldItems[idx].name.length() > 0) {
+            validInvCount++;
+        }
+    }
+    
+    f.println(validInvCount);
+    for (int i = 0; i < p.invCount; i++) {
+        int idx = p.invIndices[i];
+        if (idx >= 0 && idx < (int)worldItems.size() && worldItems[idx].name.length() > 0) {
             f.println(worldItems[idx].name);
-        else
-            f.println("");
+        }
     }
 
     // -----------------------------
@@ -15720,12 +15734,19 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     // (parentName = p.name means it's a top-level inventory item, not inside a container)
     // We just rebuild the inventory index array
     // NEVER allow gold coins in inventory (they go to p.coins instead)
-    // -----------------------------
+    // SKIP empty/invalid item names to prevent corruption from spreading
+    // -----------------------------------------
     for (int i = 0; i < invCount; i++) {
         safeRead(tmp);
         if (tmp.length() == 0) continue;
 
         String itemName = tmp;
+        
+        // Validate item name - reject pure numeric names which indicate corruption
+        if (itemName.toInt() > 0 && itemName == String(itemName.toInt())) {
+            // This is a numeric string - skip it as corrupted data
+            continue;
+        }
         
         // NEVER load gold coins into inventory
         if (itemName == "gold_coin") {
