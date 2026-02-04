@@ -5413,6 +5413,17 @@ void cmdLookAt(Player &p, const String &input) {
     String searchLower = arg;
     searchLower.toLowerCase();
 
+    // Check if they're looking at the criminal register
+    if (searchLower == "register" || searchLower == "criminal register" || searchLower == "criminal" || searchLower == "register.") {
+        if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
+            p.client.println("Criminal Register");
+            p.client.println("");
+            p.client.println("A Criminal Register sits on the counter of the Police Station. It lists");
+            p.client.println("the town's most heinous crimes commited. maybe you could read it.");
+            return;
+        }
+    }
+
     // CHECK FOR PLAYER FIRST
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Player &other = players[i];
@@ -6248,22 +6259,6 @@ void cmdReadSign(Player &p, const String &input) {
             p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
         }
         showBankSign(p);
-        return;
-    }
-    
-    // Check if this is the Police Station
-    if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
-        if (p.IsHeadInjured) {
-            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
-        }
-        p.client.println("");
-        p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
-        p.client.println("");
-        p.client.println("Date     Offender       Offense               Conviction");
-        p.client.println("1990     Veramacor      Player Killing        banned for eternity");
-        p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
-        p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
-        p.client.println("");
         return;
     }
     
@@ -17157,6 +17152,26 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         // Check if they're reading a shop sign
         if (argsLower == "sign") {
             cmdReadSign(p, args);
+            return;
+        }
+        
+        // Check if they're reading the criminal register
+        if (argsLower == "register") {
+            if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
+                if (p.IsHeadInjured) {
+                    p.client.println("A bystander shows mercy on your blindness and reads the register for you:");
+                }
+                p.client.println("");
+                p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
+                p.client.println("");
+                p.client.println("DATE     OFFENDER       OFFENSE               CONVICTION");
+                p.client.println("1990     Veramacor      Player Killing        banned for eternity");
+                p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
+                p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
+                p.client.println("");
+            } else {
+                p.client.println("You don't see a register here.");
+            }
             return;
         }
         
