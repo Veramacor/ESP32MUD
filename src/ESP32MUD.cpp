@@ -84,6 +84,13 @@ const unsigned long GLOBAL_RESPAWN_INTERVAL = 6UL * 60UL * 60UL * 1000UL; // 6 h
 // Set to false to disable card code transmission (visual-only mode)
 bool sendCardCodes = false;  // Default: disabled
 
+// =====================================================
+// CARD DRAWING SCALE FACTOR
+// =====================================================
+// Controls the size of cards drawn in the game parlor
+// 1 = normal size (default), 2 = 2x bigger, 3 = 3x bigger
+int CardDrawScaleFactor = 1;  // Default: 1 (normal size)
+
 // Forward declarations
 struct ShopInventoryItem;
 struct Shop;
@@ -7893,7 +7900,26 @@ void clearScreen(Player &p) {
     p.client.print("\033[H\033[2J");
 }
 
+// Helper function to create a padded string
+String createPadding(int count, char padChar = ' ') {
+    String result = "";
+    for (int i = 0; i < count; i++) {
+        result += padChar;
+    }
+    return result;
+}
+
+// Helper function to create a horizontal line with specified character
+String createHorizontalLine(int count, const String &lineChar) {
+    String result = "";
+    for (int i = 0; i < count; i++) {
+        result += lineChar;
+    }
+    return result;
+}
+
 // Render card as ASCII art - print each line separately
+// Supports scaling via CardDrawScaleFactor (1=normal, 2=2x, 3=3x)
 void printCard(Player &p, const Card &card) {
     clearScreen(p);  // Clear screen before displaying card
     
@@ -7906,26 +7932,65 @@ void printCard(Player &p, const Card &card) {
     String rank = card.isAce ? "A" : ranks[card.value];
     String suit = suitSymbols[card.suit];
     
-    // Card interior is 8 chars wide. Top-left rank + padding to fill 8 chars
-    // Bottom-right: padding + rank to fill 8 chars
+    // Clamp scale factor to 1-3
+    int scale = CardDrawScaleFactor;
+    if (scale < 1) scale = 1;
+    if (scale > 3) scale = 3;
+    
+    // Base card dimensions
+    int baseWidth = 8;
+    int baseHeight = 5;  // top border, rank, suit, rank, bottom border
+    int cardWidth = baseWidth * scale;
+    int cardHeight = baseHeight + (baseHeight - 1) * (scale - 1);  // Add extra lines for scaling
+    
+    // For scaled cards, we need to recalculate padding
     String topPad, bottomPad;
+    int interiorWidth = cardWidth - 2;  // Minus the border chars
     
     if (rank == "10") {
-        topPad = "      ";      // 10 = 2 chars, needs 6 spaces
-        bottomPad = "      ";   // 6 spaces before rank
+        int totalSpaces = interiorWidth - 2;  // "10" takes 2 chars
+        int leftSpaces = totalSpaces / 2;
+        int rightSpaces = totalSpaces - leftSpaces;
+        topPad = createPadding(rightSpaces);
+        bottomPad = createPadding(leftSpaces);
     } else {
-        topPad = "       ";     // Single char, needs 7 spaces
-        bottomPad = "       ";  // 7 spaces before rank
+        int totalSpaces = interiorWidth - 1;  // Single char
+        int leftSpaces = totalSpaces / 2;
+        int rightSpaces = totalSpaces - leftSpaces;
+        topPad = createPadding(rightSpaces);
+        bottomPad = createPadding(leftSpaces);
     }
     
-    p.client.println("┌────────┐");
-    p.client.println("│" + rank + topPad + "│");
-    p.client.println("│    " + suit + "   │");
-    p.client.println("│" + bottomPad + rank + "│");
-    p.client.println("└────────┘");
+    // Top border
+    String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
+    String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
+    
+    // Print scaled card
+    p.client.println(topBorder);
+    
+    // Repeat rank line (scale - 1) times for vertical scaling
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + rank + topPad + "│");
+    }
+    
+    // Suit line - repeat (scale) times
+    int suitPaddingLeft = (cardWidth - 2 - 1) / 2;
+    int suitPaddingRight = (cardWidth - 2 - 1) - suitPaddingLeft;
+    String suitLine = "│" + createPadding(suitPaddingLeft) + suit + createPadding(suitPaddingRight) + "│";
+    for (int i = 0; i < scale; i++) {
+        p.client.println(suitLine);
+    }
+    
+    // Repeat bottom rank line (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + bottomPad + rank + "│");
+    }
+    
+    p.client.println(botBorder);
 }
 
 // Print 2 cards side-by-side on same lines
+// Supports scaling via CardDrawScaleFactor (1=normal, 2=2x, 3=3x)
 void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     clearScreen(p);  // Clear screen before displaying cards
     
@@ -7938,30 +8003,64 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
     auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
     
-    auto getPadding = [](const String &rank) -> String {
+    // Clamp scale factor to 1-3
+    int scale = CardDrawScaleFactor;
+    if (scale < 1) scale = 1;
+    if (scale > 3) scale = 3;
+    
+    int baseCardWidth = 8;
+    int cardWidth = baseCardWidth * scale;
+    int spacing = 6;  // Space between cards (scales with factor)
+    int totalSpacing = spacing * scale;
+    
+    auto getPadding = [cardWidth](const String &rank) -> String {
+        int interiorWidth = cardWidth - 2;  // Minus borders
         if (rank == "10") {
-            return "      ";  // 6 spaces for "10"
+            int totalSpaces = interiorWidth - 2;
+            int leftSpaces = totalSpaces / 2;
+            return createPadding(leftSpaces);
         } else {
-            return "       ";  // 7 spaces for single char
+            int totalSpaces = interiorWidth - 1;
+            int leftSpaces = totalSpaces / 2;
+            return createPadding(leftSpaces);
         }
     };
     
     String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
     String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
     
+    String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
+    String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
+    String spacing_str = createPadding(totalSpacing);
+    
     // Top borders
-    p.client.println("┌────────┐      ┌────────┐");
-    // Ranks top
-    p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
-    // Suits
-    p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
-    // Ranks bottom
-    p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
+    p.client.println(topBorder + spacing_str + topBorder);
+    
+    // Ranks top - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    }
+    
+    // Suits - repeated (scale) times
+    int suitPadLeft = (cardWidth - 2 - 1) / 2;
+    int suitPadRight = (cardWidth - 2 - 1) - suitPadLeft;
+    String suitLine1 = "│" + createPadding(suitPadLeft) + s1 + createPadding(suitPadRight) + "│";
+    String suitLine2 = "│" + createPadding(suitPadLeft) + s2 + createPadding(suitPadRight) + "│";
+    for (int i = 0; i < scale; i++) {
+        p.client.println(suitLine1 + spacing_str + suitLine2);
+    }
+    
+    // Ranks bottom - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
+    }
+    
     // Bottom borders
-    p.client.println("└────────┘      └────────┘");
+    p.client.println(botBorder + spacing_str + botBorder);
 }
 
 // Render 3 cards: first 2 on top row, 3rd card centered below
+// Supports scaling via CardDrawScaleFactor (1=normal, 2=2x, 3=3x)
 void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2, const Card &card3) {
     clearScreen(p);  // Clear screen before displaying cards
     
@@ -7974,11 +8073,26 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     auto getRank = [&](const Card &c) { return c.isAce ? "A" : ranks[c.value]; };
     auto getSuit = [&](const Card &c) { return suitSymbols[c.suit]; };
     
-    auto getPadding = [](const String &rank) -> String {
+    // Clamp scale factor to 1-3
+    int scale = CardDrawScaleFactor;
+    if (scale < 1) scale = 1;
+    if (scale > 3) scale = 3;
+    
+    int baseCardWidth = 8;
+    int cardWidth = baseCardWidth * scale;
+    int baseSpacing = 6;
+    int totalSpacing = baseSpacing * scale;
+    
+    auto getPadding = [cardWidth](const String &rank) -> String {
+        int interiorWidth = cardWidth - 2;  // Minus borders
         if (rank == "10") {
-            return "      ";  // 6 spaces for "10"
+            int totalSpaces = interiorWidth - 2;
+            int leftSpaces = totalSpaces / 2;
+            return createPadding(leftSpaces);
         } else {
-            return "       ";  // 7 spaces for single char
+            int totalSpaces = interiorWidth - 1;
+            int leftSpaces = totalSpaces / 2;
+            return createPadding(leftSpaces);
         }
     };
     
@@ -7986,20 +8100,60 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
     String r3 = getRank(card3), s3 = getSuit(card3), p3 = getPadding(r3);
     
-    // Top row: 1st and 2nd cards with 6 spaces between
-    p.client.println("┌────────┐      ┌────────┐");
-    p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
-    p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
-    p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
-    p.client.println("└────────┘      └────────┘");
+    String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
+    String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
+    String spacing_str = createPadding(totalSpacing);
     
-    // Bottom row: 3rd card centered with 8 space indent
+    // Calculate indent for centered 3rd card
+    int centerIndent = totalSpacing / 2;
+    String centerPad = createPadding(centerIndent);
+    
+    // Top row: 1st and 2nd cards with spacing between
+    p.client.println(topBorder + spacing_str + topBorder);
+    
+    // Ranks top - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    }
+    
+    // Suits - repeated (scale) times
+    int suitPadLeft = (cardWidth - 2 - 1) / 2;
+    int suitPadRight = (cardWidth - 2 - 1) - suitPadLeft;
+    String suitLine1 = "│" + createPadding(suitPadLeft) + s1 + createPadding(suitPadRight) + "│";
+    String suitLine2 = "│" + createPadding(suitPadLeft) + s2 + createPadding(suitPadRight) + "│";
+    for (int i = 0; i < scale; i++) {
+        p.client.println(suitLine1 + spacing_str + suitLine2);
+    }
+    
+    // Ranks bottom - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
+    }
+    
+    // Bottom borders
+    p.client.println(botBorder + spacing_str + botBorder);
+    
+    // Bottom row: 3rd card centered
     p.client.println("");
-    p.client.println("        ┌────────┐");
-    p.client.println("        │" + r3 + p3 + "│");
-    p.client.println("        │    " + s3 + "   │");
-    p.client.println("        │" + p3 + r3 + "│");
-    p.client.println("        └────────┘");
+    p.client.println(centerPad + topBorder);
+    
+    // Ranks top - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println(centerPad + "│" + r3 + p3 + "│");
+    }
+    
+    // Suit - repeated (scale) times
+    String suitLine3 = "│" + createPadding(suitPadLeft) + s3 + createPadding(suitPadRight) + "│";
+    for (int i = 0; i < scale; i++) {
+        p.client.println(centerPad + suitLine3);
+    }
+    
+    // Ranks bottom - repeated (scale) times
+    for (int i = 0; i < scale; i++) {
+        p.client.println(centerPad + "│" + p3 + r3 + "│");
+    }
+    
+    p.client.println(centerPad + botBorder);
 }
 
 void initializeHighLowSession(int playerIndex) {
