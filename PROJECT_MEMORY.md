@@ -1,12 +1,12 @@
 ````markdown
 # ESP32 MUD - Project Memory
 
-**Last Updated:** January 29, 2026 (Evening - Dialog Wrapping Finalized)  
+**Last Updated:** February 4, 2026 (Evening - Card Scaling & Innkeeper Fixes)  
 **Status:** ✅ ALL SYSTEMS OPERATIONAL  
-**Firmware Version:** v26.01.29  
-**Flash Usage:** 65.8% (1,380,700 bytes / 2,097,152)  
-**RAM Usage:** 18.6% (60,844 bytes / 327,680)  
-**Build Time:** 27.52 seconds  
+**Firmware Version:** v26.02.04  
+**Flash Usage:** 66.6% (1,396,402 bytes / 2,097,152)  
+**RAM Usage:** 18.6% (61,052 bytes / 327,680)  
+**Build Time:** 26.41 seconds  
 **GitHub:** https://github.com/Veramacor/ESP32MUD.git
 
 ---
@@ -48,6 +48,81 @@ Persistent injury tracking affecting gameplay:
 - `lame <player>` - Disable weapon wielding
 - `goto <x,y,z>` - Teleport to coordinates
 - `summon <player>` - Bring player to wizard's location  
+
+---
+
+---
+
+## Recent Session Work (February 4, 2026 - Card Scaling & Innkeeper Fixes)
+
+### ✅ Card Display Scaling Feature - COMPLETE
+**Global Variable:** `CardDrawScaleFactor` (values: 1, 2, 3)  
+**Location:** Line ~88 in ESP32MUD.cpp  
+**Status:** ✅ FULLY OPERATIONAL
+
+**Three Card Functions Updated:**
+
+1. **`printCard()` (Line ~7920)**
+   - 2x/3x scaling support with proper padding
+   - Suit padding: Asymmetric spacing → `leftSuitPad = (interiorWidth - 3) / 2; rightSuitPad = interiorWidth - 3 - leftSuitPad;`
+   - Rank alignment: Top rank left-aligned, bottom rank right-aligned
+   - Scale=1 formatting preserved exactly as before
+
+2. **`printTwoCardsSideBySide()` (Line ~8040)**
+   - Two-card side-by-side display with spacing
+   - Updated suit padding calculations for all scales
+   - Third card centering: `centerIndent = (cardWidth + totalSpacing) / 2;`
+
+3. **`renderThreeCardsSideBySide()` (Line ~8150)**
+   - Three-card display (2 top, 1 centered below)
+   - All suit lines use asymmetric padding for visual balance
+   - Centers third card under full two-card width
+
+**Key Fixes Applied:**
+- ✅ Asymmetric suit line padding (left & right calculated separately)
+- ✅ Removed extra blank lines before bottom rank in 2x/3x displays
+- ✅ Proper centering calculation for third card in three-card layout
+
+**Build v26.02.04:**
+- **Compilation Time:** 26.41 seconds
+- **Binary Size:** 1,458,480 bytes → 857,107 compressed
+- **Flash Usage:** 1,396,402 bytes (66.6%)
+- **RAM Usage:** 61,052 bytes (18.6%)
+- **Upload Status:** ✅ Successful to COM5
+- **Hash Verification:** ✅ Passed
+
+---
+
+### ✅ Innkeeper Joke Prompt Duplication Fix - COMPLETE
+**Issue:** Innkeeper printing two `>` prompts on separate lines after jokes  
+**Root Cause:** Duplicate prompt sending - joke system (lines 19395-19400) AND main game loop (line 19158)  
+**Location:** [Lines 19393-19401](src/ESP32MUD.cpp#L19393) - Joke announcement section  
+**Status:** ✅ FIXED
+
+**Solution Applied:**
+- Removed entire prompt-sending loop from joke system (lines 19395-19400 deleted)
+- Main game loop at line 19158 now handles single prompt: `p.client.print("> ");`
+- Jokes announce via `announceToRoom()`, no redundant prompt sent
+
+**Code Change:**
+```cpp
+// Line 19393: Send wrapped joke to all players in room
+announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
+
+// Lines 19395-19400: DELETED (redundant prompt code)
+// for (int i = 0; i < MAX_PLAYERS; i++) {
+//     if (players[i].active && players[i].loggedIn &&
+//         players[i].roomX == JOKE_ROOM_X && players[i].roomY == JOKE_ROOM_Y && players[i].roomZ == JOKE_ROOM_Z) {
+//         players[i].client.println("");
+//         players[i].client.print("> ");
+//     }
+// }
+
+// Line 19401: Schedule next joke (15-20 seconds from now)
+innKeeperJokes.nextJokeTime = now + random(15000, 20001);
+```
+
+**Verification:** Build successful, upload successful, system ready for player testing
 
 ---
 

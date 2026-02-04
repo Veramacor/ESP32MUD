@@ -5343,6 +5343,12 @@ void cmdLook(Player &p) {
         p.client.println("A sign is here.");
     }
     
+    // Check if this is the Police Station
+    if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
+        p.client.println("A Criminal Register sits on the counter of the Police Station. It lists");
+        p.client.println("the town's most heinous crimes commited. maybe you could read it.");
+    }
+    
     p.client.println("");  // blank line
 
     // Other players in the room
@@ -6243,6 +6249,22 @@ void cmdReadSign(Player &p, const String &input) {
             p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
         }
         showBankSign(p);
+        return;
+    }
+    
+    // Check if this is the Police Station
+    if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        p.client.println("");
+        p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
+        p.client.println("");
+        p.client.println("Date     Offender       Offense               Conviction");
+        p.client.println("1990     Veramacor      Player Killing        banned for eternity");
+        p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
+        p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
+        p.client.println("");
         return;
     }
     
