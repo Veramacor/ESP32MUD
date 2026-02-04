@@ -7986,8 +7986,9 @@ void printCard(Player &p, const Card &card) {
     
     if (scale == 2) {
         // Two suits spaced out
-        int suitSpacing = (interiorWidth - 2) / 2;  // Space for "♣ ♣"
-        String doubleSuitLine = "│" + createPadding(suitSpacing - 1) + suit + " " + suit + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine = "│" + createPadding(leftSuitPad) + suit + " " + suit + createPadding(rightSuitPad) + "│";
         p.client.println(doubleSuitLine);
         
         // Single suit centered
@@ -8001,8 +8002,9 @@ void printCard(Player &p, const Card &card) {
     } else if (scale == 3) {
         // For 3x: more elaborate pattern
         // Two suits at top
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine = "│" + createPadding(suitSpacing - 1) + suit + " " + suit + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine = "│" + createPadding(leftSuitPad) + suit + " " + suit + createPadding(rightSuitPad) + "│";
         p.client.println(doubleSuitLine);
         
         // Blank line
@@ -8101,9 +8103,10 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     
     if (CardDrawScaleFactor == 2) {
         // Two suits spaced out
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
-        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine1 = "│" + createPadding(leftSuitPad) + s1 + " " + s1 + createPadding(rightSuitPad) + "│";
+        String doubleSuitLine2 = "│" + createPadding(leftSuitPad) + s2 + " " + s2 + createPadding(rightSuitPad) + "│";
         p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
         
         // Single suit centered
@@ -8117,9 +8120,10 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
         p.client.println(blankLine1 + spacing_str + blankLine2);
     } else if (CardDrawScaleFactor == 3) {
         // For 3x: more elaborate pattern
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
-        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine1 = "│" + createPadding(leftSuitPad) + s1 + " " + s1 + createPadding(rightSuitPad) + "│";
+        String doubleSuitLine2 = "│" + createPadding(leftSuitPad) + s2 + " " + s2 + createPadding(rightSuitPad) + "│";
         p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
         
         // Blank line
@@ -8219,7 +8223,10 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     String blankLine2 = blankLine1;
     
     // Calculate indent for centered 3rd card
-    int centerIndent = totalSpacing / 2;
+    // Center card under the full width of two cards + spacing
+    // Total width = cardWidth + totalSpacing + cardWidth
+    // Indent to center = (totalWidth - cardWidth) / 2 = (cardWidth + totalSpacing) / 2
+    int centerIndent = (cardWidth + totalSpacing) / 2;
     String centerPad = createPadding(centerIndent);
     String centerBlankLine = centerPad + "│" + createPadding(interiorWidth) + "│";
     
@@ -8234,9 +8241,10 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     
     if (CardDrawScaleFactor == 2) {
         // Two suits spaced out
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
-        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine1 = "│" + createPadding(leftSuitPad) + s1 + " " + s1 + createPadding(rightSuitPad) + "│";
+        String doubleSuitLine2 = "│" + createPadding(leftSuitPad) + s2 + " " + s2 + createPadding(rightSuitPad) + "│";
         p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
         
         // Single suit centered
@@ -8290,8 +8298,9 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     
     if (CardDrawScaleFactor == 2) {
         // Two suits spaced out
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine3 = "│" + createPadding(suitSpacing - 1) + s3 + " " + s3 + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine3 = "│" + createPadding(leftSuitPad) + s3 + " " + s3 + createPadding(rightSuitPad) + "│";
         p.client.println(centerPad + doubleSuitLine3);
         
         // Single suit centered
@@ -8304,8 +8313,9 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
         p.client.println(centerBlankLine);
     } else if (CardDrawScaleFactor == 3) {
         // For 3x
-        int suitSpacing = (interiorWidth - 2) / 2;
-        String doubleSuitLine3 = "│" + createPadding(suitSpacing - 1) + s3 + " " + s3 + createPadding(suitSpacing - 1) + "│";
+        int leftSuitPad = (interiorWidth - 3) / 2;  // Left padding before first suit
+        int rightSuitPad = interiorWidth - 3 - leftSuitPad;  // Right padding after second suit
+        String doubleSuitLine3 = "│" + createPadding(leftSuitPad) + s3 + " " + s3 + createPadding(rightSuitPad) + "│";
         p.client.println(centerPad + doubleSuitLine3);
         
         // Blank line
@@ -19381,15 +19391,6 @@ for (auto &npc : npcInstances) {
                     
                     // Send wrapped joke to all players in room
                     announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
-                    
-                    // Send prompt to all players in room on new line
-                    for (int i = 0; i < MAX_PLAYERS; i++) {
-                        if (players[i].active && players[i].loggedIn &&
-                            players[i].roomX == JOKE_ROOM_X && players[i].roomY == JOKE_ROOM_Y && players[i].roomZ == JOKE_ROOM_Z) {
-                            players[i].client.println("");  // Blank line
-                            players[i].client.print("> ");
-                        }
-                    }
                     
                     // Schedule next joke (15-20 seconds from now)
                     innKeeperJokes.nextJokeTime = now + random(15000, 20001);
