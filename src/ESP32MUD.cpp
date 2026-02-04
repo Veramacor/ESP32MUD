@@ -5345,8 +5345,7 @@ void cmdLook(Player &p) {
     
     // Check if this is the Police Station
     if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
-        p.client.println("A Criminal Register sits on the counter of the Police Station. It lists");
-        p.client.println("the town's most heinous crimes commited. maybe you could read it.");
+        p.client.println("Criminal Register.");
     }
     
     p.client.println("");  // blank line
