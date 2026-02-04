@@ -7937,24 +7937,40 @@ void printCard(Player &p, const Card &card) {
     if (scale < 1) scale = 1;
     if (scale > 3) scale = 3;
     
-    // Base card dimensions
-    int baseWidth = 8;
-    int baseHeight = 5;  // top border, rank, suit, rank, bottom border
-    int cardWidth = baseWidth * scale;
-    int cardHeight = baseHeight + (baseHeight - 1) * (scale - 1);  // Add extra lines for scaling
+    // For scale = 1, use original formatting exactly
+    if (scale == 1) {
+        String topPad, bottomPad;
+        if (rank == "10") {
+            topPad = "      ";      // 10 = 2 chars, needs 6 spaces
+            bottomPad = "      ";   // 6 spaces before rank
+        } else {
+            topPad = "       ";     // Single char, needs 7 spaces
+            bottomPad = "       ";  // 7 spaces before rank
+        }
+        
+        p.client.println("┌────────┐");
+        p.client.println("│" + rank + topPad + "│");
+        p.client.println("│    " + suit + "   │");
+        p.client.println("│" + bottomPad + rank + "│");
+        p.client.println("└────────┘");
+        return;
+    }
     
-    // For scaled cards, we need to recalculate padding
+    // For scale > 1, use new scaling logic
+    int baseWidth = 8;
+    int cardWidth = baseWidth * scale;
+    
     String topPad, bottomPad;
-    int interiorWidth = cardWidth - 2;  // Minus the border chars
+    int interiorWidth = cardWidth - 2;
     
     if (rank == "10") {
-        int totalSpaces = interiorWidth - 2;  // "10" takes 2 chars
+        int totalSpaces = interiorWidth - 2;
         int leftSpaces = totalSpaces / 2;
         int rightSpaces = totalSpaces - leftSpaces;
         topPad = createPadding(rightSpaces);
         bottomPad = createPadding(leftSpaces);
     } else {
-        int totalSpaces = interiorWidth - 1;  // Single char
+        int totalSpaces = interiorWidth - 1;
         int leftSpaces = totalSpaces / 2;
         int rightSpaces = totalSpaces - leftSpaces;
         topPad = createPadding(rightSpaces);
@@ -7968,7 +7984,7 @@ void printCard(Player &p, const Card &card) {
     // Print scaled card
     p.client.println(topBorder);
     
-    // Repeat rank line (scale - 1) times for vertical scaling
+    // Repeat rank line (scale) times for vertical scaling
     for (int i = 0; i < scale; i++) {
         p.client.println("│" + rank + topPad + "│");
     }
@@ -8008,6 +8024,28 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     if (scale < 1) scale = 1;
     if (scale > 3) scale = 3;
     
+    // For scale = 1, use original formatting exactly
+    if (scale == 1) {
+        auto getPadding = [](const String &rank) -> String {
+            if (rank == "10") {
+                return "      ";  // 6 spaces for "10"
+            } else {
+                return "       ";  // 7 spaces for single char
+            }
+        };
+        
+        String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
+        String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
+        
+        p.client.println("┌────────┐      ┌────────┐");
+        p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
+        p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
+        p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
+        p.client.println("└────────┘      └────────┘");
+        return;
+    }
+    
+    // For scale > 1, use new scaling logic
     int baseCardWidth = 8;
     int cardWidth = baseCardWidth * scale;
     int spacing = 6;  // Space between cards (scales with factor)
@@ -8078,6 +8116,36 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     if (scale < 1) scale = 1;
     if (scale > 3) scale = 3;
     
+    // For scale = 1, use original formatting exactly
+    if (scale == 1) {
+        auto getPadding = [](const String &rank) -> String {
+            if (rank == "10") {
+                return "      ";  // 6 spaces for "10"
+            } else {
+                return "       ";  // 7 spaces for single char
+            }
+        };
+        
+        String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
+        String r2 = getRank(card2), s2 = getSuit(card2), p2 = getPadding(r2);
+        String r3 = getRank(card3), s3 = getSuit(card3), p3 = getPadding(r3);
+        
+        p.client.println("┌────────┐      ┌────────┐");
+        p.client.println("│" + r1 + p1 + "│      │" + r2 + p2 + "│");
+        p.client.println("│    " + s1 + "   │      │    " + s2 + "   │");
+        p.client.println("│" + p1 + r1 + "│      │" + p2 + r2 + "│");
+        p.client.println("└────────┘      └────────┘");
+        
+        p.client.println("");
+        p.client.println("        ┌────────┐");
+        p.client.println("        │" + r3 + p3 + "│");
+        p.client.println("        │    " + s3 + "   │");
+        p.client.println("        │" + p3 + r3 + "│");
+        p.client.println("        └────────┘");
+        return;
+    }
+    
+    // For scale > 1, use new scaling logic
     int baseCardWidth = 8;
     int cardWidth = baseCardWidth * scale;
     int baseSpacing = 6;
