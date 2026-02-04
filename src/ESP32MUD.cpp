@@ -77,6 +77,13 @@ unsigned long nextGlobalRespawn = 0;
 // ⭐ PRODUCTION MODE — 6‑hour reboot cycle
 const unsigned long GLOBAL_RESPAWN_INTERVAL = 6UL * 60UL * 60UL * 1000UL; // 6 hours
 
+// =====================================================
+// CARD CODE VOXEL TRANSMISSION FLAG
+// =====================================================
+// Set to true to send card codes (c1:, c2:, c3:) to clients for voxel/mapper integration
+// Set to false to disable card code transmission (visual-only mode)
+bool sendCardCodes = false;  // Default: disabled
+
 // Forward declarations
 struct ShopInventoryItem;
 struct Shop;
@@ -8082,7 +8089,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     if (session.card1.isAce) {
         // Send coded card string before printing
         session.cardCodeString = "c1:" + getCardCodeString(session.card1);
-        if (p.sendVoxel) {
+        if (sendCardCodes) {
             p.client.println(session.cardCodeString);
         }
         
@@ -8097,7 +8104,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     if (session.card2.isAce) {
         // Send coded card string: both cards on same code line with c2: prefix
         session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
-        if (p.sendVoxel) {
+        if (sendCardCodes) {
             p.client.println(session.cardCodeString);
         }
         
@@ -8112,7 +8119,7 @@ void dealHighLowHand(Player &p, int playerIndex) {
     // Neither card is an Ace - show both cards side-by-side and prompt for bet
     // Send coded card string: both cards on same code line with c2: prefix
     session.cardCodeString = "c1:" + getCardCodeString(session.card1) + "|c2:" + getCardCodeString(session.card2);
-    if (p.sendVoxel) {
+    if (sendCardCodes) {
         p.client.println(session.cardCodeString);
     }
     
@@ -8162,7 +8169,7 @@ void processHighLowBet(Player &p, int playerIndex, int betAmount, bool potBet) {
     
     // Send coded card string for third card
     session.cardCodeString = "c3:" + getCardCodeString(session.card3);
-    if (p.sendVoxel) {
+    if (sendCardCodes) {
         p.client.println(session.cardCodeString);
     }
     
@@ -8361,7 +8368,7 @@ void declareAceValue(Player &p, int playerIndex, int aceValue) {
     // Ready for betting - show both cards side-by-side
     // Send coded card string for second card before printing
     session.cardCodeString = "c2:" + getCardCodeString(session.card2);
-    if (p.sendVoxel) {
+    if (sendCardCodes) {
         p.client.println(session.cardCodeString);
     }
     
