@@ -7963,19 +7963,11 @@ void printCard(Player &p, const Card &card) {
     String topPad, bottomPad;
     int interiorWidth = cardWidth - 2;
     
-    if (rank == "10") {
-        int totalSpaces = interiorWidth - 2;
-        int leftSpaces = totalSpaces / 2;
-        int rightSpaces = totalSpaces - leftSpaces;
-        topPad = createPadding(rightSpaces);
-        bottomPad = createPadding(leftSpaces);
-    } else {
-        int totalSpaces = interiorWidth - 1;
-        int leftSpaces = totalSpaces / 2;
-        int rightSpaces = totalSpaces - leftSpaces;
-        topPad = createPadding(rightSpaces);
-        bottomPad = createPadding(leftSpaces);
-    }
+    // Calculate padding - for scale>1, use full padding without centering
+    int rankLen = (rank == "10") ? 2 : 1;
+    int spaceCount = interiorWidth - rankLen;
+    topPad = createPadding(spaceCount);
+    bottomPad = createPadding(spaceCount);
     
     // Top border
     String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
@@ -8028,9 +8020,6 @@ void printCard(Player &p, const Card &card) {
         // Two suits at bottom
         p.client.println(doubleSuitLine);
     }
-    
-    // Blank line before bottom rank
-    p.client.println(blankLine);
     
     // Rank line at bottom
     p.client.println("│" + bottomPad + rank + "│");
@@ -8086,15 +8075,9 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     
     auto getPadding = [cardWidth](const String &rank) -> String {
         int interiorWidth = cardWidth - 2;  // Minus borders
-        if (rank == "10") {
-            int totalSpaces = interiorWidth - 2;
-            int leftSpaces = totalSpaces / 2;
-            return createPadding(leftSpaces);
-        } else {
-            int totalSpaces = interiorWidth - 1;
-            int leftSpaces = totalSpaces / 2;
-            return createPadding(leftSpaces);
-        }
+        int rankLen = (rank == "10") ? 2 : 1;
+        int spaceCount = interiorWidth - rankLen;
+        return createPadding(spaceCount);
     };
     
     String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
@@ -8155,9 +8138,6 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
         // Two suits at bottom
         p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
     }
-    
-    // Blank line before bottom rank
-    p.client.println(blankLine1 + spacing_str + blankLine2);
     
     // Rank line at bottom
     p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
@@ -8222,15 +8202,9 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     
     auto getPadding = [cardWidth](const String &rank) -> String {
         int interiorWidth = cardWidth - 2;  // Minus borders
-        if (rank == "10") {
-            int totalSpaces = interiorWidth - 2;
-            int leftSpaces = totalSpaces / 2;
-            return createPadding(leftSpaces);
-        } else {
-            int totalSpaces = interiorWidth - 1;
-            int leftSpaces = totalSpaces / 2;
-            return createPadding(leftSpaces);
-        }
+        int rankLen = (rank == "10") ? 2 : 1;
+        int spaceCount = interiorWidth - rankLen;
+        return createPadding(spaceCount);
     };
     
     String r1 = getRank(card1), s1 = getSuit(card1), p1 = getPadding(r1);
@@ -8298,9 +8272,6 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
         p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
     }
     
-    // Blank line before bottom rank
-    p.client.println(blankLine1 + spacing_str + blankLine2);
-    
     // Rank line at bottom
     p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
     
@@ -8352,9 +8323,6 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
         // Two suits at bottom
         p.client.println(centerPad + doubleSuitLine3);
     }
-    
-    // Blank line before bottom rank
-    p.client.println(centerBlankLine);
     
     // Rank line at bottom
     p.client.println(centerPad + "│" + p3 + r3 + "│");
