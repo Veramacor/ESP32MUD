@@ -89,7 +89,7 @@ bool sendCardCodes = false;  // Default: disabled
 // =====================================================
 // Controls the size of cards drawn in the game parlor
 // 1 = normal size (default), 2 = 2x bigger, 3 = 3x bigger
-int CardDrawScaleFactor = 1;  // Default: 1 (normal size)
+int CardDrawScaleFactor = 2;  // Default: 1 (normal size)
 
 // Forward declarations
 struct ShopInventoryItem;
@@ -7980,27 +7980,60 @@ void printCard(Player &p, const Card &card) {
     // Top border
     String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
     String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
+    String blankLine = "│" + createPadding(interiorWidth) + "│";
     
     // Print scaled card
     p.client.println(topBorder);
     
-    // Repeat rank line (scale) times for vertical scaling
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + rank + topPad + "│");
+    // For 2x and 3x scaling, use a specific pattern with blank lines and multiple suits
+    // Rank line at top
+    p.client.println("│" + rank + topPad + "│");
+    
+    // Blank line
+    p.client.println(blankLine);
+    
+    if (scale == 2) {
+        // Two suits spaced out
+        int suitSpacing = (interiorWidth - 2) / 2;  // Space for "♣ ♣"
+        String doubleSuitLine = "│" + createPadding(suitSpacing - 1) + suit + " " + suit + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine = "│" + createPadding(suitCenterLeft) + suit + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine);
+        
+        // Blank line
+        p.client.println(blankLine);
+    } else if (scale == 3) {
+        // For 3x: more elaborate pattern
+        // Two suits at top
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine = "│" + createPadding(suitSpacing - 1) + suit + " " + suit + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine);
+        
+        // Blank line
+        p.client.println(blankLine);
+        
+        // Single suit centered (middle)
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine = "│" + createPadding(suitCenterLeft) + suit + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine);
+        
+        // Blank line
+        p.client.println(blankLine);
+        
+        // Two suits at bottom
+        p.client.println(doubleSuitLine);
     }
     
-    // Suit line - repeat (scale) times
-    int suitPaddingLeft = (cardWidth - 2 - 1) / 2;
-    int suitPaddingRight = (cardWidth - 2 - 1) - suitPaddingLeft;
-    String suitLine = "│" + createPadding(suitPaddingLeft) + suit + createPadding(suitPaddingRight) + "│";
-    for (int i = 0; i < scale; i++) {
-        p.client.println(suitLine);
-    }
+    // Blank line before bottom rank
+    p.client.println(blankLine);
     
-    // Repeat bottom rank line (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + bottomPad + rank + "│");
-    }
+    // Rank line at bottom
+    p.client.println("│" + bottomPad + rank + "│");
     
     p.client.println(botBorder);
 }
@@ -8070,28 +8103,64 @@ void printTwoCardsSideBySide(Player &p, const Card &card1, const Card &card2) {
     String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
     String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
     String spacing_str = createPadding(totalSpacing);
+    int interiorWidth = cardWidth - 2;
+    String blankLine1 = "│" + createPadding(interiorWidth) + "│";
+    String blankLine2 = blankLine1;
     
     // Top borders
     p.client.println(topBorder + spacing_str + topBorder);
     
-    // Ranks top - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    // Rank line at top
+    p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    
+    // Blank line
+    p.client.println(blankLine1 + spacing_str + blankLine2);
+    
+    if (CardDrawScaleFactor == 2) {
+        // Two suits spaced out
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
+        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine1 = "│" + createPadding(suitCenterLeft) + s1 + createPadding(suitCenterRight) + "│";
+        String singleSuitLine2 = "│" + createPadding(suitCenterLeft) + s2 + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine1 + spacing_str + singleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+    } else if (CardDrawScaleFactor == 3) {
+        // For 3x: more elaborate pattern
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
+        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine1 = "│" + createPadding(suitCenterLeft) + s1 + createPadding(suitCenterRight) + "│";
+        String singleSuitLine2 = "│" + createPadding(suitCenterLeft) + s2 + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine1 + spacing_str + singleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+        
+        // Two suits at bottom
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
     }
     
-    // Suits - repeated (scale) times
-    int suitPadLeft = (cardWidth - 2 - 1) / 2;
-    int suitPadRight = (cardWidth - 2 - 1) - suitPadLeft;
-    String suitLine1 = "│" + createPadding(suitPadLeft) + s1 + createPadding(suitPadRight) + "│";
-    String suitLine2 = "│" + createPadding(suitPadLeft) + s2 + createPadding(suitPadRight) + "│";
-    for (int i = 0; i < scale; i++) {
-        p.client.println(suitLine1 + spacing_str + suitLine2);
-    }
+    // Blank line before bottom rank
+    p.client.println(blankLine1 + spacing_str + blankLine2);
     
-    // Ranks bottom - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
-    }
+    // Rank line at bottom
+    p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
     
     // Bottom borders
     p.client.println(botBorder + spacing_str + botBorder);
@@ -8171,32 +8240,69 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     String topBorder = "┌" + createHorizontalLine(cardWidth - 2, "─") + "┐";
     String botBorder = "└" + createHorizontalLine(cardWidth - 2, "─") + "┘";
     String spacing_str = createPadding(totalSpacing);
+    int interiorWidth = cardWidth - 2;
+    String blankLine1 = "│" + createPadding(interiorWidth) + "│";
+    String blankLine2 = blankLine1;
     
     // Calculate indent for centered 3rd card
     int centerIndent = totalSpacing / 2;
     String centerPad = createPadding(centerIndent);
+    String centerBlankLine = centerPad + "│" + createPadding(interiorWidth) + "│";
     
     // Top row: 1st and 2nd cards with spacing between
     p.client.println(topBorder + spacing_str + topBorder);
     
-    // Ranks top - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    // Rank line at top
+    p.client.println("│" + r1 + p1 + "│" + spacing_str + "│" + r2 + p2 + "│");
+    
+    // Blank line
+    p.client.println(blankLine1 + spacing_str + blankLine2);
+    
+    if (CardDrawScaleFactor == 2) {
+        // Two suits spaced out
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
+        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine1 = "│" + createPadding(suitCenterLeft) + s1 + createPadding(suitCenterRight) + "│";
+        String singleSuitLine2 = "│" + createPadding(suitCenterLeft) + s2 + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine1 + spacing_str + singleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+    } else if (CardDrawScaleFactor == 3) {
+        // For 3x: more elaborate pattern
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine1 = "│" + createPadding(suitSpacing - 1) + s1 + " " + s1 + createPadding(suitSpacing - 1) + "│";
+        String doubleSuitLine2 = "│" + createPadding(suitSpacing - 1) + s2 + " " + s2 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine1 = "│" + createPadding(suitCenterLeft) + s1 + createPadding(suitCenterRight) + "│";
+        String singleSuitLine2 = "│" + createPadding(suitCenterLeft) + s2 + createPadding(suitCenterRight) + "│";
+        p.client.println(singleSuitLine1 + spacing_str + singleSuitLine2);
+        
+        // Blank line
+        p.client.println(blankLine1 + spacing_str + blankLine2);
+        
+        // Two suits at bottom
+        p.client.println(doubleSuitLine1 + spacing_str + doubleSuitLine2);
     }
     
-    // Suits - repeated (scale) times
-    int suitPadLeft = (cardWidth - 2 - 1) / 2;
-    int suitPadRight = (cardWidth - 2 - 1) - suitPadLeft;
-    String suitLine1 = "│" + createPadding(suitPadLeft) + s1 + createPadding(suitPadRight) + "│";
-    String suitLine2 = "│" + createPadding(suitPadLeft) + s2 + createPadding(suitPadRight) + "│";
-    for (int i = 0; i < scale; i++) {
-        p.client.println(suitLine1 + spacing_str + suitLine2);
-    }
+    // Blank line before bottom rank
+    p.client.println(blankLine1 + spacing_str + blankLine2);
     
-    // Ranks bottom - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
-    }
+    // Rank line at bottom
+    p.client.println("│" + p1 + r1 + "│" + spacing_str + "│" + p2 + r2 + "│");
     
     // Bottom borders
     p.client.println(botBorder + spacing_str + botBorder);
@@ -8205,21 +8311,53 @@ void renderThreeCardsSideBySide(Player &p, const Card &card1, const Card &card2,
     p.client.println("");
     p.client.println(centerPad + topBorder);
     
-    // Ranks top - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println(centerPad + "│" + r3 + p3 + "│");
+    // Rank line at top of 3rd card
+    p.client.println(centerPad + "│" + r3 + p3 + "│");
+    
+    // Blank line
+    p.client.println(centerBlankLine);
+    
+    if (CardDrawScaleFactor == 2) {
+        // Two suits spaced out
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine3 = "│" + createPadding(suitSpacing - 1) + s3 + " " + s3 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(centerPad + doubleSuitLine3);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine3 = "│" + createPadding(suitCenterLeft) + s3 + createPadding(suitCenterRight) + "│";
+        p.client.println(centerPad + singleSuitLine3);
+        
+        // Blank line
+        p.client.println(centerBlankLine);
+    } else if (CardDrawScaleFactor == 3) {
+        // For 3x
+        int suitSpacing = (interiorWidth - 2) / 2;
+        String doubleSuitLine3 = "│" + createPadding(suitSpacing - 1) + s3 + " " + s3 + createPadding(suitSpacing - 1) + "│";
+        p.client.println(centerPad + doubleSuitLine3);
+        
+        // Blank line
+        p.client.println(centerBlankLine);
+        
+        // Single suit centered
+        int suitCenterLeft = (interiorWidth - 1) / 2;
+        int suitCenterRight = interiorWidth - 1 - suitCenterLeft;
+        String singleSuitLine3 = "│" + createPadding(suitCenterLeft) + s3 + createPadding(suitCenterRight) + "│";
+        p.client.println(centerPad + singleSuitLine3);
+        
+        // Blank line
+        p.client.println(centerBlankLine);
+        
+        // Two suits at bottom
+        p.client.println(centerPad + doubleSuitLine3);
     }
     
-    // Suit - repeated (scale) times
-    String suitLine3 = "│" + createPadding(suitPadLeft) + s3 + createPadding(suitPadRight) + "│";
-    for (int i = 0; i < scale; i++) {
-        p.client.println(centerPad + suitLine3);
-    }
+    // Blank line before bottom rank
+    p.client.println(centerBlankLine);
     
-    // Ranks bottom - repeated (scale) times
-    for (int i = 0; i < scale; i++) {
-        p.client.println(centerPad + "│" + p3 + r3 + "│");
-    }
+    // Rank line at bottom
+    p.client.println(centerPad + "│" + p3 + r3 + "│");
     
     p.client.println(centerPad + botBorder);
 }
