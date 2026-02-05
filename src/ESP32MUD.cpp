@@ -11045,7 +11045,9 @@ void cmdWizHelp(Player &p) {
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("download [filename]     - Download files from server");
-    p.client.println("                          Usage: download (list all) or download filename");
+    p.client.println("                          Usage: download (list files)");
+    p.client.println("                                 download all (downloads all files)");
+    p.client.println("                                 download filename (downloads single file)");
     p.client.println("                          Files are written to LittleFS in /");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
     p.client.println("heal <player>           - Fully heal a player");
