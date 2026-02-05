@@ -15723,13 +15723,17 @@ void cmdWield(Player &p, const String &input) {
     }
 
     if (p.wieldedItemIndex != -1) {
-        // SAFETY CHECK: validate index before access
+        // SAFETY CHECK: validate index before access and verify it's a weapon
         if (p.wieldedItemIndex >= 0 && p.wieldedItemIndex < (int)worldItems.size()) {
-            p.client.println(
-                "You stop wielding " +
-                getItemDisplayName(worldItems[p.wieldedItemIndex]) +
-                "."
-            );
+            WorldItem &oldWi = worldItems[p.wieldedItemIndex];
+            auto oldTypeIt = oldWi.attributes.find("type");
+            if (oldTypeIt != oldWi.attributes.end() && String(oldTypeIt->second.c_str()) == "weapon") {
+                p.client.println(
+                    "You stop wielding " +
+                    getItemDisplayName(oldWi) +
+                    "."
+                );
+            }
         }
     }
 
