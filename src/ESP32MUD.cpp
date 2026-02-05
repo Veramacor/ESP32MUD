@@ -17680,17 +17680,35 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                                     }
                                 }
                                 
-                                // Reconstruct line with CapFirst applied to name
+                                // Reconstruct line with CapFirst applied to name and proper column alignment
                                 if (offenderName.length() > 0) {
                                     String capitalizedName = capFirst(offenderName.c_str());
                                     String revisedLine = line.substring(0, 9);  // Year and initial spaces
                                     revisedLine += capitalizedName;
                                     // Pad to position 24
                                     while (revisedLine.length() < 24) revisedLine += " ";
-                                    // Add rest of line (offense and conviction)
+                                    
+                                    // Extract offense (positions 24-42)
+                                    String offense = "";
                                     if (line.length() > 24) {
-                                        revisedLine += line.substring(24);
+                                        for (int i = 24; i < (int)line.length() && i < 42; i++) {
+                                            if (line[i] != ' ') {
+                                                offense += line[i];
+                                            } else if (offense.length() > 0) {
+                                                break;  // Stop at first space after offense
+                                            }
+                                        }
                                     }
+                                    
+                                    // Add offense and pad to position 42
+                                    revisedLine += offense;
+                                    while (revisedLine.length() < 42) revisedLine += " ";
+                                    
+                                    // Add conviction (positions 42+)
+                                    if (line.length() > 42) {
+                                        revisedLine += line.substring(42);
+                                    }
+                                    
                                     p.client.println(revisedLine);
                                 } else {
                                     // Line doesn't have expected format, print as-is
