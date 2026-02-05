@@ -4839,18 +4839,6 @@ void cmdInventory(Player &p, const String &input) {
 
         WorldItem &wi = worldItems[idx];
         
-        // Check if item is marked as confiscated
-        if (wi.ownerName == "CONFISCATED") {
-            debugPrint(p, "WARNING: Inventory contains confiscated item at index " + String(idx) + ", removing from inventory");
-            // Shift remaining items down
-            for (int j = i; j < p.invCount - 1; j++) {
-                p.invIndices[j] = p.invIndices[j + 1];
-            }
-            p.invCount--;
-            i--; // Recheck this position
-            continue;
-        }
-        
         // NEVER show gold coins in inventory display - they should only be in p.coins
         if (wi.name == "gold_coin") continue;
         
