@@ -3380,12 +3380,13 @@ void loadWorldItemsFromSave() {
             if (inItem) {
                 bool found = false;
                 for (auto &wi : worldItems) {
-                    if (wi.name.equalsIgnoreCase(temp.name)) {
+                    // Match by name AND ownerName AND parentName to distinguish duplicates
+                    if (wi.name.equalsIgnoreCase(temp.name) &&
+                        wi.ownerName == temp.ownerName &&
+                        wi.parentName == temp.parentName) {
                         wi.x = temp.x;
                         wi.y = temp.y;
                         wi.z = temp.z;
-                        wi.ownerName = temp.ownerName;
-                        wi.parentName = temp.parentName;
                         wi.value = temp.value;
                         found = true;
                         break;
@@ -3418,12 +3419,13 @@ void loadWorldItemsFromSave() {
     if (inItem) {
         bool found = false;
         for (auto &wi : worldItems) {
-            if (wi.name.equalsIgnoreCase(temp.name)) {
+            // Match by name AND ownerName AND parentName to distinguish duplicates
+            if (wi.name.equalsIgnoreCase(temp.name) &&
+                wi.ownerName == temp.ownerName &&
+                wi.parentName == temp.parentName) {
                 wi.x = temp.x;
                 wi.y = temp.y;
                 wi.z = temp.z;
-                wi.ownerName = temp.ownerName;
-                wi.parentName = temp.parentName;
                 wi.value = temp.value;
                 found = true;
                 break;
