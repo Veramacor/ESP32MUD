@@ -11042,21 +11042,24 @@ void cmdWizHelp(Player &p) {
     p.client.println("blind <player>          - Toggle blindness on a player");
     p.client.println("                          Usage: blind playerName (toggles on/off)");
     p.client.println("                          Blinded players cannot use look, map, or townmap");
+    p.client.println("clone                   - Clone an item or NPC to your room");
+    p.client.println("clonegold <amount>      - Spawn gold coins to your room");
+    p.client.println("download [filename]     - Download files from server");
+    p.client.println("                          Usage: download (list all) or download filename");
+    p.client.println("                          Files are written to LittleFS in /");
+    p.client.println("goto <x,y,z|player>     - Teleport instantly");
+    p.client.println("heal <player>           - Fully heal a player");
     p.client.println("hobble <player>         - Toggle hobbling on a player");
     p.client.println("                          Usage: hobble playerName (toggles on/off)");
     p.client.println("                          Hobbled players move every other step");
+    p.client.println("invis                   - Toggle invisibility");
     p.client.println("lame <player>           - Toggle lameness on a player");
     p.client.println("                          Usage: lame playerName (toggles on/off)");
     p.client.println("                          Lamed players cannot wield weapons (bare fists work)");
-    p.client.println("clone                   - Clone an item or NPC to your room");
-    p.client.println("clonegold <amount>      - Spawn gold coins to your room");
-    p.client.println("goto <x,y,z|player>     - Teleport instantly");
-    p.client.println("summon <player>         - Bring a player to your location");
-    p.client.println("heal <player>           - Fully heal a player");
-    p.client.println("invis                   - Toggle invisibility");
     p.client.println("reboot                  - Restart the world");
     p.client.println("resetworlditems         - Reset all world item spawns");
     p.client.println("stats                   - Toggle wizard stats");
+    p.client.println("summon <player>         - Bring a player to your location");
 
     // ---------------------------------------------------------
     // WIZARD FLAVOR (alphabetical)
