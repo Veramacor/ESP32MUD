@@ -15612,13 +15612,17 @@ void cmdWear(Player &p, const String &input) {
 
     // Remove existing item in slot
     if (p.wornItemIndices[slotIndex] != -1) {
-        // SAFETY CHECK: validate index before access
+        // SAFETY CHECK: validate index before access and verify it's armor
         if (p.wornItemIndices[slotIndex] >= 0 && p.wornItemIndices[slotIndex] < (int)worldItems.size()) {
-            p.client.println(
-                "You remove " +
-                getItemDisplayName(worldItems[p.wornItemIndices[slotIndex]]) +
-                "."
-            );
+            WorldItem &oldWi = worldItems[p.wornItemIndices[slotIndex]];
+            auto oldTypeIt = oldWi.attributes.find("type");
+            if (oldTypeIt != oldWi.attributes.end() && String(oldTypeIt->second.c_str()) == "armor") {
+                p.client.println(
+                    "You remove " +
+                    getItemDisplayName(oldWi) +
+                    "."
+                );
+            }
         }
     }
 
