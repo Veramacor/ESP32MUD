@@ -15481,6 +15481,8 @@ void cmdWear(Player &p, const String &input) {
     int idx = -1;
     for (int i = 0; i < p.invCount; i++) {
         int wi = p.invIndices[i];
+        // SAFETY CHECK: validate index before access
+        if (wi < 0 || wi >= (int)worldItems.size()) continue;
         if (isMatch(worldItems[wi].name.c_str(), arg.c_str())) {
             idx = wi;
             break;
@@ -15526,11 +15528,14 @@ void cmdWear(Player &p, const String &input) {
 
     // Remove existing item in slot
     if (p.wornItemIndices[slotIndex] != -1) {
-        p.client.println(
-            "You remove " +
-            getItemDisplayName(worldItems[p.wornItemIndices[slotIndex]]) +
-            "."
-        );
+        // SAFETY CHECK: validate index before access
+        if (p.wornItemIndices[slotIndex] >= 0 && p.wornItemIndices[slotIndex] < (int)worldItems.size()) {
+            p.client.println(
+                "You remove " +
+                getItemDisplayName(worldItems[p.wornItemIndices[slotIndex]]) +
+                "."
+            );
+        }
     }
 
     // Wear new item
@@ -15553,6 +15558,9 @@ void cmdRemove(Player &p, const String &input) {
     for (int s = 0; s < SLOT_COUNT; s++) {
         int idx = p.wornItemIndices[s];
         if (idx == -1) continue;
+        
+        // SAFETY CHECK: validate index before access
+        if (idx < 0 || idx >= (int)worldItems.size()) continue;
 
         WorldItem &wi = worldItems[idx];
 
@@ -15596,6 +15604,12 @@ void cmdWield(Player &p, const String &input) {
         return;
     }
 
+    // SAFETY CHECK: validate index is within worldItems bounds
+    if (idx >= (int)worldItems.size()) {
+        p.client.println("Internal error: item index out of bounds.");
+        return;
+    }
+
     WorldItem &wi = worldItems[idx];
 
     // SAFE lookup
@@ -15614,11 +15628,14 @@ void cmdWield(Player &p, const String &input) {
     }
 
     if (p.wieldedItemIndex != -1) {
-        p.client.println(
-            "You stop wielding " +
-            getItemDisplayName(worldItems[p.wieldedItemIndex]) +
-            "."
-        );
+        // SAFETY CHECK: validate index before access
+        if (p.wieldedItemIndex >= 0 && p.wieldedItemIndex < (int)worldItems.size()) {
+            p.client.println(
+                "You stop wielding " +
+                getItemDisplayName(worldItems[p.wieldedItemIndex]) +
+                "."
+            );
+        }
     }
 
     p.wieldedItemIndex = idx;
@@ -15636,6 +15653,14 @@ void cmdWield(Player &p, const String &input) {
 void cmdUnwield(Player &p) {
     if (p.wieldedItemIndex == -1) {
         p.client.println("You aren't wielding anything.");
+        return;
+    }
+
+    // SAFETY CHECK: validate index before access
+    if (p.wieldedItemIndex < 0 || p.wieldedItemIndex >= (int)worldItems.size()) {
+        p.client.println("Internal error: wielded item index out of bounds.");
+        p.wieldedItemIndex = -1;
+        applyEquipmentBonuses(p);
         return;
     }
 
