@@ -5227,6 +5227,90 @@ void movePlayer(Player &p, int index, const char *dir) {
     }
 
     checkNPCAggro(p);
+
+    // CHECK: TOWN LAW - Confiscate weapons if criminal enters town boundaries
+    if (isPlayerCriminal(p.name) && isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
+        // Check if player has any weapons wielded or in inventory
+        bool hasWeapons = false;
+        
+        // Check wielded weapon
+        if (p.wieldedItemIndex != -1) {
+            if (p.wieldedItemIndex >= 0 && p.wieldedItemIndex < (int)worldItems.size()) {
+                WorldItem &wi = worldItems[p.wieldedItemIndex];
+                auto typeIt = wi.attributes.find("type");
+                if (typeIt != wi.attributes.end() && String(typeIt->second.c_str()) == "weapon") {
+                    hasWeapons = true;
+                }
+            }
+        }
+        
+        // Check inventory for weapons
+        if (!hasWeapons) {
+            for (int i = 0; i < p.invCount; i++) {
+                int itemIdx = p.invIndices[i];
+                if (itemIdx >= 0 && itemIdx < (int)worldItems.size()) {
+                    WorldItem &wi = worldItems[itemIdx];
+                    auto typeIt = wi.attributes.find("type");
+                    if (typeIt != wi.attributes.end() && String(typeIt->second.c_str()) == "weapon") {
+                        hasWeapons = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // If weapons found, confiscate them all
+        if (hasWeapons) {
+            p.client.println("The Sheriff appears!");
+            p.client.println("Sheriff: 'You're restricted from carrying weapons in this town!'");
+            p.client.println("");
+            
+            // Confiscate all weapons
+            std::vector<int> indicesToRemove;
+            for (int i = 0; i < p.invCount; i++) {
+                int itemIdx = p.invIndices[i];
+                if (itemIdx < 0 || itemIdx >= (int)worldItems.size()) continue;
+                
+                WorldItem &wi = worldItems[itemIdx];
+                auto typeIt = wi.attributes.find("type");
+                if (typeIt != wi.attributes.end()) {
+                    String itemType = String(typeIt->second.c_str());
+                    if (itemType == "weapon") {
+                        // Remove wielded weapon if it's this one
+                        if (p.wieldedItemIndex == itemIdx) {
+                            p.wieldedItemIndex = -1;
+                            p.weaponBonus = 0;
+                            p.attack = 1;
+                        }
+                        
+                        // Confiscate it
+                        wi.ownerName = "CONFISCATED";
+                        wi.x = -1;
+                        wi.y = 1;
+                        wi.z = -1;
+                        indicesToRemove.push_back(i);
+                    }
+                }
+            }
+            
+            // Remove items from inventory in reverse order
+            for (int idx = (int)indicesToRemove.size() - 1; idx >= 0; idx--) {
+                int i = indicesToRemove[idx];
+                for (int j = i; j < p.invCount - 1; j++) {
+                    p.invIndices[j] = p.invIndices[j + 1];
+                }
+                p.invCount--;
+            }
+            
+            // Recalculate bonuses
+            applyEquipmentBonuses(p);
+            
+            p.client.println("Sheriff: 'All weapons confiscated. Abide by the law or face arrest!'");
+            p.client.println("");
+            announceToRoom(p.roomX, p.roomY, p.roomZ, 
+                          "The Sheriff confiscates all weapons from " + capFirst(p.name) + "!", -1);
+        }
+    }
 }
 
 // =============================================================
@@ -15624,6 +15708,17 @@ void cmdWield(Player &p, const String &input) {
     std::string itemType = it->second.type;
     if (itemType != "weapon") {
         p.client.println("You can't wield that.");
+        return;
+    }
+
+    // CHECK: TOWN LAW - Criminals cannot wield weapons in town
+    if (isPlayerCriminal(p.name) && isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
+        p.client.println("The Sheriff appears and confiscates the weapon before you can wield it!");
+        broadcastRoomExcept(p, "The Sheriff confiscates a weapon from " + capFirst(p.name) + "!", p);
+        wi.ownerName = "CONFISCATED";
+        wi.x = -1;
+        wi.y = 1;
+        wi.z = -1;
         return;
     }
 
