@@ -11526,25 +11526,32 @@ bool isPlayerCriminal(const String &playerName) {
         line.trim();
         if (line.length() == 0) continue;
         
-        // Parse line: DATE OFFENDER OFFENSE CONVICTION
-        int spaceCount = 0;
+        // Parse line format: YYYY     OFFENDER     OFFENSE               CONVICTION
+        // Year is first 4 characters, then 5 spaces, offender name starts at position 9
+        // Extract from position 9 to 20 (approx 12 char field for name)
+        if (line.length() < 9) continue;  // Line too short to have a name field
+        
+        // Skip past year and first 5 spaces (positions 0-8)
+        String offenderField = line.substring(9);
+        
+        // Extract just the offender name (until the next double space or end)
         String offender = "";
-        for (int i = 0; i < line.length(); i++) {
-            if (line[i] == ' ') {
-                spaceCount++;
-                if (spaceCount == 2) {
-                    // Extract offender name (from space 1 to space 2)
-                    offender = "";
-                    int j = 0;
-                    for (int k = 0; k < line.length() && j < 2; k++) {
-                        if (line[k] == ' ') j++;
-                        else if (j == 1) offender += line[k];
-                    }
-                    break;
+        for (int i = 0; i < offenderField.length(); i++) {
+            // Stop at multiple spaces (column separator)
+            if (offenderField[i] == ' ' && i > 0) {
+                // Check if this is a column separator (2+ spaces)
+                int spaceCount = 0;
+                for (int j = i; j < offenderField.length() && offenderField[j] == ' '; j++) {
+                    spaceCount++;
                 }
+                if (spaceCount >= 2) break;  // Found column separator
+            }
+            if (offenderField[i] != ' ' || offender.length() > 0) {
+                offender += offenderField[i];
             }
         }
         
+        offender.trim();
         if (offender.length() > 0) {
             offender.toLowerCase();
             if (offender == searchName) {
@@ -11565,8 +11572,16 @@ void addToCriminalRegister(const String &playerName, const String &offense, cons
     struct tm* timeinfo = localtime(&now);
     int year = timeinfo->tm_year + 1900;
     
-    // Format: YYYY OFFENDER OFFENSE CONVICTION
-    String entry = String(year) + "     " + playerName + "      " + offense + "           " + conviction;
+    // Format: YYYY OFFENDER OFFENSE CONVICTION (with proper column alignment)
+    String entry = String(year);
+    entry += String("     ");  // 5 spaces after year
+    entry += playerName;
+    // Pad to column 21 (year=4 + 5 spaces + name, then pad to position 21)
+    while (entry.length() < 21) entry += " ";
+    entry += offense;
+    // Pad to column 43 (position 43 for conviction)
+    while (entry.length() < 43) entry += " ";
+    entry += conviction;
     
     File f = LittleFS.open("/register.txt", "a");
     if (f) {
@@ -17613,10 +17628,16 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
                 p.client.println("");
                 p.client.println("DATE     OFFENDER       OFFENSE               CONVICTION");
-                // Hard-coded entries
+                // Hard-coded entries (with proper column alignment)
                 p.client.println("1990     Veramacor      Player Killing        banned for eternity");
                 p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
-                p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
+                String ralphEntry = "2026";
+                ralphEntry += "     Ralph";
+                while (ralphEntry.length() < 21) ralphEntry += " ";
+                ralphEntry += "Town Murder";
+                while (ralphEntry.length() < 43) ralphEntry += " ";
+                ralphEntry += "Citation - weapons restricted";
+                p.client.println(ralphEntry);
                 
                 // Append entries from register.txt if it exists
                 if (LittleFS.exists("/register.txt")) {
