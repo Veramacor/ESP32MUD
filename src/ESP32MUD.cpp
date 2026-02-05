@@ -469,6 +469,12 @@ void cmdSell(Player &p, const String &arg);
 void cmdSellAll(Player &p);
 void cmdDrink(Player &p, const String &arg);
 
+// Town Law Enforcement functions
+bool isWithinTownBoundaries(int x, int y, int z);
+bool isPlayerCriminal(const String &playerName);
+void addToCriminalRegister(const String &playerName, const String &offense, const String &conviction);
+void performTownArrest(Player &p, int playerIndex);
+
 // Shop functions
 Shop* getShopForRoom(Player &p);
 void initializeShops();
@@ -6312,12 +6318,28 @@ void cmdBuy(Player &p, const String &arg) {
     // Look up the item definition to get weight and all attributes
     std::string itemIdStr = std::string(shopItem->itemId.c_str());
     int itemWeight = 1;  // default weight
+    String itemType = "misc";  // default type
     
     if (itemDefs.count(itemIdStr)) {
         auto &def = itemDefs[itemIdStr];
         String weightStr = def.attributes.count("weight") ? String(def.attributes["weight"].c_str()) : "1";
         itemWeight = weightStr.toInt();
         if (itemWeight <= 0) itemWeight = 1;
+        
+        // Get item type
+        auto typeIt = def.attributes.find("type");
+        if (typeIt != def.attributes.end()) {
+            itemType = String(typeIt->second.c_str());
+        }
+    }
+
+    // CHECK 1B: TOWN LAW - Check if player is restricted from weapons
+    if (itemType == "weapon" && isPlayerCriminal(p.name)) {
+        p.client.println("As you reach for the " + shopItem->itemName + ", the Town Sheriff suddenly appears!");
+        p.client.println("Sheriff: 'Not so fast! You're restricted from carrying weapons in this town!'");
+        p.client.println("The Sheriff confiscates the weapon before you can buy it.");
+        broadcastRoomExcept(p, "The Sheriff confiscates a weapon from " + capFirst(p.name) + "!", p);
+        return;
     }
 
     // CHECK 2: Is it too heavy?
@@ -11377,6 +11399,186 @@ void cmdPassword(Player &p, int index) {
     p.client.println("Password updated successfully.");
 }
 
+// =============================
+// TOWN LAW ENFORCEMENT SYSTEM
+// =============================
+
+// Check if a kill happened within town boundaries (246-254 X, 242-248 Y, Z=50)
+bool isWithinTownBoundaries(int x, int y, int z) {
+    return (x >= 246 && x <= 254 && y >= 242 && y <= 248 && z == 50);
+}
+
+// Check if player is registered as a criminal (in register.txt)
+bool isPlayerCriminal(const String &playerName) {
+    if (!LittleFS.exists("/register.txt")) {
+        return false;
+    }
+    
+    File f = LittleFS.open("/register.txt", "r");
+    if (!f) return false;
+    
+    String searchName = playerName;
+    searchName.toLowerCase();
+    
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        
+        // Parse line: DATE OFFENDER OFFENSE CONVICTION
+        int spaceCount = 0;
+        String offender = "";
+        for (int i = 0; i < line.length(); i++) {
+            if (line[i] == ' ') {
+                spaceCount++;
+                if (spaceCount == 2) {
+                    // Extract offender name (from space 1 to space 2)
+                    offender = "";
+                    int j = 0;
+                    for (int k = 0; k < line.length() && j < 2; k++) {
+                        if (line[k] == ' ') j++;
+                        else if (j == 1) offender += line[k];
+                    }
+                    break;
+                }
+            }
+        }
+        
+        if (offender.length() > 0) {
+            offender.toLowerCase();
+            if (offender == searchName) {
+                f.close();
+                return true;
+            }
+        }
+    }
+    
+    f.close();
+    return false;
+}
+
+// Add entry to criminal register
+void addToCriminalRegister(const String &playerName, const String &offense, const String &conviction) {
+    // Get current date
+    time_t now = time(nullptr);
+    struct tm* timeinfo = localtime(&now);
+    int year = timeinfo->tm_year + 1900;
+    
+    // Format: YYYY OFFENDER OFFENSE CONVICTION
+    String entry = String(year) + "     " + playerName + "      " + offense + "           " + conviction;
+    
+    File f = LittleFS.open("/register.txt", "a");
+    if (f) {
+        f.println(entry);
+        f.close();
+    }
+}
+
+// Perform town arrest sequence
+void performTownArrest(Player &p, int playerIndex) {
+    String playerNameCap = capFirst(p.name);
+    
+    // Broadcast arrest message
+    broadcastToAll("");
+    broadcastToAll("=== TOWN LAW ENFORCEMENT ===");
+    broadcastToAll("The Town Sheriff arrives and arrests " + playerNameCap + "!");
+    broadcastToAll("Crime: Murder within town boundaries");
+    broadcastToAll("=== END ANNOUNCEMENT ===");
+    broadcastToAll("");
+    
+    // Move player to Police Station (252, 242, 50)
+    p.roomX = 252;
+    p.roomY = 242;
+    p.roomZ = 50;
+    
+    // Print Miranda rights
+    p.client.println("");
+    p.client.println("The Sheriff reads you your rights:");
+    p.client.println("");
+    p.client.println("You are under arrest for murder within town boundaries.");
+    p.client.println("You have the right to remain silent.");
+    p.client.println("Anything you say can and will be used against you in a court of law.");
+    p.client.println("You have the right to an attorney.");
+    p.client.println("");
+    p.client.println("The Sheriff places you in a jail cell...");
+    p.client.println("");
+    
+    // Confiscate all weapons and armor
+    std::vector<int> indicesToRemove;
+    for (int i = 0; i < p.invCount; i++) {
+        int itemIdx = p.invIndices[i];
+        if (itemIdx < 0 || itemIdx >= (int)worldItems.size()) continue;
+        
+        WorldItem &wi = worldItems[itemIdx];
+        
+        // Check if item is weapon or armor
+        auto typeIt = wi.attributes.find("type");
+        if (typeIt != wi.attributes.end()) {
+            String itemType = String(typeIt->second.c_str());
+            if (itemType == "weapon" || itemType == "armor") {
+                // Remove equipment if worn/wielded
+                if (p.wieldedItemIndex == itemIdx) {
+                    p.wieldedItemIndex = -1;
+                    p.weaponBonus = 0;
+                    p.attack = 1;  // Reset to base attack
+                }
+                
+                // Check all armor slots
+                for (int slot = 0; slot < SLOT_COUNT; slot++) {
+                    if (p.wornItemIndices[slot] == itemIdx) {
+                        p.wornItemIndices[slot] = -1;
+                    }
+                }
+                
+                // Mark for removal
+                indicesToRemove.push_back(i);
+            }
+        }
+    }
+    
+    // Remove items in reverse order to maintain indices
+    for (int idx = indicesToRemove.size() - 1; idx >= 0; idx--) {
+        int i = indicesToRemove[idx];
+        // Shift items down
+        for (int j = i; j < p.invCount - 1; j++) {
+            p.invIndices[j] = p.invIndices[j + 1];
+        }
+        p.invCount--;
+    }
+    
+    // Recalculate bonuses
+    applyEquipmentBonuses(p);
+    
+    p.client.println("The Sheriff confiscates all your weapons and armor.");
+    p.client.println("");
+    
+    // Schedule bail-out (simulate delay of a few hours)
+    // For now, we'll give 5 game minutes as placeholder
+    p.client.println("You wait in the cell for several hours...");
+    p.client.println("");
+    p.client.println("A man named Sam Gamgee arrives at the station.");
+    p.client.println("Sam Gamgee says: 'Don't worry lad, I've posted your bail.'");;;;
+    p.client.println("");
+    p.client.println("The Sheriff says: 'You're free to go, but you're restricted from");
+    p.client.println("carrying weapons in this town. Violate this and you'll be back here.'");
+    p.client.println("");
+    
+    // Set coins to 0 (bail bond paid)
+    p.coins = 0;
+    
+    // Add to criminal register
+    addToCriminalRegister(p.name, "Town Murder", "Citation - weapons restricted");
+    
+    p.client.println("A citation has been posted to the Criminal Register.");
+    p.client.println("You are released from jail.");
+    p.client.println("");
+    
+    // Announce release to all players
+    broadcastToAll(playerNameCap + " has been released on bail from the Police Station!");
+    
+    // Save player state
+    savePlayerToFS(p);
+}
 
 
 void cmdKill(Player &p, const char* arg) {
@@ -11612,6 +11814,17 @@ void doCombatRound(Player &p) {
                 "The " + npcName + " " + deathMsg,
                 p
             );
+
+            // ---------------------------------------------------------
+            // CHECK FOR TOWN LAW VIOLATION (MURDER IN TOWN)
+            // ---------------------------------------------------------
+            if (isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
+                performTownArrest(p, playerIndex);
+                // Skip normal XP/gold drops and respawn setup
+                p.inCombat = false;
+                p.combatTarget = nullptr;
+                return;
+            }
 
             // XP
             int xpReward = 5;
@@ -12952,6 +13165,20 @@ void cmdGet(Player &p, const String &input) {
     
     if (currentWeight + itemWeight > maxWeight) {
         p.client.println("You cannot carry any more.");
+        return;
+    }
+
+    // CHECK: TOWN LAW - Check if player is restricted from weapons
+    String itemType = targetItem.getAttr("type", itemDefs);
+    if (itemType == "weapon" && isPlayerCriminal(p.name)) {
+        p.client.println("As you reach for the " + getItemDisplayName(targetItem) + ", the Town Sheriff suddenly appears!");
+        p.client.println("Sheriff: 'Not so fast! You're restricted from carrying weapons in this town!'");
+        p.client.println("The Sheriff confiscates the weapon.");
+        broadcastRoomExcept(p, "The Sheriff confiscates a weapon from " + capFirst(p.name) + "!", p);
+        
+        // Remove the item from the room (confiscate it)
+        targetItem.x = targetItem.y = targetItem.z = -1;
+        targetItem.ownerName = "CONFISCATED";
         return;
     }
 
@@ -17170,9 +17397,26 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
                 p.client.println("");
                 p.client.println("DATE     OFFENDER       OFFENSE               CONVICTION");
+                // Hard-coded entries
                 p.client.println("1990     Veramacor      Player Killing        banned for eternity");
                 p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
                 p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
+                
+                // Append entries from register.txt if it exists
+                if (LittleFS.exists("/register.txt")) {
+                    File f = LittleFS.open("/register.txt", "r");
+                    if (f) {
+                        while (f.available()) {
+                            String line = f.readStringUntil('\n');
+                            line.trim();
+                            if (line.length() > 0) {
+                                p.client.println(line);
+                            }
+                        }
+                        f.close();
+                    }
+                }
+                
                 p.client.println("");
             } else {
                 p.client.println("You don't see a register here.");
