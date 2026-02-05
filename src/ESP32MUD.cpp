@@ -773,6 +773,12 @@ struct Player {
     
     // Hobble tracking: alternate accepting/rejecting movement commands
     bool hobbleSkipNextMove = false; // If true, skip the next movement command
+
+    // Arrest sequence state (for non-blocking delayed messages)
+    bool inArrestSequence = false;
+    int arrestSequenceStep = 0;      // 0-7: different stages of arrest
+    unsigned long arrestSequenceNextTime = 0;
+    const unsigned long ARREST_DELAY_MS = 2000;  // 2 second delay between messages
 };
 
 // =============================
@@ -11569,111 +11575,173 @@ void addToCriminalRegister(const String &playerName, const String &offense, cons
     }
 }
 
-// Perform town arrest sequence
+// Perform town arrest sequence (initiate it)
 void performTownArrest(Player &p, int playerIndex) {
     String playerNameCap = capFirst(p.name);
     
-    // Broadcast arrest message
+    // Start arrest sequence
+    p.inArrestSequence = true;
+    p.arrestSequenceStep = 0;
+    p.arrestSequenceNextTime = millis();
+    
+    // Move both sheriff and player to Police Station (252, 242, 50)
+    p.roomX = 252;
+    p.roomY = 242;
+    p.roomZ = 50;
+    
+    // Broadcast arrest message immediately
     broadcastToAll("");
     broadcastToAll("=== TOWN LAW ENFORCEMENT ===");
     broadcastToAll("The Town Sheriff arrives and arrests " + playerNameCap + "!");
     broadcastToAll("Crime: Murder within town boundaries");
     broadcastToAll("=== END ANNOUNCEMENT ===");
     broadcastToAll("");
+}
+
+// Handle arrest sequence with non-blocking delays
+void updateArrestSequence(Player &p, int playerIndex) {
+    if (!p.inArrestSequence) return;
     
-    // Move player to Police Station (252, 242, 50)
-    p.roomX = 252;
-    p.roomY = 242;
-    p.roomZ = 50;
+    unsigned long now = millis();
+    if (now < p.arrestSequenceNextTime) return;  // Not time yet
     
-    // Print Miranda rights
-    p.client.println("");
-    p.client.println("The Sheriff reads you your rights:");
-    p.client.println("");
-    p.client.println("You are under arrest for murder within town boundaries.");
-    p.client.println("You have the right to remain silent.");
-    p.client.println("Anything you say can and will be used against you in a court of law.");
-    p.client.println("You have the right to an attorney.");
-    p.client.println("");
-    p.client.println("The Sheriff places you in a jail cell...");
-    p.client.println("");
+    String playerNameCap = capFirst(p.name);
     
-    // Confiscate all weapons and armor
-    std::vector<int> indicesToRemove;
-    for (int i = 0; i < p.invCount; i++) {
-        int itemIdx = p.invIndices[i];
-        if (itemIdx < 0 || itemIdx >= (int)worldItems.size()) continue;
-        
-        WorldItem &wi = worldItems[itemIdx];
-        
-        // Check if item is weapon or armor
-        auto typeIt = wi.attributes.find("type");
-        if (typeIt != wi.attributes.end()) {
-            String itemType = String(typeIt->second.c_str());
-            if (itemType == "weapon" || itemType == "armor") {
-                // Remove equipment if worn/wielded
-                if (p.wieldedItemIndex == itemIdx) {
-                    p.wieldedItemIndex = -1;
-                    p.weaponBonus = 0;
-                    p.attack = 1;  // Reset to base attack
-                }
+    switch (p.arrestSequenceStep) {
+        case 0:
+            // Rights reading
+            p.client.println("");
+            p.client.println("The Sheriff reads you your rights:");
+            p.client.println("");
+            p.client.println("You are under arrest for murder within town boundaries.");
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+            
+        case 1:
+            p.client.println("You have the right to remain silent.");
+            p.client.println("Anything you say can and will be used against you in a court of law.");
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+            
+        case 2: {
+            p.client.println("You have the right to an attorney.");
+            p.client.println("");
+            p.client.println("The Sheriff places you in a jail cell...");
+            
+            // Confiscate all weapons and armor
+            std::vector<int> indicesToRemove;
+            for (int i = 0; i < p.invCount; i++) {
+                int itemIdx = p.invIndices[i];
+                if (itemIdx < 0 || itemIdx >= (int)worldItems.size()) continue;
                 
-                // Check all armor slots
-                for (int slot = 0; slot < SLOT_COUNT; slot++) {
-                    if (p.wornItemIndices[slot] == itemIdx) {
-                        p.wornItemIndices[slot] = -1;
+                WorldItem &wi = worldItems[itemIdx];
+                
+                // Check if item is weapon or armor
+                auto typeIt = wi.attributes.find("type");
+                if (typeIt != wi.attributes.end()) {
+                    String itemType = String(typeIt->second.c_str());
+                    if (itemType == "weapon" || itemType == "armor") {
+                        // Remove equipment if worn/wielded
+                        if (p.wieldedItemIndex == itemIdx) {
+                            p.wieldedItemIndex = -1;
+                            p.weaponBonus = 0;
+                            p.attack = 1;  // Reset to base attack
+                        }
+                        
+                        // Check all armor slots
+                        for (int slot = 0; slot < SLOT_COUNT; slot++) {
+                            if (p.wornItemIndices[slot] == itemIdx) {
+                                p.wornItemIndices[slot] = -1;
+                            }
+                        }
+                        
+                        // Mark for removal
+                        indicesToRemove.push_back(i);
                     }
                 }
-                
-                // Mark for removal
-                indicesToRemove.push_back(i);
             }
+            
+            // Remove items in reverse order to maintain indices
+            for (int idx = indicesToRemove.size() - 1; idx >= 0; idx--) {
+                int i = indicesToRemove[idx];
+                // Shift items down
+                for (int j = i; j < p.invCount - 1; j++) {
+                    p.invIndices[j] = p.invIndices[j + 1];
+                }
+                p.invCount--;
+            }
+            
+            // Recalculate bonuses
+            applyEquipmentBonuses(p);
+            
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+        }
+            
+        case 3: {
+            p.client.println("");
+            p.client.println("The Sheriff confiscates all your weapons and armor.");
+            p.client.println("");
+            p.client.println("You wait in the cell for several hours...");
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+        }
+            
+        case 4: {
+            p.client.println("");
+            p.client.println("A man named Sam Gamgee arrives at the station.");
+            p.client.println("Sam Gamgee says: 'Don't worry lad, I've posted your bail.'");
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+        }
+            
+        case 5: {
+            p.client.println("");
+            p.client.println("The Sheriff says: 'You're free to go, but you're restricted from");
+            p.client.println("carrying weapons in this town. Violate this and you'll be back here.'");
+            p.client.println("");
+            
+            // Set coins to 0 (bail bond paid)
+            p.coins = 0;
+            
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+        }
+            
+        case 6: {
+            // Add to criminal register
+            addToCriminalRegister(p.name, "Town Murder", "Citation - weapons restricted");
+            
+            p.client.println("A citation has been posted to the Criminal Register.");
+            p.client.println("You are released from jail.");
+            p.client.println("");
+            
+            // Announce release to all players
+            announceToRoom(252, 242, 50,
+                playerNameCap + " has been released on bail from the Police Station!",
+                playerIndex);
+            
+            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceStep++;
+            break;
+        }
+            
+        case 7: {
+            // Sequence complete
+            p.inArrestSequence = false;
+            savePlayerToFS(p);
+            break;
         }
     }
-    
-    // Remove items in reverse order to maintain indices
-    for (int idx = indicesToRemove.size() - 1; idx >= 0; idx--) {
-        int i = indicesToRemove[idx];
-        // Shift items down
-        for (int j = i; j < p.invCount - 1; j++) {
-            p.invIndices[j] = p.invIndices[j + 1];
-        }
-        p.invCount--;
-    }
-    
-    // Recalculate bonuses
-    applyEquipmentBonuses(p);
-    
-    p.client.println("The Sheriff confiscates all your weapons and armor.");
-    p.client.println("");
-    
-    // Schedule bail-out (simulate delay of a few hours)
-    // For now, we'll give 5 game minutes as placeholder
-    p.client.println("You wait in the cell for several hours...");
-    p.client.println("");
-    p.client.println("A man named Sam Gamgee arrives at the station.");
-    p.client.println("Sam Gamgee says: 'Don't worry lad, I've posted your bail.'");;;;
-    p.client.println("");
-    p.client.println("The Sheriff says: 'You're free to go, but you're restricted from");
-    p.client.println("carrying weapons in this town. Violate this and you'll be back here.'");
-    p.client.println("");
-    
-    // Set coins to 0 (bail bond paid)
-    p.coins = 0;
-    
-    // Add to criminal register
-    addToCriminalRegister(p.name, "Town Murder", "Citation - weapons restricted");
-    
-    p.client.println("A citation has been posted to the Criminal Register.");
-    p.client.println("You are released from jail.");
-    p.client.println("");
-    
-    // Announce release to all players
-    broadcastToAll(playerNameCap + " has been released on bail from the Police Station!");
-    
-    // Save player state
-    savePlayerToFS(p);
 }
+
+
 
 
 void cmdKill(Player &p, const char* arg) {
@@ -19604,6 +19672,10 @@ void loop() {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Player &p = players[i];
         if (!p.active || !p.loggedIn) continue;
+        
+        // Update arrest sequence with non-blocking delays
+        updateArrestSequence(p, i);
+        
         if (p.inCombat && now >= p.nextCombatTime) doCombatRound(p);
     }
 
