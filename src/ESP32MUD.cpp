@@ -11572,16 +11572,18 @@ void addToCriminalRegister(const String &playerName, const String &offense, cons
     struct tm* timeinfo = localtime(&now);
     int year = timeinfo->tm_year + 1900;
     
-    // Format: YYYY OFFENDER OFFENSE CONVICTION (with proper column alignment)
+    // Format to match hardcoded entries:
+    // YYYY     OFFENDER              OFFENSE              CONVICTION
+    // Columns: 0-3=year, 4-8=spaces, 9-23=name, 24-41=offense, 42+=conviction
     String entry = String(year);
-    entry += String("     ");  // 5 spaces after year
-    entry += playerName;
-    // Pad to column 21 (year=4 + 5 spaces + name, then pad to position 21)
-    while (entry.length() < 21) entry += " ";
-    entry += offense;
-    // Pad to column 43 (position 43 for conviction)
-    while (entry.length() < 43) entry += " ";
-    entry += conviction;
+    entry += String("     ");  // 5 spaces: positions 4-8
+    entry += playerName;       // Name starts at position 9
+    // Pad name field to position 24 (offense column)
+    while (entry.length() < 24) entry += " ";
+    entry += offense;          // Offense starts at position 24
+    // Pad offense field to position 42 (conviction column)
+    while (entry.length() < 42) entry += " ";
+    entry += conviction;       // Conviction starts at position 42
     
     File f = LittleFS.open("/register.txt", "a");
     if (f) {
@@ -17628,14 +17630,14 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 p.client.println("                     ESPERTHERTU CRIMINAL REGISTER");
                 p.client.println("");
                 p.client.println("DATE     OFFENDER       OFFENSE               CONVICTION");
-                // Hard-coded entries (with proper column alignment)
+                // Hard-coded entries (with proper column alignment: columns 9, 24, 42)
                 p.client.println("1990     Veramacor      Player Killing        banned for eternity");
                 p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
                 String ralphEntry = "2026";
                 ralphEntry += "     Ralph";
-                while (ralphEntry.length() < 21) ralphEntry += " ";
+                while (ralphEntry.length() < 24) ralphEntry += " ";
                 ralphEntry += "Town Murder";
-                while (ralphEntry.length() < 43) ralphEntry += " ";
+                while (ralphEntry.length() < 42) ralphEntry += " ";
                 ralphEntry += "Citation - weapons restricted";
                 p.client.println(ralphEntry);
                 
@@ -17647,7 +17649,34 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                             String line = f.readStringUntil('\n');
                             line.trim();
                             if (line.length() > 0) {
-                                p.client.println(line);
+                                // Extract offender name (starts at position 9, ends before position 24)
+                                String offenderName = "";
+                                if (line.length() > 9) {
+                                    for (int i = 9; i < (int)line.length() && i < 24; i++) {
+                                        if (line[i] != ' ') {
+                                            offenderName += line[i];
+                                        } else if (offenderName.length() > 0) {
+                                            break;  // Stop at first space after name
+                                        }
+                                    }
+                                }
+                                
+                                // Reconstruct line with CapFirst applied to name
+                                if (offenderName.length() > 0) {
+                                    String capitalizedName = capFirst(offenderName.c_str());
+                                    String revisedLine = line.substring(0, 9);  // Year and initial spaces
+                                    revisedLine += capitalizedName;
+                                    // Pad to position 24
+                                    while (revisedLine.length() < 24) revisedLine += " ";
+                                    // Add rest of line (offense and conviction)
+                                    if (line.length() > 24) {
+                                        revisedLine += line.substring(24);
+                                    }
+                                    p.client.println(revisedLine);
+                                } else {
+                                    // Line doesn't have expected format, print as-is
+                                    p.client.println(line);
+                                }
                             }
                         }
                         f.close();
