@@ -4818,7 +4818,10 @@ void cmdInventory(Player &p, const String &input) {
     // ----------------------------------------------------
     for (int i = 0; i < p.invCount; i++) {
         int idx = p.invIndices[i];
-        if (idx < 0 || idx >= (int)worldItems.size()) continue;
+        if (idx < 0 || idx >= (int)worldItems.size()) {
+            debugPrint(p, "WARNING: Inventory index " + String(i) + " has invalid worldItem index " + String(idx) + ", clearing");
+            continue;
+        }
 
         WorldItem &wi = worldItems[idx];
         
@@ -4832,6 +4835,12 @@ void cmdInventory(Player &p, const String &input) {
         }
         
         String name = getItemDisplayName(wi);
+        
+        // SAFETY CHECK: if display name is empty or "0", skip this corrupted item
+        if (name.length() == 0) {
+            debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has empty display name, skipping");
+            continue;
+        }
 
         bool isWielded = (idx == p.wieldedItemIndex);
         bool isWorn = false;
@@ -16335,14 +16344,27 @@ bool loadPlayerFromFS(Player &p, const String &name) {
 
         String itemName = tmp;
         
-        // Validate item name - reject pure numeric names which indicate corruption
+        // STRICT VALIDATION: Reject corrupted item names
+        // 1. Reject pure numeric names (corruption indicator)
         if (itemName.toInt() > 0 && itemName == String(itemName.toInt())) {
-            // This is a numeric string - skip it as corrupted data
             continue;
         }
         
-        // NEVER load gold coins into inventory
+        // 2. Reject single-char names or very short names (likely corruption)
+        if (itemName.length() < 2) {
+            continue;
+        }
+        
+        // 3. NEVER load gold coins into inventory
         if (itemName == "gold_coin") {
+            continue;
+        }
+        
+        // 4. Reject if item definition doesn't exist (safety check)
+        std::string key = std::string(itemName.c_str());
+        auto defIt = itemDefs.find(key);
+        if (defIt == itemDefs.end()) {
+            // Item definition doesn't exist - this is likely a stale reference
             continue;
         }
         
@@ -16370,13 +16392,9 @@ bool loadPlayerFromFS(Player &p, const String &name) {
             newItem.parentName = p.name;
             newItem.x = newItem.y = newItem.z = -1;
 
-            // SAFE lookup
-            std::string key = std::string(itemName.c_str());
-            auto it = itemDefs.find(key);
-            if (it != itemDefs.end()) {
-                for (auto &kv : it->second.attributes)
-                    newItem.attributes[kv.first] = kv.second;
-            }
+            // Copy attributes from definition
+            for (auto &kv : defIt->second.attributes)
+                newItem.attributes[kv.first] = kv.second;
 
             worldItems.push_back(newItem);
             p.invIndices[p.invCount++] = worldItems.size() - 1;
