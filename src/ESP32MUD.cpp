@@ -468,12 +468,16 @@ void cmdBuy(Player &p, const String &arg);
 void cmdSell(Player &p, const String &arg);
 void cmdSellAll(Player &p);
 void cmdDrink(Player &p, const String &arg);
+void cmdHireSam(Player &p);
 
 // Town Law Enforcement functions
 bool isWithinTownBoundaries(int x, int y, int z);
 bool isPlayerCriminal(const String &playerName);
 void addToCriminalRegister(const String &playerName, const String &offense, const String &conviction);
 void performTownArrest(Player &p, int playerIndex);
+bool removeFromCriminalRegister(const String &playerName);
+void updateArrestSequence(Player &p, int playerIndex);
+void updateCitationRemovalSequence(Player &p);
 
 // Shop functions
 Shop* getShopForRoom(Player &p);
@@ -778,7 +782,13 @@ struct Player {
     bool inArrestSequence = false;
     int arrestSequenceStep = 0;      // 0-7: different stages of arrest
     unsigned long arrestSequenceNextTime = 0;
-    const unsigned long ARREST_DELAY_MS = 2000;  // 2 second delay between messages
+    static const unsigned long ARREST_DELAY_MS = 2000;  // 2 second delay between messages
+    
+    // Citation removal sequence state (for non-blocking delayed messages)
+    bool inCitationRemovalSequence = false;
+    int citationRemovalSequenceStep = 0;      // 0-5: different stages of citation removal
+    unsigned long citationRemovalSequenceNextTime = 0;
+    static const unsigned long CITATION_REMOVAL_DELAY_MS = 2000;  // 2 second delay between messages
 };
 
 // =============================
@@ -5421,12 +5431,20 @@ void cmdLook(Player &p) {
     
     // Use the player's currentRoom, not a global rooms[][][]
     Room &r = p.currentRoom;
+    
+    // Override room name and description for Judge Junetree's Courtroom
+    String courtRoomName = String(r.name);
+    String courtRoomDesc = String(r.description);
+    if (p.roomX == 245 && p.roomY == 244 && p.roomZ == 50) {
+        courtRoomName = "Judge Junetree's Courtroom";
+        courtRoomDesc = "You stand in the chambers of Judge Junetree. The room is austere and formal, with high ceilings and ornate wood paneling. The Judge's elevated bench dominates the room, and there are witness and defendant areas below. A door leads east towards Sam Gamgee's Law Office.";
+    }
 
     // Room name
-    p.client.println(String(r.name));
+    p.client.println(courtRoomName);
 
     // Room description (word-wrapped for readability)
-    printWrapped(p.client, String(r.description));
+    printWrapped(p.client, courtRoomDesc);
     
     // Check if this room has a shop - if so, add sign description
     if (getShopForRoom(p) != nullptr) {
@@ -5459,6 +5477,16 @@ void cmdLook(Player &p) {
         }
     }
     
+    // Check if this is Sam Gamgee's Law Office
+    if (p.roomX == 246 && p.roomY == 244 && p.roomZ == 50) {
+        p.client.println("A sign is here.");
+    }
+    
+    // Check if this is Judge Junetree's Courtroom
+    if (p.roomX == 245 && p.roomY == 244 && p.roomZ == 50) {
+        // Courtroom has no exit list - only way out is custom
+    }
+    
     // Check if this is the Weather Station
     if (p.roomX == 248 && p.roomY == 242 && p.roomZ == 50) {
         p.client.println("A sign is here.");
@@ -5469,9 +5497,9 @@ void cmdLook(Player &p) {
         p.client.println("A sign is here.");
     }
     
-    // Check if this is the Police Station
-    if (p.roomX == 252 && p.roomY == 242 && p.roomZ == 50) {
-        p.client.println("Criminal Register.");
+    // Check if this is Sam Gamgee's Law Office
+    if (p.roomX == 246 && p.roomY == 244 && p.roomZ == 50) {
+        p.client.println("This is the Law Offices of Sam Gamgee. A sign on the wall offers legal services.");
     }
     
     p.client.println("");  // blank line
@@ -5518,6 +5546,12 @@ void cmdLook(Player &p) {
 
     // Obvious exits
     String exits = r.exitList;
+    
+    // Override exits for Judge Junetree's Courtroom
+    if (p.roomX == 245 && p.roomY == 244 && p.roomZ == 50) {
+        exits = "east";
+    }
+    
     exits.trim();
     if (exits.length() == 0) exits = "none";
 
@@ -6388,6 +6422,25 @@ void cmdReadSign(Player &p, const String &input) {
         return;
     }
     
+    // Check if this is Sam Gamgee's Law Office
+    if (p.roomX == 246 && p.roomY == 244 && p.roomZ == 50) {
+        if (p.IsHeadInjured) {
+            p.client.println("A bystander shows mercy on your blindness and reads the sign for you:");
+        }
+        p.client.println("");
+        p.client.println("                The Law Offices of Sam Gamgee");
+        p.client.println("");
+        p.client.println("- I will bail you out from Jail if you commit an offense in the Town.");
+        p.client.println("- If you need to have a Town Citation removed, just 'hire Sam'");
+        p.client.println("");
+        p.client.println("* Bail is expensive, so I will have to charge you a 'small' fee");
+        p.client.println("* Citation removal is a flat rate 1000gp.  A small price to pay!");
+        p.client.println("");
+        p.client.println("                        1-800-CALL-SAM!");
+        p.client.println("");
+        return;
+    }
+    
     // Check if there's a shop in this room
     Shop* shop = getShopForRoom(p);
     if (!shop) {
@@ -6854,6 +6907,157 @@ void cmdDrink(Player &p, const String &arg) {
         } else {
             worldItems.erase(worldItems.begin() + worldIndex);
         }
+    }
+}
+
+// =============================================================
+// SAM GAMGEE'S LAW OFFICE - Citation Removal Service
+// =============================================================
+
+void cmdHireSam(Player &p) {
+    // Check if player is in Sam Gamgee's office
+    if (p.roomX != 246 || p.roomY != 244 || p.roomZ != 50) {
+        p.client.println("You must visit Sam Gamgee's Law Office to use this service.");
+        return;
+    }
+    
+    // Check if player is a criminal
+    if (!isPlayerCriminal(p.name)) {
+        p.client.println("You are not in trouble!  You do not require my services.");
+        return;
+    }
+    
+    // Check if player has enough funds (1000gp)
+    int goldNeeded = 1000;
+    int playerGold = p.coins;
+    int bankGold = p.bankGp;
+    int totalAvailable = playerGold + bankGold;
+    
+    if (totalAvailable < goldNeeded) {
+        p.client.println("You can't afford me yet!");
+        return;
+    }
+    
+    // Deduct payment: coins first, then bank
+    if (playerGold >= goldNeeded) {
+        p.coins -= goldNeeded;
+    } else {
+        int fromBank = goldNeeded - playerGold;
+        p.bankGp -= fromBank;
+        p.coins = 0;
+    }
+    
+    // Save player
+    savePlayerToFS(p);
+    
+    // Start the citation removal sequence with non-blocking delays
+    p.inCitationRemovalSequence = true;
+    p.citationRemovalSequenceStep = 0;
+    p.citationRemovalSequenceNextTime = millis();
+    
+    // Move player to court immediately
+    p.roomX = 245;
+    p.roomY = 244;
+    p.roomZ = 50;
+    
+    // Initial message
+    p.client.println("");
+    p.client.println("Sam Gamgee: 'Ah, thank you for your business! Let me take you to see Judge Junetree.'");
+    p.client.println("");
+    p.client.println("Sam takes you by the arm and walks you to the courthouse...");
+    p.client.println("");
+}
+
+// Handle citation removal sequence with non-blocking delays
+void updateCitationRemovalSequence(Player &p) {
+    if (!p.inCitationRemovalSequence) return;
+    
+    unsigned long now = millis();
+    if (now < p.citationRemovalSequenceNextTime) return;  // Not time yet
+    
+    String playerNameCap = capFirst(p.name);
+    
+    switch (p.citationRemovalSequenceStep) {
+        case 0:
+            // Enter the courtroom
+            p.client.println("==============================================================");
+            p.client.println("You stand before Judge Junetree in her chambers.");
+            p.client.println("==============================================================");
+            p.client.println("");
+            p.client.println("Sam Gamgee steps forward to plead your case...");
+            p.client.println("");
+            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceStep++;
+            break;
+            
+        case 1:
+            // Sam's plea
+            p.client.println("Sam: 'Your Honor, my client has done wrong, but they seek");
+            p.client.println("      redemption. I humbly request that you remove this citation");
+            p.client.println("      from their record.'");
+            p.client.println("");
+            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceStep++;
+            break;
+            
+        case 2:
+            // Judge's decision
+            p.client.println("Judge Junetree looks down from her bench, sighs, and nods...");
+            p.client.println("");
+            p.client.println("Judge: 'Very well, Sam. The citation is hereby REMOVED from");
+            p.client.println("        the record. Consider this a second chance.");
+            p.client.println("        Do not waste it.'");
+            p.client.println("");
+            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceStep++;
+            break;
+            
+        case 3:
+            // Remove from criminal register
+            removeFromCriminalRegister(p.name);
+            
+            p.client.println("The record has been CLEARED from the Criminal Register!");
+            p.client.println("You may now wield weapons and carry items freely in this town!");
+            p.client.println("");
+            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceStep++;
+            break;
+            
+        case 4:
+            // Broadcast to all players
+            {
+                String broadcastMsg = playerNameCap + " has been Exonerated by Judge Junetree! The citation of Town Murder has been removed from his record.";
+                broadcastToAll("");
+                broadcastToAll("*** " + broadcastMsg + " ***");
+                broadcastToAll("");
+            }
+            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceStep++;
+            break;
+            
+        case 5:
+            // Sam leaves
+            p.client.println("Sam Gamgee tips his hat and returns to his office...");
+            p.client.println("");
+            p.client.println("You are left standing in the Judge's chambers.");
+            p.client.println("");
+            p.client.println("==============================================================");
+            p.client.println("*** IMPORTANT REMINDER ***");
+            p.client.println("==============================================================");
+            p.client.println("Your exoneration is now final and recorded. You are no longer");
+            p.client.println("wanted for Town Murder. However, know this: should you commit");
+            p.client.println("another crime and be caught, you will face trial again.");
+            p.client.println("The only way you could stand before Judge Junetree again");
+            p.client.println("would be to earn another citation.");
+            p.client.println("==============================================================");
+            p.client.println("");
+            
+            // Save updated player
+            savePlayerToFS(p);
+            
+            // End sequence
+            p.inCitationRemovalSequence = false;
+            break;
     }
 }
 
@@ -11611,6 +11815,77 @@ void addToCriminalRegister(const String &playerName, const String &offense, cons
     }
 }
 
+// Remove entry from criminal register
+bool removeFromCriminalRegister(const String &playerName) {
+    if (!LittleFS.exists("/register.txt")) {
+        return false;
+    }
+    
+    File f = LittleFS.open("/register.txt", "r");
+    if (!f) return false;
+    
+    String searchName = playerName;
+    searchName.toLowerCase();
+    
+    // Read all lines into memory
+    std::vector<String> lines;
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+        
+        // Parse line to extract offender name
+        if (line.length() < 9) {
+            lines.push_back(line);
+            continue;
+        }
+        
+        // Extract name from position 9
+        String offenderField = line.substring(9);
+        String offender = "";
+        for (int i = 0; i < offenderField.length(); i++) {
+            if (offenderField[i] == ' ' && i > 0) {
+                int spaceCount = 0;
+                for (int j = i; j < offenderField.length() && offenderField[j] == ' '; j++) {
+                    spaceCount++;
+                }
+                if (spaceCount >= 2) break;
+            }
+            if (offenderField[i] != ' ' || offender.length() > 0) {
+                offender += offenderField[i];
+            }
+        }
+        
+        offender.trim();
+        offender.toLowerCase();
+        
+        // Skip this line if it matches the player to remove
+        if (offender == searchName) {
+            continue;  // Don't add this line to the new file
+        }
+        
+        lines.push_back(line);
+    }
+    f.close();
+    
+    // Rewrite the file without the removed entry
+    LittleFS.remove("/register.txt");
+    File fOut = LittleFS.open("/register.txt", "w");
+    if (!fOut) return false;
+    
+    bool found = false;
+    for (const String &line : lines) {
+        fOut.println(line);
+        // Check if this is one of the hardcoded entries we're preserving
+        if (line.indexOf("Veramacor") >= 0 || line.indexOf("Ralph") >= 0) {
+            found = true;
+        }
+    }
+    fOut.close();
+    
+    return true;  // Return true if file was rewritten (whether entry found or not)
+}
+
 // Perform town arrest sequence (initiate it)
 void performTownArrest(Player &p, int playerIndex) {
     String playerNameCap = capFirst(p.name);
@@ -13367,19 +13642,25 @@ void cmdGet(Player &p, const String &input) {
         return;
     }
 
-    // CHECK: TOWN LAW - Check if player is restricted from weapons
+    // CHECK: TOWN LAW - Criminals cannot carry weapons inside town bounds (X: 246-254, Y: 242-248, Z: 50)
+    // Non-criminals have NO restrictions
     String itemType = targetItem.getAttr("type", itemDefs);
     if (itemType == "weapon" && isPlayerCriminal(p.name)) {
-        p.client.println("As you reach for the " + getItemDisplayName(targetItem) + ", the Town Sheriff suddenly appears!");
-        p.client.println("Sheriff: 'Not so fast! You're restricted from carrying weapons in this town!'");
-        p.client.println("The Sheriff confiscates the weapon.");
-        broadcastRoomExcept(p, "The Sheriff confiscates a weapon from " + capFirst(p.name) + "!", p);
-        
-        // Remove the item from the room (confiscate it)
-        targetItem.x = targetItem.y = targetItem.z = -1;
-        targetItem.ownerName = "CONFISCATED";
-        return;
+        // Player is a criminal - check if inside town boundaries
+        if (isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
+            p.client.println("As you reach for the " + getItemDisplayName(targetItem) + ", the Town Sheriff suddenly appears!");
+            p.client.println("Sheriff: 'Criminals are NOT allowed to carry weapons in this town!'");
+            p.client.println("The Sheriff confiscates the weapon.");
+            broadcastRoomExcept(p, "The Sheriff confiscates a weapon from " + capFirst(p.name) + "!", p);
+            
+            // Remove the item from the room (confiscate it)
+            targetItem.x = targetItem.y = targetItem.z = -1;
+            targetItem.ownerName = "CONFISCATED";
+            return;
+        }
+        // Criminal outside town bounds: weapons are allowed
     }
+    // Non-criminal: weapons allowed everywhere (no restriction)
 
     p.invIndices[p.invCount++] = foundIndex;
 
@@ -17652,15 +17933,10 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 // Hard-coded entries (with proper column alignment: columns 9, 24, 42)
                 p.client.println("1990     Veramacor      Player Killing        banned for eternity");
                 p.client.println("1990     Veramacor      Wizard Power Abuse    banned for eternity");
-                String ralphEntry = "2026";
-                ralphEntry += "     Ralph";
-                while (ralphEntry.length() < 24) ralphEntry += " ";
-                ralphEntry += "Town Murder";
-                while (ralphEntry.length() < 42) ralphEntry += " ";
-                ralphEntry += "Citation - weapons restricted";
-                p.client.println(ralphEntry);
+                p.client.println("2026     Ralph          Town Murder           Citation - weapons restricted");
                 
                 // Append entries from register.txt if it exists
+                // Format: Year + spaces (0-8), Name (9-23), padded to 24, then hardcoded offense + conviction
                 if (LittleFS.exists("/register.txt")) {
                     File f = LittleFS.open("/register.txt", "r");
                     if (f) {
@@ -17668,51 +17944,45 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                             String line = f.readStringUntil('\n');
                             line.trim();
                             if (line.length() > 0) {
-                                // Extract offender name (starts at position 9, ends before position 24)
-                                String offenderName = "";
+                                // Extract year and spaces (positions 0-8)
+                                String yearPart = "";
+                                if (line.length() >= 9) {
+                                    yearPart = line.substring(0, 9);
+                                } else {
+                                    yearPart = line;
+                                    while (yearPart.length() < 9) yearPart += " ";
+                                }
+                                
+                                // Extract name (starting at position 9, grab only the name word)
+                                String nameRaw = "";
                                 if (line.length() > 9) {
-                                    for (int i = 9; i < (int)line.length() && i < 24; i++) {
-                                        if (line[i] != ' ') {
-                                            offenderName += line[i];
-                                        } else if (offenderName.length() > 0) {
-                                            break;  // Stop at first space after name
+                                    // Extract characters starting at position 9 until we hit a space
+                                    for (int i = 9; i < (int)line.length(); i++) {
+                                        if (line[i] == ' ') {
+                                            break;  // Stop at first space
                                         }
+                                        nameRaw += line[i];
                                     }
                                 }
                                 
-                                // Reconstruct line with CapFirst applied to name and proper column alignment
-                                if (offenderName.length() > 0) {
-                                    String capitalizedName = capFirst(offenderName.c_str());
-                                    String revisedLine = line.substring(0, 9);  // Year and initial spaces
-                                    revisedLine += capitalizedName;
-                                    // Pad to position 24
-                                    while (revisedLine.length() < 24) revisedLine += " ";
+                                // Build the entry line
+                                if (nameRaw.length() > 0) {
+                                    String capitalizedName = capFirst(nameRaw.c_str());
+                                    String entry = yearPart;
+                                    entry += capitalizedName;
+                                    // Pad name column to position 24
+                                    while (entry.length() < 24) entry += " ";
                                     
-                                    // Extract offense (positions 24-42)
-                                    String offense = "";
-                                    if (line.length() > 24) {
-                                        for (int i = 24; i < (int)line.length() && i < 42; i++) {
-                                            if (line[i] != ' ') {
-                                                offense += line[i];
-                                            } else if (offense.length() > 0) {
-                                                break;  // Stop at first space after offense
-                                            }
-                                        }
-                                    }
+                                    // Add hardcoded offense "Town Murder" (11 chars)
+                                    entry += "Town Murder";
                                     
-                                    // Add offense and pad to position 42
-                                    revisedLine += offense;
-                                    while (revisedLine.length() < 42) revisedLine += " ";
+                                    // Add hardcoded 11 spaces
+                                    entry += "           ";
                                     
-                                    // Add conviction (positions 42+)
-                                    if (line.length() > 42) {
-                                        revisedLine += line.substring(42);
-                                    }
+                                    // Add hardcoded conviction
+                                    entry += "Citation - weapons restricted";
                                     
-                                    p.client.println(revisedLine);
-                                } else {
-                                    // Line doesn't have expected format, print as-is
-                                    p.client.println(line);
+                                    p.client.println(entry);
                                 }
                             }
                         }
@@ -17775,6 +18045,25 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         cmd == "u" || cmd == "up" ||
         cmd == "d" || cmd == "down")
     {
+        // Special handling for Courtroom (one-way exit)
+        if (p.roomX == 245 && p.roomY == 244 && p.roomZ == 50) {
+            // In courtroom - only allow east exit
+            if (cmd == "e" || cmd == "east") {
+                // Teleport player to Law Office (246, 244, 50)
+                if (!loadRoomForPlayer(p, 246, 244, 50)) {
+                    p.client.println("You cannot leave the courtroom at this time.");
+                    return;
+                }
+                p.client.println("You head east through the door towards Sam Gamgee's Law Office.");
+                announceToRoom(245, 244, 50, capFirst(p.name) + " heads east towards the Law Office.", index);
+                return;
+            } else {
+                // All other directions blocked
+                p.client.println("The only way out of the courtroom is east, towards Sam Gamgee's office.");
+                return;
+            }
+        }
+
         // Check if player is hobbled
         if (p.IsLegInjured) {
             if (p.hobbleSkipNextMove) {
@@ -18053,6 +18342,11 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         cmdDrink(p, args.c_str());
+        return;
+    }
+
+    if (cmd == "hire sam" || cmd == "hiresam") {
+        cmdHireSam(p);
         return;
     }
 
@@ -18865,10 +19159,81 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         return;
     }
 
+    if (cmd == "reformatregister") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+
+        // Reformat register.txt to only contain DATE + PLAYER NAME
+        if (!LittleFS.exists("/register.txt")) {
+            p.client.println("register.txt not found.");
+            return;
+        }
+
+        File inputFile = LittleFS.open("/register.txt", "r");
+        if (!inputFile) {
+            p.client.println("Cannot open register.txt for reading.");
+            return;
+        }
+
+        // Read all lines and reformat
+        std::vector<String> cleanedLines;
+        while (inputFile.available()) {
+            String line = inputFile.readStringUntil('\n');
+            line.trim();
+            if (line.length() > 0) {
+                // Extract year + spaces (positions 0-8)
+                String yearPart = "";
+                if (line.length() >= 9) {
+                    yearPart = line.substring(0, 9);
+                } else {
+                    yearPart = line;
+                    while (yearPart.length() < 9) yearPart += " ";
+                }
+
+                // Extract name (starting at position 9, stop at first space)
+                String nameRaw = "";
+                if (line.length() > 9) {
+                    for (int i = 9; i < (int)line.length(); i++) {
+                        if (line[i] == ' ') {
+                            break;  // Stop at first space
+                        }
+                        nameRaw += line[i];
+                    }
+                }
+
+                // Only add if we have a valid name
+                if (nameRaw.length() > 0) {
+                    String cleanedLine = yearPart + nameRaw;
+                    cleanedLines.push_back(cleanedLine);
+                }
+            }
+        }
+        inputFile.close();
+
+        // Write back cleaned data
+        File outputFile = LittleFS.open("/register.txt", "w");
+        if (!outputFile) {
+            p.client.println("Cannot open register.txt for writing.");
+            return;
+        }
+
+        for (size_t i = 0; i < cleanedLines.size(); i++) {
+            outputFile.println(cleanedLines[i]);
+        }
+        outputFile.close();
+
+        p.client.println("register.txt reformatted successfully!");
+        p.client.println("Removed: All old offense/conviction data");
+        p.client.println("Kept: DATE and PLAYER NAME only");
+        p.client.println("Total entries: " + String(cleanedLines.size()));
+        return;
+    }
 
 
 
 
+// -----------------------------------------
+// Debug commands (Wizard Only)
+// -----------------------------------------
 // -----------------------------------------
 // Debug commands (Wizard Only)
 // -----------------------------------------
@@ -19762,6 +20127,9 @@ void loop() {
         
         // Update arrest sequence with non-blocking delays
         updateArrestSequence(p, i);
+        
+        // Update citation removal sequence with non-blocking delays
+        updateCitationRemovalSequence(p);
         
         if (p.inCombat && now >= p.nextCombatTime) doCombatRound(p);
     }
