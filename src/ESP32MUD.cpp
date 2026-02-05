@@ -4827,11 +4827,29 @@ void cmdInventory(Player &p, const String &input) {
     for (int i = 0; i < p.invCount; i++) {
         int idx = p.invIndices[i];
         if (idx < 0 || idx >= (int)worldItems.size()) {
-            debugPrint(p, "WARNING: Inventory index " + String(i) + " has invalid worldItem index " + String(idx) + ", clearing");
+            debugPrint(p, "WARNING: Inventory index " + String(i) + " has invalid worldItem index " + String(idx) + " (worldItems.size=" + String(worldItems.size()) + "), clearing");
+            // Shift remaining items down
+            for (int j = i; j < p.invCount - 1; j++) {
+                p.invIndices[j] = p.invIndices[j + 1];
+            }
+            p.invCount--;
+            i--; // Recheck this position
             continue;
         }
 
         WorldItem &wi = worldItems[idx];
+        
+        // Check if item is marked as confiscated
+        if (wi.ownerName == "CONFISCATED") {
+            debugPrint(p, "WARNING: Inventory contains confiscated item at index " + String(idx) + ", removing from inventory");
+            // Shift remaining items down
+            for (int j = i; j < p.invCount - 1; j++) {
+                p.invIndices[j] = p.invIndices[j + 1];
+            }
+            p.invCount--;
+            i--; // Recheck this position
+            continue;
+        }
         
         // NEVER show gold coins in inventory display - they should only be in p.coins
         if (wi.name == "gold_coin") continue;
@@ -4844,9 +4862,22 @@ void cmdInventory(Player &p, const String &input) {
         
         String name = getItemDisplayName(wi);
         
-        // SAFETY CHECK: if display name is empty or "0", skip this corrupted item
+        // SAFETY CHECK: if display name is empty, numeric (corrupted), or just spaces, skip
         if (name.length() == 0) {
             debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has empty display name, skipping");
+            continue;
+        }
+        
+        // SAFETY CHECK: if display name is just a number (corrupted data), skip
+        bool isNumeric = true;
+        for (int j = 0; j < name.length(); j++) {
+            if (!isdigit(name[j])) {
+                isNumeric = false;
+                break;
+            }
+        }
+        if (isNumeric) {
+            debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has numeric display name (corrupted), skipping");
             continue;
         }
 
