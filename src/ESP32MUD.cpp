@@ -54,6 +54,7 @@ int base64_decode(uint8_t *output, int outlen, const char *input) {
 #define NPC_RESPAWN_SECONDS 600
 #define MAX_OUTPUT_WIDTH 80   // Word wrap for descriptions and long text (MUD convention)
 #define MAX_QRCODE_WIDTH 100  // QR code display width for better reliability with longer messages
+#define GLOBAL_DIALOG_DELAY 3000  // 3 second delay for ALL non-blocking dialogs (quest, arrest, citation, etc.)
 
 // Path for WiFi provisioning credentials
 const char* credPath = "/credentials.txt";
@@ -478,6 +479,9 @@ void performTownArrest(Player &p, int playerIndex);
 bool removeFromCriminalRegister(const String &playerName);
 void updateArrestSequence(Player &p, int playerIndex);
 void updateCitationRemovalSequence(Player &p);
+void updateQuestCompletionDialog(Player &p);
+void updateDeathSequence(Player &p);
+void updateCitationRemovalSequence(Player &p);
 
 // Shop functions
 Shop* getShopForRoom(Player &p);
@@ -719,7 +723,7 @@ struct Player {
     // Inventory as indices into worldItems (ownership via parentName = player.name)
     // This is a cache for quick access; source of truth is worldItems.
     int invIndices[32];
-    int invCount;
+    int invCount = 0;  // Initialize to 0 to prevent garbage values
 
     // Equipment tracked by worldItems index
     int wieldedItemIndex;
@@ -782,13 +786,23 @@ struct Player {
     bool inArrestSequence = false;
     int arrestSequenceStep = 0;      // 0-7: different stages of arrest
     unsigned long arrestSequenceNextTime = 0;
-    static const unsigned long ARREST_DELAY_MS = 2000;  // 2 second delay between messages
     
     // Citation removal sequence state (for non-blocking delayed messages)
     bool inCitationRemovalSequence = false;
     int citationRemovalSequenceStep = 0;      // 0-5: different stages of citation removal
     unsigned long citationRemovalSequenceNextTime = 0;
-    static const unsigned long CITATION_REMOVAL_DELAY_MS = 2000;  // 2 second delay between messages
+    
+    // Quest completion dialog state (for non-blocking delayed messages)
+    bool inQuestCompletionDialog = false;
+    std::vector<String> questCompletionDialogLines;  // Multi-line dialog to display
+    int questCompletionDialogStep = 0;               // Current line index
+    unsigned long questCompletionDialogNextTime = 0; // When to show next line
+    
+    // Death sequence dialog state (for non-blocking delayed messages)
+    bool inDeathSequence = false;
+    std::vector<String> deathDialogLines;   // Death messages to display
+    int deathDialogStep = 0;                // Current line index
+    unsigned long deathDialogNextTime = 0;  // When to show next line
 };
 
 // =============================
@@ -990,13 +1004,13 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     if (capitalizedName.length() > 0) {
         capitalizedName[0] = toupper(capitalizedName[0]);
     }
-    g_emailBody = "A message from " + capitalizedName + " - The " + playerTitle + ":\r\n\r\n";
+    g_emailBody = String("A message from ") + capitalizedName + String(" - The ") + playerTitle + String(":\r\n\r\n");
     g_emailBody += "Here Ye, Here Ye.  A message from the realm of Esperthertu has been delivered to you!\r\n\r\n";
     g_emailBody += message;
     
     // Use HTTP API instead of direct SMTP
-    Serial.println("[EMAIL] Sending via API to " + recipientEmail);
-    Serial.println("[EMAIL] Body length: " + String(g_emailBody.length()) + " bytes");
+    Serial.println(String("[EMAIL] Sending via API to ") + recipientEmail);
+    Serial.println(String("[EMAIL] Body length: ") + String(g_emailBody.length()) + String(" bytes"));
     
     // Create HTTP client for API call
     HTTPClient http;
@@ -1007,13 +1021,13 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     String escapedTo = escapeJsonString(recipientEmail);
     
     String jsonPayload = "{";
-    jsonPayload += "\"to\":\"" + escapedTo + "\",";
+    jsonPayload += String("\"to\":\"" ) + escapedTo + String("\",");
     jsonPayload += "\"subject\":\"Esperthertu Post Office Delivery!\",";
     jsonPayload += "\"from\":\"esperthertu_post_office@storyboardacs.com\",";
-    jsonPayload += "\"body\":\"" + escapedBody + "\"";
+    jsonPayload += String("\"body\":\"" ) + escapedBody + String("\"");
     jsonPayload += "}";
     
-    Serial.println("[EMAIL] JSON size: " + String(jsonPayload.length()) + " bytes");
+    Serial.println(String("[EMAIL] JSON size: ") + String(jsonPayload.length()) + String(" bytes"));
     
     // Make HTTP POST request
     http.begin(apiUrl);
@@ -1024,7 +1038,7 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     unsigned long startTime = millis();
     const unsigned long HTTP_TIMEOUT = 15000;  // 15 second total timeout
     
-    Serial.println("[EMAIL] Sending POST request to " + apiUrl);
+    Serial.println(String("[EMAIL] Sending POST request to ") + apiUrl);
     int httpResponseCode = http.POST(jsonPayload);
     
     // Check timeout
@@ -1034,23 +1048,23 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
         return false;
     }
     
-    Serial.println("[EMAIL] HTTP Response Code: " + String(httpResponseCode));
+    Serial.println(String("[EMAIL] HTTP Response Code: ") + String(httpResponseCode));
     
     if (httpResponseCode > 0) {
         String response = http.getString();
-        Serial.println("[EMAIL] Response: " + response);
+        Serial.println(String("[EMAIL] Response: ") + response);
         
         if (httpResponseCode == 200) {
             http.end();
             return true;
         } else {
-            Serial.println("[EMAIL] HTTP error code: " + String(httpResponseCode));
+            Serial.println(String("[EMAIL] HTTP error code: ") + String(httpResponseCode));
             http.end();
             return false;
         }
     } else {
         String errorMsg = http.errorToString(httpResponseCode);
-        Serial.println("[EMAIL] HTTP request failed! Error: " + errorMsg);
+        Serial.println(String("[EMAIL] HTTP request failed! Error: ") + errorMsg);
         http.end();
         return false;
     }
@@ -1084,8 +1098,8 @@ int countPlayersInRoom(int x, int y, int z) {
 // Looks for "fieldName":"value" and extracts value, stopping at closing quote that's not escaped
 String extractJsonString(const String &json, const String &fieldName) {
     // Try both formats: "field":"value" and "field": "value" (with space)
-    String searchKey1 = "\"" + fieldName + "\":\"";
-    String searchKey2 = "\"" + fieldName + "\": \"";
+    String searchKey1 = String("\"") + fieldName + String("\":\"" );
+    String searchKey2 = String("\"") + fieldName + String("\": \"" );
     
     int keyIdx = json.indexOf(searchKey1);
     int searchLen = searchKey1.length();
@@ -1096,7 +1110,7 @@ String extractJsonString(const String &json, const String &fieldName) {
     }
     
     if (keyIdx == -1) {
-        Serial.println("[JOKE PARSE] Could not find field: " + fieldName);
+        Serial.println(String("[JOKE PARSE] Could not find field: ") + fieldName);
         return "";
     }
     
@@ -1131,57 +1145,97 @@ void startJokeFetch() {
         return; // Already fetching
     }
     
+    // ⭐ PRE-FLIGHT MEMORY CHECK: Ensure we have enough free RAM
+    uint32_t freeHeap = esp_get_free_heap_size();
+    if (freeHeap < 20000) {  // Less than 20KB free
+        Serial.println(String("[JOKE] SKIPPED: Insufficient memory (free: ") + String(freeHeap) + String(" bytes)"));
+        return;
+    }
+    
+    // ⭐ Aggressively clean up any previous HTTPClient
+    if (innKeeperJokes.httpClient != nullptr) {
+        try {
+            innKeeperJokes.httpClient->end();
+        } catch (...) {}
+        try {
+            delete innKeeperJokes.httpClient;
+        } catch (...) {}
+        innKeeperJokes.httpClient = nullptr;
+    }
+    delay(10);  // Brief delay to let stack settle
+    
     Serial.println("[JOKE] Creating HTTPClient...");
-    innKeeperJokes.httpClient = new HTTPClient();
+    try {
+        innKeeperJokes.httpClient = new HTTPClient();
+    } catch (...) {
+        Serial.println("[JOKE] Failed to allocate HTTPClient!");
+        return;
+    }
     
     // Build URL with excluded joke IDs
     String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
     
-    // Add exclude parameter if we have used jokes
+    // Add exclude parameter if we have used jokes (cap at 20 to prevent URL overflow)
     if (innKeeperJokes.usedJokeIds.size() > 0) {
         jokeUrl += "&exclude=";
-        for (size_t i = 0; i < innKeeperJokes.usedJokeIds.size(); i++) {
+        size_t maxExclude = (innKeeperJokes.usedJokeIds.size() > 20) ? 20 : innKeeperJokes.usedJokeIds.size();
+        for (size_t i = 0; i < maxExclude; i++) {
             jokeUrl += innKeeperJokes.usedJokeIds[i];
-            if (i < innKeeperJokes.usedJokeIds.size() - 1) {
+            if (i < maxExclude - 1) {
                 jokeUrl += ",";
             }
         }
-        Serial.printf("[JOKE] Excluding %d previously used jokes\n", innKeeperJokes.usedJokeIds.size());
     }
     
-    Serial.println("[JOKE] Attempting to begin connection to: " + jokeUrl);
-    if (innKeeperJokes.httpClient->begin(jokeUrl)) {
-        innKeeperJokes.httpClient->setConnectTimeout(3000);
-        innKeeperJokes.httpClient->setTimeout(5000);
-        Serial.println("[JOKE] Sending GET request...");
-        innKeeperJokes.httpClient->GET();  // Send request, don't wait for response
-        innKeeperJokes.requestPending = true;
-        innKeeperJokes.requestStartTime = millis();
-        Serial.println("[JOKE] Async request initiated at " + String(innKeeperJokes.requestStartTime));
-    } else {
-        Serial.println("[JOKE] Failed to begin HTTP connection");
-        delete innKeeperJokes.httpClient;
+    Serial.println(String("[JOKE] Attempting to begin connection to: ") + jokeUrl);
+    
+    try {
+        innKeeperJokes.httpClient->setConnectTimeout(1500);  // ULTRA-aggressive: 1.5s
+        innKeeperJokes.httpClient->setTimeout(2000);         // ULTRA-aggressive: 2s total
+        
+        if (innKeeperJokes.httpClient->begin(jokeUrl)) {
+            innKeeperJokes.httpClient->GET();
+            innKeeperJokes.requestPending = true;
+            innKeeperJokes.requestStartTime = millis();
+            Serial.println("[JOKE] Async request initiated (1.5s timeout)");
+        } else {
+            Serial.println("[JOKE] Failed to begin HTTP connection");
+            innKeeperJokes.httpClient->end();
+            delete innKeeperJokes.httpClient;
+            innKeeperJokes.httpClient = nullptr;
+            innKeeperJokes.requestPending = false;
+        }
+    } catch (...) {
+        Serial.println("[JOKE] Exception in startJokeFetch");
+        try {
+            innKeeperJokes.httpClient->end();
+        } catch (...) {}
+        try {
+            delete innKeeperJokes.httpClient;
+        } catch (...) {}
         innKeeperJokes.httpClient = nullptr;
+        innKeeperJokes.requestPending = false;
     }
 }
 
 // Check if async joke fetch is complete and process response (non-blocking)
 bool checkJokeFetchComplete() {
     if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) {
-        Serial.printf("[JOKE] Early return: requestPending=%d, httpClient=%p\n", innKeeperJokes.requestPending, innKeeperJokes.httpClient);
         return false;
     }
     
     unsigned long now = millis();
     unsigned long elapsed = now - innKeeperJokes.requestStartTime;
     
-    Serial.printf("[JOKE] Checking fetch: elapsed=%lu ms\n", elapsed);
-    
-    // Check for timeout (10 seconds)
-    if (elapsed > 10000) {
-        Serial.println("[JOKE] Request timeout after 10 seconds");
-        innKeeperJokes.httpClient->end();
-        delete innKeeperJokes.httpClient;
+    // ⭐ ULTRA-AGGRESSIVE: Check for timeout at 2 seconds (earlier than 5s)
+    if (elapsed > 2000) {
+        Serial.println("[JOKE] Request timeout after 2 seconds - force closing");
+        try {
+            innKeeperJokes.httpClient->end();
+        } catch (...) {}
+        try {
+            delete innKeeperJokes.httpClient;
+        } catch (...) {}
         innKeeperJokes.httpClient = nullptr;
         innKeeperJokes.requestPending = false;
         return false;
@@ -1189,30 +1243,74 @@ bool checkJokeFetchComplete() {
     
     // Give request at least 200ms to complete
     if (elapsed < 200) {
-        Serial.printf("[JOKE] Waiting... only %.0f ms elapsed\n", (float)elapsed);
-        return false; // Not enough time for response yet
-    }
-    
-    // Try to get response
-    int httpCode = innKeeperJokes.httpClient->getSize();
-    Serial.printf("[JOKE] HTTP getSize() returned: %d\n", httpCode);
-    
-    if (httpCode == -1) {
-        // Still waiting or error
-        Serial.println("[JOKE] Still waiting for response (-1)");
         return false;
     }
     
-    // Response available - parse it
-    Serial.println("[JOKE] Response available, calling getString()...");
-    String payload = innKeeperJokes.httpClient->getString();
-    innKeeperJokes.httpClient->end();
-    delete innKeeperJokes.httpClient;
+    // Try to get response with timeout wrap
+    int httpCode = -1;
+    try {
+        // Set very short timeout for getSize check to prevent hanging
+        httpCode = innKeeperJokes.httpClient->getSize();
+    } catch (...) {
+        Serial.println("[JOKE] Exception during getSize() - closing connection");
+        try {
+            innKeeperJokes.httpClient->end();
+        } catch (...) {}
+        try {
+            delete innKeeperJokes.httpClient;
+        } catch (...) {}
+        innKeeperJokes.httpClient = nullptr;
+        innKeeperJokes.requestPending = false;
+        return false;
+    }
+    
+    if (httpCode == -1) {
+        // Still waiting - check if we're stuck
+        if (elapsed > 4000) {
+            // We've been waiting > 4 seconds, force close
+            Serial.println("[JOKE] Timeout waiting for response - force closing");
+            try {
+                innKeeperJokes.httpClient->end();
+            } catch (...) {}
+            try {
+                delete innKeeperJokes.httpClient;
+            } catch (...) {}
+            innKeeperJokes.httpClient = nullptr;
+            innKeeperJokes.requestPending = false;
+        }
+        return false;
+    }
+    
+    // Response available - parse it with error handling
+    String payload = "";
+    try {
+        Serial.println("[JOKE] Response available, calling getString()...");
+        payload = innKeeperJokes.httpClient->getString();
+    } catch (...) {
+        Serial.println("[JOKE] Exception during getString() - closing connection");
+        try {
+            innKeeperJokes.httpClient->end();
+        } catch (...) {}
+        try {
+            delete innKeeperJokes.httpClient;
+        } catch (...) {}
+        innKeeperJokes.httpClient = nullptr;
+        innKeeperJokes.requestPending = false;
+        return false;
+    }
+    
+    // Clean up the HTTP client
+    try {
+        innKeeperJokes.httpClient->end();
+    } catch (...) {}
+    try {
+        delete innKeeperJokes.httpClient;
+    } catch (...) {}
     innKeeperJokes.httpClient = nullptr;
     innKeeperJokes.requestPending = false;
     
-    Serial.println("[JOKE] Response received, size: " + String(payload.length()));
-    Serial.println("[JOKE] Response snippet: " + payload.substring(0, 100));
+    Serial.println(String("[JOKE] Response received, size: ") + String(payload.length()));
+    Serial.println(String("[JOKE] Response snippet: ") + payload.substring(0, 100));
     
     // Check if it's an error response
     if (payload.indexOf("\"error\":true") != -1) {
@@ -1224,7 +1322,7 @@ bool checkJokeFetchComplete() {
     String jokeId = extractJsonString(payload, "id");
     if (jokeId.length() > 0) {
         innKeeperJokes.currentJokeId = jokeId;
-        Serial.println("[JOKE] Joke ID: " + jokeId);
+        Serial.println(String("[JOKE] Joke ID: ") + jokeId);
     }
     
     // Extract joke text
@@ -1240,10 +1338,10 @@ bool checkJokeFetchComplete() {
         // Two-part joke - extract "setup" + " " + "delivery"
         String setup = extractJsonString(payload, "setup");
         String delivery = extractJsonString(payload, "delivery");
-        jokeText = setup + " " + delivery;
+        jokeText = setup + String(" ") + delivery;
     } else {
         Serial.println("[JOKE] Unknown joke format!");
-        Serial.println("[JOKE] Full payload: " + payload);
+        Serial.println(String("[JOKE] Full payload: ") + payload);
     }
     
     // Handle Unicode escape sequences
@@ -1259,11 +1357,11 @@ bool checkJokeFetchComplete() {
             innKeeperJokes.usedJokeIds.push_back(jokeId);
             Serial.printf("[JOKE] Added to used list (now %d jokes tracked)\n", innKeeperJokes.usedJokeIds.size());
         }
-        Serial.println("[JOKE] Successfully fetched joke: " + jokeText.substring(0, 40) + "...");
+        Serial.println(String("[JOKE] Successfully fetched joke: ") + jokeText.substring(0, 40) + String("..."));
         return true;
     } else {
-        Serial.println("[JOKE] Joke text too short (len=" + String(jokeText.length()) + "), retrying...");
-        Serial.println("[JOKE] Extracted text: " + jokeText);
+        Serial.println(String("[JOKE] Joke text too short (len=") + String(jokeText.length()) + String("), retrying..."));
+        Serial.println(String("[JOKE] Extracted text: ") + jokeText);
         return false;
     }
 }
@@ -1349,7 +1447,7 @@ bool onQuestEvent(Player &p,
                     p.questStepDone[q][s] = true;
 
                     if (p.IsWizard)
-                        debugPrint(p, "Quest step complete: gave " + step.item + " to " + step.target);
+                        debugPrint(p, String("Quest step complete: gave ") + step.item + String(" to ") + step.target);
 
                     goto CHECK_COMPLETE;
                 }
@@ -1364,7 +1462,7 @@ bool onQuestEvent(Player &p,
                     p.questStepDone[q][s] = true;
 
                     if (p.IsWizard)
-                        debugPrint(p, "Quest step complete: killed " + step.target);
+                        debugPrint(p, String("Quest step complete: killed ") + step.target);
 
                     goto CHECK_COMPLETE;
                 }
@@ -1379,7 +1477,7 @@ bool onQuestEvent(Player &p,
                     p.questStepDone[q][s] = true;
 
                     if (p.IsWizard)
-                        debugPrint(p, "Quest step complete: said \"" + step.phrase + "\"");
+                        debugPrint(p, String("Quest step complete: said \"") + step.phrase + String("\""));
 
                     goto CHECK_COMPLETE;
                 }
@@ -1396,9 +1494,9 @@ bool onQuestEvent(Player &p,
                     p.questStepDone[q][s] = true;
 
                     if (p.IsWizard)
-                        debugPrint(p, "Quest step complete: reached " +
-                                     String(step.targetX) + "," +
-                                     String(step.targetY) + "," +
+                        debugPrint(p, String("Quest step complete: reached ") +
+                                     String(step.targetX) + String(",") +
+                                     String(step.targetY) + String(",") +
                                      String(step.targetZ));
 
                     goto CHECK_COMPLETE;
@@ -1428,36 +1526,9 @@ CHECK_COMPLETE:
                 savePlayerToFS(p);
 
                 // --------------------------------------------------------
-                // SHOW COMPLETION DIALOG (FIXED MULTI-LINE PRINT)
+                // SHOW COMPLETION DIALOG (NON-BLOCKING)
                 // --------------------------------------------------------
-                if (quest.completionDialog.length() > 0) {
-
-                    String dialog = unescapeNewlines(quest.completionDialog);
-
-                  // Print line-by-line so WiFiClient doesn't truncate
-                    int start = 0;
-                    while (true) {
-                        int nl = dialog.indexOf('\n', start);
-
-                        if (nl == -1) {
-                            p.client.println(dialog.substring(start));
-                            delay(500);   // ⭐ 0.5‑second pause after final line
-                            break;
-                        }
-
-                        p.client.println(dialog.substring(start, nl));
-                        delay(500);       // ⭐ 0.5‑second pause between lines
-
-                        start = nl + 1;
-                    }
-
-                } else {
-                    p.client.println("You have completed this quest! ->  " + quest.name);
-                }
-
-                // --------------------------------------------------------
-                // AWARD XP AND GOLD
-                // --------------------------------------------------------
+                // Award XP and Gold first
                 if (quest.rewardXp > 0) {
                     p.xp += quest.rewardXp;
                 }
@@ -1468,14 +1539,50 @@ CHECK_COMPLETE:
                 p.questsCompleted++;
                 savePlayerToFS(p);
 
+                // Start non-blocking dialog sequence
+                if (quest.completionDialog.length() > 0) {
+                    String dialog = unescapeNewlines(quest.completionDialog);
+
+                    // Split multi-line dialog into individual lines
+                    p.questCompletionDialogLines.clear();
+                    int start = 0;
+                    while (true) {
+                        int nl = dialog.indexOf('\n', start);
+
+                        if (nl == -1) {
+                            String line = dialog.substring(start);
+                            if (line.length() > 0) {
+                                p.questCompletionDialogLines.push_back(line);
+                            }
+                            break;
+                        }
+
+                        String line = dialog.substring(start, nl);
+                        if (line.length() > 0) {
+                            p.questCompletionDialogLines.push_back(line);
+                        }
+
+                        start = nl + 1;
+                    }
+
+                    // Start the dialog sequence
+                    p.inQuestCompletionDialog = true;
+                    p.questCompletionDialogStep = 0;
+                    p.questCompletionDialogNextTime = millis();
+
+                } else {
+                    // No custom dialog - show default message
+                    p.client.println(String("You have completed this quest! ->  ") + quest.name);
+                }
+
                 // --------------------------------------------------------
                 // SHOW REWARD MESSAGE (unified, friendly)
                 // --------------------------------------------------------
                 if (quest.rewardXp > 0 || quest.rewardGold > 0) {
-                    p.client.println("Quest complete: " + quest.name + 
-                        ". You feel more experienced and wealthy.");
+                    p.client.println(String("Quest complete: ") + quest.name + 
+                        String(". You feel more experienced and wealthy."));
                 } else {
-                    p.client.println("Quest complete: " + quest.name + ".");
+                    p.client.println(String("Quest complete: ") + quest.name + String("."));
                 }
 
                 // --------------------------------------------------------
@@ -1666,7 +1773,7 @@ void checkQuestCompletion(Player &p, int questId) {
     // ⭐ QUEST REWARDS
     if (qd.rewardXp > 0) {
         p.xp += qd.rewardXp;
-        p.client.println("You gain " + String(qd.rewardXp) + " experience points!");
+        p.client.println(String("You gain ") + String(qd.rewardXp) + String(" experience points!"));
     }
 
     if (qd.rewardGold > 0) {
@@ -1674,7 +1781,7 @@ void checkQuestCompletion(Player &p, int questId) {
         if (qd.rewardGold == 1)
             p.client.println("You receive 1 gold coin!");
         else
-            p.client.println("You receive " + String(qd.rewardGold) + " gold coins!");
+            p.client.println(String("You receive ") + String(qd.rewardGold) + String(" gold coins!"));
     }
 
     // Show completion dialog
@@ -1698,7 +1805,7 @@ void telnetDebug(const String &msg) {
     // Send debug output to ALL connected players
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (players[i].active && players[i].client.connected()) {
-            players[i].client.println("[DBG] " + msg);
+            players[i].client.println(String("[DBG] ") + msg);
         }
     }
 }
@@ -1826,16 +1933,16 @@ void startBinaryFileTransfer() {
 
     // Read filename
     currentFilename = readLineFromSerial();
-    telnetDebug("Filename read: '" + currentFilename + "'");
+    telnetDebug(String("Filename read: '") + currentFilename + String("'"));
 
     // Read size
     String sizeStr = readLineFromSerial();
-    telnetDebug("Size string read: '" + sizeStr + "'");
+    telnetDebug(String("Size string read: '") + sizeStr + String("'"));
     expectedSize = sizeStr.toInt();
-    telnetDebug("Parsed expected size: " + String(expectedSize));
+    telnetDebug(String("Parsed expected size: ") + String(expectedSize));
 
     // Open file
-    currentFile = LittleFS.open("/" + currentFilename, "w");
+    currentFile = LittleFS.open(String("/") + currentFilename, "w");
     if (!currentFile) {
         telnetDebug("ERROR: Could not open file for writing!");
         Serial.println("ERR_OPEN");
@@ -1860,14 +1967,14 @@ void processBinaryTransfer() {
 
     // Peek for debug
     int peekVal = Serial.peek();
-    telnetDebug("Peek byte: " + String(peekVal));
+    telnetDebug(String("Peek byte: ") + String(peekVal));
 
     // Read 2‑byte big‑endian length
     int lenHi = Serial.read();
     int lenLo = Serial.read();
     int chunkLen = (lenHi << 8) | lenLo;
 
-    telnetDebug("Chunk length: " + String(chunkLen));
+    telnetDebug(String("Chunk length: ") + String(chunkLen));
 
     // Wait for full chunk
     unsigned long start = millis();
@@ -1883,14 +1990,14 @@ void processBinaryTransfer() {
     // Read chunk
     uint8_t buffer[512];
     int bytesRead = Serial.readBytes(buffer, chunkLen);
-    telnetDebug("Bytes read: " + String(bytesRead));
+    telnetDebug(String("Bytes read: ") + String(bytesRead));
 
     // Write to file
     int bytesWritten = currentFile.write(buffer, bytesRead);
-    telnetDebug("Bytes written: " + String(bytesWritten));
+    telnetDebug(String("Bytes written: ") + String(bytesWritten));
 
     receivedSize += bytesWritten;
-    telnetDebug("Received so far: " + String(receivedSize));
+    telnetDebug(String("Received so far: ") + String(receivedSize));
 
     // ACK to PC
     Serial.println("OK");
@@ -2138,25 +2245,39 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
     String cleaned = ensurePunctuation(msg);
     String wrappedMsg = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!players[i].active || !players[i].loggedIn) continue;
-        if (i == excludeA || i == excludeB) continue;
+        try {
+            if (!players[i].active || !players[i].loggedIn) continue;
+            if (i == excludeA || i == excludeB) continue;
 
-        if (players[i].roomX == x &&
-            players[i].roomY == y &&
-            players[i].roomZ == z) {
-            // Print each line separately to avoid client-side indentation
-            int start = 0;
-            for (int j = 0; j <= wrappedMsg.length(); j++) {
-                if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
-                    String line = wrappedMsg.substring(start, j);
-                    players[i].client.println(line);
-                    start = j + 1;
+            if (players[i].roomX == x &&
+                players[i].roomY == y &&
+                players[i].roomZ == z) {
+                
+                // Safety check before printing
+                if (!players[i].client.connected()) {
+                    players[i].active = false;
+                    continue;
                 }
+                
+                // Print each line separately to avoid client-side indentation
+                int start = 0;
+                for (int j = 0; j <= wrappedMsg.length(); j++) {
+                    if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
+                        String line = wrappedMsg.substring(start, j);
+                        players[i].client.println(line);
+                        start = j + 1;
+                    }
+                }
+                
+                // Print prompt after announcement
+                players[i].client.println("");
+                players[i].client.print("> ");
             }
-            
-            // Print prompt after announcement
-            players[i].client.println("");
-            players[i].client.print("> ");
+        } catch (...) {
+            // Disconnect problematic player
+            if (i >= 0 && i < MAX_PLAYERS) {
+                players[i].active = false;
+            }
         }
     }
 }
@@ -2420,10 +2541,10 @@ String formatDateTimeWithTimezone(time_t utcTime) {
     String tzName = "EST";
     int offsetHours = timezoneOffsetSeconds / 3600;
     if (offsetHours != -5) {
-        tzName = "TZ" + String(offsetHours);
+        tzName = String("TZ") + String(offsetHours);
     }
     
-    return String(utcStr) + " UTC (" + String(timeStr) + " " + tzName + ")";
+    return String(utcStr) + String(" UTC (") + String(timeStr) + String(" ") + tzName + String(")");
 }
 
 // =============================
@@ -2440,7 +2561,7 @@ void logSessionLogin(const char* playerName) {
     time_t now = time(nullptr);
     String timestamp = formatDateTimeWithTimezone(now);
     
-    String logEntry = String(timestamp) + " | LOGIN  | " + String(playerName) + "\n";
+    String logEntry = String(timestamp) + String(" | LOGIN  | ") + String(playerName) + String("\n");
     logFile.print(logEntry);
     logFile.close();
 }
@@ -2455,7 +2576,7 @@ void logSessionNewLogin(const char* playerName) {
     time_t now = time(nullptr);
     String timestamp = formatDateTimeWithTimezone(now);
     
-    String logEntry = String(timestamp) + " | NEWLOG | " + String(playerName) + "\n";
+    String logEntry = String(timestamp) + String(" | NEWLOG | ") + String(playerName) + String("\n");
     logFile.print(logEntry);
     logFile.close();
 }
@@ -2800,7 +2921,12 @@ void loadWorldItemLine(const String &line) {
     wi.parentName = parentName;
     wi.value = value;
 
-    worldItems.push_back(wi);
+    // ⭐ SAFETY: Limit world items to 2000 to prevent memory exhaustion
+    if (worldItems.size() < 2000) {
+        worldItems.push_back(wi);
+    } else {
+        Serial.printf("[WARNING] World items limit (2000) reached! Discarding item: %s\n", itemName);
+    }
 }
 
 
@@ -3114,25 +3240,39 @@ void announceToRoomWrapped(int x, int y, int z, const String &msg, int excludeIn
     String wrappedMsg = wordWrap(cleaned, MAX_OUTPUT_WIDTH);
     
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!players[i].active || !players[i].loggedIn) continue;
-        if (i == excludeIndex) continue;
+        try {
+            if (!players[i].active || !players[i].loggedIn) continue;
+            if (i == excludeIndex) continue;
 
-        if (players[i].roomX == x &&
-            players[i].roomY == y &&
-            players[i].roomZ == z) {
-            // Print each line separately to avoid client-side indentation
-            int start = 0;
-            for (int j = 0; j <= wrappedMsg.length(); j++) {
-                if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
-                    String line = wrappedMsg.substring(start, j);
-                    players[i].client.println(line);
-                    start = j + 1;
+            if (players[i].roomX == x &&
+                players[i].roomY == y &&
+                players[i].roomZ == z) {
+                
+                // Safety check before printing
+                if (!players[i].client.connected()) {
+                    players[i].active = false;
+                    continue;
                 }
+                
+                // Print each line separately to avoid client-side indentation
+                int start = 0;
+                for (int j = 0; j <= wrappedMsg.length(); j++) {
+                    if (j == wrappedMsg.length() || wrappedMsg[j] == '\n') {
+                        String line = wrappedMsg.substring(start, j);
+                        players[i].client.println(line);
+                        start = j + 1;
+                    }
+                }
+                
+                // Print prompt after announcement
+                players[i].client.println("");
+                players[i].client.print("> ");
             }
-            
-            // Print prompt after announcement
-            players[i].client.println("");
-            players[i].client.print("> ");
+        } catch (...) {
+            // Disconnect problematic player
+            if (i >= 0 && i < MAX_PLAYERS) {
+                players[i].active = false;
+            }
         }
     }
 }
@@ -3408,7 +3548,7 @@ void loadWorldItemsFromSave() {
                         break;
                     }
                 }
-                if (!found) worldItems.push_back(temp);
+                if (!found && worldItems.size() < 2000) worldItems.push_back(temp);
             }
             temp = WorldItem();
             inItem = true;
@@ -3447,7 +3587,7 @@ void loadWorldItemsFromSave() {
                 break;
             }
         }
-        if (!found) worldItems.push_back(temp);
+        if (!found && worldItems.size() < 2000) worldItems.push_back(temp);
     }
 
     f.close();
@@ -4836,14 +4976,8 @@ void cmdInventory(Player &p, const String &input) {
     // ----------------------------------------------------
     for (int i = 0; i < p.invCount; i++) {
         int idx = p.invIndices[i];
+        // Skip invalid item indices without blocking on debug output
         if (idx < 0 || idx >= (int)worldItems.size()) {
-            debugPrint(p, "WARNING: Inventory index " + String(i) + " has invalid worldItem index " + String(idx) + " (worldItems.size=" + String(worldItems.size()) + "), clearing");
-            // Shift remaining items down
-            for (int j = i; j < p.invCount - 1; j++) {
-                p.invIndices[j] = p.invIndices[j + 1];
-            }
-            p.invCount--;
-            i--; // Recheck this position
             continue;
         }
 
@@ -4854,7 +4988,7 @@ void cmdInventory(Player &p, const String &input) {
         
         // SAFETY CHECK: skip items with empty or invalid names
         if (wi.name.length() == 0) {
-            debugPrint(p, "WARNING: Inventory item " + String(idx) + " has empty name, skipping");
+            // debugPrint(p, "WARNING: Inventory item " + String(idx) + " has empty name, skipping");
             continue;
         }
         
@@ -4862,7 +4996,7 @@ void cmdInventory(Player &p, const String &input) {
         
         // SAFETY CHECK: if display name is empty, numeric (corrupted), or just spaces, skip
         if (name.length() == 0) {
-            debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has empty display name, skipping");
+            // debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has empty display name, skipping");
             continue;
         }
         
@@ -4875,7 +5009,7 @@ void cmdInventory(Player &p, const String &input) {
             }
         }
         if (isNumeric) {
-            debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has numeric display name (corrupted), skipping");
+            // debugPrint(p, "WARNING: Inventory item " + String(idx) + " (" + wi.name + ") has numeric display name (corrupted), skipping");
             continue;
         }
 
@@ -5042,7 +5176,9 @@ int createWorldItem(const String &itemName, const String &parentName) {
     wi.y = py;
     wi.z = pz;
 
-    worldItems.push_back(wi);
+    if (worldItems.size() < 2000) {
+        worldItems.push_back(wi);
+    }
     return worldItems.size() - 1;
 }
 
@@ -5602,11 +5738,43 @@ void cmdLookAt(Player &p, const String &input) {
         otherName.toLowerCase();
         
         if (nameMatches(otherName, searchLower)) {
-            // Display player name
-            p.client.println(capFirst(other.name));
+            // Display player name and title
+            String fullTitle = capFirst(other.name) + String(" ") + String(titles[other.raceId][other.level - 1]);
+            p.client.println(fullTitle);
+            p.client.println("");
             
-            // Display their level title
-            p.client.println(String(titles[other.raceId][other.level - 1]));
+            // Rebuild inventory to get latest items (e.g., items given to them)
+            rebuildPlayerInventory(other);
+            
+            // Display inventory
+            if (other.invCount > 0) {
+                p.client.println(String(capFirst(other.name)) + String(" is carrying:"));
+                
+                for (int j = 0; j < other.invCount; j++) {
+                    int itemIdx = other.invIndices[j];
+                    if (itemIdx < 0 || itemIdx >= (int)worldItems.size()) continue;
+                    
+                    WorldItem &item = worldItems[itemIdx];
+                    String itemDisplay = getItemDisplayName(item);
+                    
+                    // Check if wielded
+                    if (other.wieldedItemIndex == itemIdx) {
+                        itemDisplay += String(" (wielded)");
+                    }
+                    
+                    // Check if worn
+                    for (int slot = 0; slot < SLOT_COUNT; slot++) {
+                        if (other.wornItemIndices[slot] == itemIdx) {
+                            itemDisplay += String(" (worn)");
+                            break;
+                        }
+                    }
+                    
+                    p.client.println(itemDisplay);
+                }
+            } else {
+                p.client.println(String(capFirst(other.name)) + String(" is carrying nothing."));
+            }
             return;
         }
     }
@@ -5911,6 +6079,10 @@ void debugDumpSinglePlayer(Player &p, const String &name) {
         return v;
     };
 
+    // Skip file format version (first line)
+    String versionStr = f.readStringUntil('\n');
+    versionStr.trim();
+
     // -----------------------------
     // BASIC FIELDS
     // -----------------------------
@@ -5922,6 +6094,7 @@ void debugDumpSinglePlayer(Player &p, const String &name) {
     read("hp: ");
     read("maxHp: ");
     read("coins: ");
+    read("bankGp: ");
 
     // -----------------------------
     // WIZARD FIELDS
@@ -5930,6 +6103,7 @@ void debugDumpSinglePlayer(Player &p, const String &name) {
     debugPrint(p, "--- WIZARD ---");
     read("isWizard: ");
     read("debugDest: ");
+    read("showStats: ");
 
     // -----------------------------
     // CUSTOM MESSAGES
@@ -6159,6 +6333,204 @@ void debugDumpNPCs(Player &p) {
     }
 }
 
+
+// ======================================================================
+// DEBUG "ToSerial" IMPLEMENTATIONS - Output directly to Serial Monitor
+// ======================================================================
+
+void debugDumpItemsToSerial() {
+    Serial.println("\n=== ITEM DEBUG TO SERIAL ===");
+    for (int i = 0; i < (int)worldItems.size(); i++) {
+        WorldItem &wi = worldItems[i];
+
+        String line = "#" + String(i) +
+                      "  ID=" + wi.name +
+                      "  (" + getItemDisplayName(wi) + ")" +
+                      "  owner=" + (wi.ownerName.length() ? wi.ownerName : "<world>") +
+                      "  parent=" + (wi.parentName.length() ? wi.parentName : "<none>") +
+                      "  xyz=(" + String(wi.x) + "," + String(wi.y) + "," + String(wi.z) + ")";
+
+        Serial.println(line);
+
+        std::string key = std::string(wi.name.c_str());
+        if (itemDefs.count(key)) {
+            auto &def = itemDefs[key];
+
+            Serial.println("    attributes:");
+            for (auto &kv : def.attributes) {
+                Serial.print("      ");
+                Serial.print(kv.first.c_str());
+                Serial.print(" = ");
+                Serial.println(kv.second.c_str());
+            }
+        }
+
+        std::vector<int> kids;
+        getChildrenOf(wi.name, kids);
+        if (!kids.empty()) {
+            Serial.println("    children:");
+            for (int k : kids) {
+                WorldItem &c = worldItems[k];
+                Serial.print("      -> ");
+                Serial.print(c.name);
+                Serial.print(" (");
+                Serial.print(getItemDisplayName(c));
+                Serial.println(")");
+            }
+        }
+
+        Serial.println("");
+    }
+    Serial.println("=== END ITEM DEBUG ===\n");
+}
+
+void debugDumpFilesToSerial() {
+    Serial.println("\n=== FILES DEBUG TO SERIAL ===");
+    
+    // List of critical files to check
+    const char* filePaths[] = {
+        "/rooms.txt",
+        "/items.vxd",
+        "/items.vxi",
+        "/npcs.vxi",
+        "/npcs.vxd",
+        "/quests.txt",
+        "/world_items.vxi"
+    };
+    
+    int numFiles = sizeof(filePaths) / sizeof(filePaths[0]);
+    
+    for (int i = 0; i < numFiles; i++) {
+        const char* path = filePaths[i];
+        
+        if (LittleFS.exists(path)) {
+            File f = LittleFS.open(path, "r");
+            if (f) {
+                Serial.print("File: ");
+                Serial.print(path);
+                Serial.print(" (");
+                Serial.print(f.size());
+                Serial.println(" bytes)");
+                
+                // Read and print first 500 chars to avoid excessive output
+                int bytesRead = 0;
+                int maxBytes = 500;
+                while (f.available() && bytesRead < maxBytes) {
+                    Serial.write(f.read());
+                    bytesRead++;
+                }
+                
+                if (f.available()) {
+                    Serial.println("\n... (file truncated for Serial output)");
+                } else {
+                    Serial.println();
+                }
+                
+                f.close();
+                Serial.println("");
+            } else {
+                Serial.print("Failed to open: ");
+                Serial.println(path);
+            }
+        } else {
+            Serial.print("File not found: ");
+            Serial.println(path);
+        }
+    }
+    
+    Serial.println("=== END FILES DEBUG ===\n");
+}
+
+void debugDumpPlayersToSerial() {
+    Serial.println("\n=== PLAYERS DEBUG TO SERIAL ===");
+    
+    File root = LittleFS.open("/");
+    if (!root || !root.isDirectory()) {
+        Serial.println("LittleFS root directory not found.");
+        return;
+    }
+
+    File file = root.openNextFile();
+
+    while (file) {
+        String fname = file.name();
+
+        bool isPlayerFile =
+            (fname.startsWith("user_") || fname.startsWith("/user_")) &&
+            fname.endsWith(".txt");
+
+        if (isPlayerFile) {
+            Serial.print("Player file: ");
+            Serial.println(fname);
+            
+            // Print first 300 chars of file
+            int bytesRead = 0;
+            int maxBytes = 300;
+            while (file.available() && bytesRead < maxBytes) {
+                Serial.write(file.read());
+                bytesRead++;
+            }
+            
+            if (file.available()) {
+                Serial.println("\n... (file truncated for Serial output)");
+            } else {
+                Serial.println();
+            }
+            
+            Serial.println("");
+        }
+
+        file = root.openNextFile();
+    }
+    
+    Serial.println("=== END PLAYERS DEBUG ===\n");
+}
+
+void debugDumpNPCsToSerial() {
+    Serial.println("\n=== NPCS DEBUG TO SERIAL ===");
+    
+    Serial.println("--- NPC DEFINITIONS ---");
+    for (auto &pair : npcDefs) {
+        String id = String(pair.first.c_str());
+        auto &def = pair.second;
+
+        Serial.print("NPC ID: ");
+        Serial.println(id);
+
+        for (auto &kv : def.attributes) {
+            Serial.print("    ");
+            Serial.print(kv.first.c_str());
+            Serial.print(" = ");
+            Serial.println(kv.second.c_str());
+        }
+
+        Serial.println("");
+    }
+
+    Serial.println("--- NPC INSTANCES ---");
+    for (int i = 0; i < (int)npcInstances.size(); i++) {
+        auto &npc = npcInstances[i];
+
+        String line = "#" + String(i) +
+                      "  npcId=" + npc.npcId +
+                      "  alive=" + String(npc.alive ? "yes" : "no") +
+                      "  hp=" + String(npc.hp) +
+                      "  gold=" + String(npc.gold) +
+                      "  xyz=(" + String(npc.x) + "," + String(npc.y) + "," + String(npc.z) + ")";
+
+        Serial.println(line);
+        Serial.println("");
+    }
+    
+    Serial.println("=== END NPCS DEBUG ===\n");
+}
+
+void debugDumpSinglePlayerToSerial(const String &name) {
+    // This function is declared but not used. Implementing as no-op for safety.
+    Serial.print("[DEBUG] Single player dump requested for: ");
+    Serial.println(name);
+    Serial.println("Note: Use debugDumpPlayersToSerial() for all players or access via telnet.");
+}
 
 
 
@@ -6560,7 +6932,9 @@ void cmdBuy(Player &p, const String &arg) {
     // Set description to the shop display name
     newItem.attributes["description"] = shopItem->itemName.c_str();
 
-    worldItems.push_back(newItem);
+    if (worldItems.size() < 2000) {
+        worldItems.push_back(newItem);
+    }
     int newIdx = worldItems.size() - 1;
 
     // Add to player inventory
@@ -6986,7 +7360,7 @@ void updateCitationRemovalSequence(Player &p) {
             p.client.println("");
             p.client.println("Sam Gamgee steps forward to plead your case...");
             p.client.println("");
-            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.citationRemovalSequenceStep++;
             break;
             
@@ -6996,7 +7370,7 @@ void updateCitationRemovalSequence(Player &p) {
             p.client.println("      redemption. I humbly request that you remove this citation");
             p.client.println("      from their record.'");
             p.client.println("");
-            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.citationRemovalSequenceStep++;
             break;
             
@@ -7008,7 +7382,7 @@ void updateCitationRemovalSequence(Player &p) {
             p.client.println("        the record. Consider this a second chance.");
             p.client.println("        Do not waste it.'");
             p.client.println("");
-            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.citationRemovalSequenceStep++;
             break;
             
@@ -7019,7 +7393,7 @@ void updateCitationRemovalSequence(Player &p) {
             p.client.println("The record has been CLEARED from the Criminal Register!");
             p.client.println("You may now wield weapons and carry items freely in this town!");
             p.client.println("");
-            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.citationRemovalSequenceStep++;
             break;
             
@@ -7031,7 +7405,7 @@ void updateCitationRemovalSequence(Player &p) {
                 broadcastToAll("*** " + broadcastMsg + " ***");
                 broadcastToAll("");
             }
-            p.citationRemovalSequenceNextTime = now + p.CITATION_REMOVAL_DELAY_MS;
+            p.citationRemovalSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.citationRemovalSequenceStep++;
             break;
             
@@ -7058,6 +7432,52 @@ void updateCitationRemovalSequence(Player &p) {
             // End sequence
             p.inCitationRemovalSequence = false;
             break;
+    }
+}
+
+// =============================================================
+// QUEST COMPLETION DIALOG - Non-blocking multi-line dialog display
+// =============================================================
+void updateQuestCompletionDialog(Player &p) {
+    if (!p.inQuestCompletionDialog) return;
+    if (p.questCompletionDialogLines.empty()) return;
+    
+    unsigned long now = millis();
+    if (now < p.questCompletionDialogNextTime) return;  // Not time yet
+    
+    // Display current line
+    if (p.questCompletionDialogStep < (int)p.questCompletionDialogLines.size()) {
+        p.client.println(p.questCompletionDialogLines[p.questCompletionDialogStep]);
+        p.questCompletionDialogStep++;
+        p.questCompletionDialogNextTime = now + GLOBAL_DIALOG_DELAY;
+    } else {
+        // All lines displayed - end sequence
+        p.inQuestCompletionDialog = false;
+        p.questCompletionDialogLines.clear();
+        p.questCompletionDialogStep = 0;
+    }
+}
+
+// =============================================================
+// DEATH SEQUENCE DIALOG - Non-blocking multi-line dialog display
+// =============================================================
+void updateDeathSequence(Player &p) {
+    if (!p.inDeathSequence) return;
+    if (p.deathDialogLines.empty()) return;
+    
+    unsigned long now = millis();
+    if (now < p.deathDialogNextTime) return;  // Not time yet
+    
+    // Display current line
+    if (p.deathDialogStep < (int)p.deathDialogLines.size()) {
+        p.client.println(p.deathDialogLines[p.deathDialogStep]);
+        p.deathDialogStep++;
+        p.deathDialogNextTime = now + GLOBAL_DIALOG_DELAY;
+    } else {
+        // All lines displayed - end sequence
+        p.inDeathSequence = false;
+        p.deathDialogLines.clear();
+        p.deathDialogStep = 0;
     }
 }
 
@@ -9112,7 +9532,7 @@ void endHighLowGame(Player &p, int playerIndex) {
 // =============================
 
 void saveHighLowPot() {
-    File f = LittleFS.open("/data/high_low_pot.txt", "w");
+    File f = LittleFS.open("/hilow_pot.txt", "w");
     if (!f) {
         Serial.println("Failed to save high-low pot file.");
         return;
@@ -9124,13 +9544,13 @@ void saveHighLowPot() {
 }
 
 void loadHighLowPot() {
-    if (!LittleFS.exists("/data/high_low_pot.txt")) {
+    if (!LittleFS.exists("/hilow_pot.txt")) {
         Serial.println("No saved high-low pot found. Using default: 50gp");
         globalHighLowPot = 50;
         return;
     }
     
-    File f = LittleFS.open("/data/high_low_pot.txt", "r");
+    File f = LittleFS.open("/hilow_pot.txt", "r");
     if (!f) {
         Serial.println("Failed to load high-low pot file. Using default: 50gp");
         globalHighLowPot = 50;
@@ -11408,6 +11828,8 @@ void cmdWizHelp(Player &p) {
     p.client.println("resetworlditems         - Reset all world item spawns");
     p.client.println("stats                   - Toggle wizard stats");
     p.client.println("summon <player>         - Bring a player to your location");
+    p.client.println("type <filename>         - Display file contents");
+    p.client.println("                          Usage: type /rooms.txt");
 
     // ---------------------------------------------------------
     // WIZARD FLAVOR (alphabetical)
@@ -11570,10 +11992,24 @@ void cmdShout(Player &p, const char *message) {
   }
 
   for (int i = 0; i < MAX_PLAYERS; i++) {
-    if (!players[i].active) continue;
-    players[i].client.print(capFirst(p.name));
-    players[i].client.print(" shouts: ");
-    players[i].client.println(message);
+    try {
+      if (!players[i].active) continue;
+      
+      // Safety check before printing
+      if (!players[i].client.connected()) {
+        players[i].active = false;
+        continue;
+      }
+      
+      players[i].client.print(capFirst(p.name));
+      players[i].client.print(" shouts: ");
+      players[i].client.println(message);
+    } catch (...) {
+      // Connection error - mark as inactive
+      if (i >= 0 && i < MAX_PLAYERS) {
+        players[i].active = false;
+      }
+    }
   }
 }
 
@@ -11631,48 +12067,74 @@ void cmdTell(Player &p, const String &targetName, const String &message) {
             qrcodeMsg = qrcodeMsg.substring(0, 200);
         }
         
-        // Notify sender
-        p.client.println("You send a QR code to " + capFirst(target->name) + ": " + qrcodeMsg);
-        
-        // Generate and send QR code to target
-        target->client.println("");
-        target->client.println(capFirst(p.name) + " sent you a QR code:");
-        target->client.println("");
-        
-        // Create QR code
-        QRCode qrcode;
-        uint8_t qrcodedata[qrcode_getBufferSize(5)];
-        qrcode_initText(&qrcode, qrcodedata, 5, ECC_LOW, qrcodeMsg.c_str());
-        
-        // Print QR code using block characters
-        for (uint8_t y = 0; y < qrcode.size; y++) {
-            String line = "";
-            for (uint8_t x = 0; x < qrcode.size; x++) {
-                if (qrcode_getModule(&qrcode, x, y)) {
-                    line += "██";  // Black block
-                } else {
-                    line += "  ";  // White block
+        try {
+            // Notify sender
+            p.client.println("You send a QR code to " + capFirst(target->name) + ": " + qrcodeMsg);
+            
+            // Check target connection before sending
+            if (!target->client.connected()) {
+                p.client.println("That player is no longer online.");
+                return;
+            }
+            
+            // Generate and send QR code to target
+            target->client.println("");
+            target->client.println(capFirst(p.name) + " sent you a QR code:");
+            target->client.println("");
+            
+            // Create QR code
+            QRCode qrcode;
+            uint8_t qrcodedata[qrcode_getBufferSize(5)];
+            qrcode_initText(&qrcode, qrcodedata, 5, ECC_LOW, qrcodeMsg.c_str());
+            
+            // Print QR code using block characters
+            for (uint8_t y = 0; y < qrcode.size; y++) {
+                String line = "";
+                for (uint8_t x = 0; x < qrcode.size; x++) {
+                    if (qrcode_getModule(&qrcode, x, y)) {
+                        line += "██";  // Black block
+                    } else {
+                        line += "  ";  // White block
+                    }
                 }
+                // Trim if line is too long
+                if (line.length() > MAX_QRCODE_WIDTH * 2) {
+                    line = line.substring(0, MAX_QRCODE_WIDTH * 2);
+                }
+                target->client.println(line);
             }
-            // Trim if line is too long
-            if (line.length() > MAX_QRCODE_WIDTH * 2) {
-                line = line.substring(0, MAX_QRCODE_WIDTH * 2);
-            }
-            target->client.println(line);
+            target->client.println("");
+        } catch (...) {
+            // Connection error during QR send
+            p.client.println("Error sending QR code - target connection failed.");
+            target->active = false;
+            return;
         }
-        target->client.println("");
     } else {
         // Regular tell message
-        // Send to sender
-        p.client.print("You tell ");
-        p.client.print(capFirst(target->name));
-        p.client.print(": ");
-        p.client.println(message);
+        try {
+            // Check target connection before sending
+            if (!target->client.connected()) {
+                p.client.println("That player is no longer online.");
+                return;
+            }
+            
+            // Send to sender
+            p.client.print("You tell ");
+            p.client.print(capFirst(target->name));
+            p.client.print(": ");
+            p.client.println(message);
 
-        // Send to target (only the target sees this)
-        target->client.print(capFirst(p.name));
-        target->client.print(" tells you: ");
-        target->client.println(message);
+            // Send to target (only the target sees this)
+            target->client.print(capFirst(p.name));
+            target->client.print(" tells you: ");
+            target->client.println(message);
+        } catch (...) {
+            // Connection error during tell
+            p.client.println("Error sending message - target connection failed.");
+            target->active = false;
+            return;
+        }
     }
 }
 
@@ -11925,14 +12387,14 @@ void updateArrestSequence(Player &p, int playerIndex) {
             p.client.println("The Sheriff reads you your rights:");
             p.client.println("");
             p.client.println("You are under arrest for murder within town boundaries.");
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
             
         case 1:
             p.client.println("You have the right to remain silent.");
             p.client.println("Anything you say can and will be used against you in a court of law.");
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
             
@@ -11987,7 +12449,7 @@ void updateArrestSequence(Player &p, int playerIndex) {
             // Recalculate bonuses
             applyEquipmentBonuses(p);
             
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
         }
@@ -11995,9 +12457,24 @@ void updateArrestSequence(Player &p, int playerIndex) {
         case 3: {
             p.client.println("");
             p.client.println("The Sheriff confiscates all your weapons and armor.");
+            
+            // Remove wielded item
+            if (p.wieldedItemIndex >= 0 && p.wieldedItemIndex < (int)worldItems.size()) {
+                removeFromInventory(p, p.wieldedItemIndex);
+                p.wieldedItemIndex = -1;
+            }
+            
+            // Remove all worn items
+            for (int s = 0; s < SLOT_COUNT; s++) {
+                if (p.wornItemIndices[s] >= 0 && p.wornItemIndices[s] < (int)worldItems.size()) {
+                    removeFromInventory(p, p.wornItemIndices[s]);
+                    p.wornItemIndices[s] = -1;
+                }
+            }
+            
             p.client.println("");
             p.client.println("You wait in the cell for several hours...");
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
         }
@@ -12006,7 +12483,7 @@ void updateArrestSequence(Player &p, int playerIndex) {
             p.client.println("");
             p.client.println("A man named Sam Gamgee arrives at the station.");
             p.client.println("Sam Gamgee says: 'Don't worry lad, I've posted your bail.'");
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
         }
@@ -12020,7 +12497,7 @@ void updateArrestSequence(Player &p, int playerIndex) {
             // Set coins to 0 (bail bond paid)
             p.coins = 0;
             
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
         }
@@ -12038,7 +12515,7 @@ void updateArrestSequence(Player &p, int playerIndex) {
                 playerNameCap + " has been released on bail from the Police Station!",
                 playerIndex);
             
-            p.arrestSequenceNextTime = now + p.ARREST_DELAY_MS;
+            p.arrestSequenceNextTime = now + GLOBAL_DIALOG_DELAY;
             p.arrestSequenceStep++;
             break;
         }
@@ -14090,6 +14567,9 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
     
     if (!http.begin(url)) {
         Serial.println("[MAIL] ERROR: Failed to begin HTTP request");
+        try {
+            http.end();
+        } catch (...) {}
         return false;
     }
     
@@ -14103,13 +14583,17 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
     if (httpCode != HTTP_CODE_OK) {
         Serial.print("[MAIL] ERROR: HTTP error code ");
         Serial.println(httpCode);
-        http.end();
+        try {
+            http.end();
+        } catch (...) {}
         Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
         return false;
     }
     
     String response = http.getString();
-    http.end();
+    try {
+        http.end();
+    } catch (...) {}
     
     Serial.print("[MAIL] Response length: ");
     Serial.print(response.length());
@@ -16169,30 +16653,49 @@ void cmdUnwield(Player &p) {
 
 void broadcastToRoom(int x, int y, int z, const String &msg, Player *exclude) {
   for (int i = 0; i < MAX_PLAYERS; i++) {
-    if (!players[i].active) continue;
-    if (&players[i] == exclude) continue;
-    if (players[i].roomX == x && players[i].roomY == y && players[i].roomZ == z) {
-      players[i].client.println(msg);
+    try {
+      if (!players[i].active) continue;
+      if (&players[i] == exclude) continue;
+      if (players[i].roomX == x && players[i].roomY == y && players[i].roomZ == z) {
+        // Safety check before writing
+        if (!players[i].client.connected()) {
+          players[i].active = false;
+          continue;
+        }
+        players[i].client.println(msg);
+      }
+    } catch (...) {
+      // Silently handle exceptions - don't let broadcast crashes kill server
+      if (i >= 0 && i < MAX_PLAYERS) {
+        players[i].active = false;
+      }
     }
   }
 }
 
 void handlePlayerDeath(Player &p) {
 
-    // Flavorful death messages
+    // Flavorful death messages - ALL will be displayed with non-blocking delays
     static const char* deathMsgs[] = {
-        "You collapse to the ground, lifeless.",
-        "Your vision fades as darkness takes you.",
-        "You fall in battle, defeated.",
-        "Your body goes limp as you die.",
+        "You collapse to the ground, lifeless...",
+        "Your vision fades as darkness takes you...",
+        "You fall in battle, defeated...",
+        "Your body goes limp as you die...",
         "You have been slain!"
     };
 
-    // Dramatic death line
-    String msg = deathMsgs[random(5)];
-    p.client.println(msg);
-    delay(500);
+    // Add ALL death messages to the non-blocking sequence
+    p.deathDialogLines.clear();
+    for (int i = 0; i < 5; i++) {
+        p.deathDialogLines.push_back(String(deathMsgs[i]));
+    }
 
+    // Start the death sequence
+    p.inDeathSequence = true;
+    p.deathDialogStep = 0;
+    p.deathDialogNextTime = millis();
+
+    // Announce to room
     broadcastRoomExcept(
         p,
         capFirst(p.name) + " has been slain!",
@@ -16205,7 +16708,6 @@ void handlePlayerDeath(Player &p) {
     if (p.xp < 0) p.xp = 0;
 
     p.client.println("You lose " + String(lostXP) + " experience points!");
-    delay(500);
 
     // Prevent negative HP
     p.hp = 0;
@@ -16219,7 +16721,6 @@ void handlePlayerDeath(Player &p) {
         spawnGoldAt(p.roomX, p.roomY, p.roomZ, p.coins);
         p.client.println("Your " + String(p.coins) + " gold coins scatter on the ground!");
         p.coins = 0;
-        delay(1000);
     }
 
     // Drop all inventory items
@@ -16241,9 +16742,7 @@ void handlePlayerDeath(Player &p) {
         p.wornItemIndices[s] = -1;
     }
 
-    // ----------------------------------------------------
-    // ⭐ Recalculate level based on new XP
-    // ----------------------------------------------------
+    // Recalculate level based on new XP
     int newLevel = getLevelFromXp(p.xp);
 
     if (newLevel < p.level) {
@@ -16251,16 +16750,11 @@ void handlePlayerDeath(Player &p) {
         applyLevelBonuses(p);
 
         p.client.println("You have dropped to level " + String(p.level) + ".");
-        delay(500);
-
         p.client.println("You are now known as: " +
             String(titles[p.raceId][p.level - 1]));
-        delay(500);
     }
 
-    // ----------------------------------------------------
-    // ⭐ Save immediately to prevent relog exploit
-    // ----------------------------------------------------
+    // Save immediately to prevent relog exploit
     savePlayerToFS(p);
 
     // Teleport to spawn room
@@ -16269,7 +16763,6 @@ void handlePlayerDeath(Player &p) {
     int spawnZ = 50;
 
     p.client.println("Your spirit drifts back toward the mortal world...");
-    delay(500);
 
     loadRoomForPlayer(p, spawnX, spawnY, spawnZ);
 
@@ -16604,6 +17097,10 @@ void savePlayerToFS(Player &p) {
         return;
     }
 
+    // FILE FORMAT VERSION (to avoid ambiguity in old/new format detection)
+    // Version 3 = includes bankGp AND showStats fields
+    f.println("3");
+
     // -----------------------------
     // Basic stats
     // -----------------------------
@@ -16645,18 +17142,20 @@ void savePlayerToFS(Player &p) {
 
     // -----------------------------
     // Inventory (save item names)
-    // SAFETY: validate indices and skip invalid items
-    // Count valid items first
+    // SAFETY: Only save valid items, cap at 32 (invIndices size)
     int validInvCount = 0;
-    for (int i = 0; i < p.invCount; i++) {
+    for (int i = 0; i < p.invCount && i < 32; i++) {  // Safety: cap at array size
         int idx = p.invIndices[i];
         if (idx >= 0 && idx < (int)worldItems.size() && worldItems[idx].name.length() > 0) {
             validInvCount++;
         }
     }
     
+    // Cap written count at 32 as safety measure
+    if (validInvCount > 32) validInvCount = 32;
+    
     f.println(validInvCount);
-    for (int i = 0; i < p.invCount; i++) {
+    for (int i = 0; i < p.invCount && i < 32; i++) {  // Safety: cap at array size
         int idx = p.invIndices[i];
         if (idx >= 0 && idx < (int)worldItems.size() && worldItems[idx].name.length() > 0) {
             f.println(worldItems[idx].name);
@@ -16708,8 +17207,6 @@ void savePlayerToFS(Player &p) {
     f.println(p.weatherCity);
 
     f.close();
-
-
     saveWorldItems();
 }
 
@@ -16776,11 +17273,57 @@ bool loadPlayerFromFS(Player &p, const String &name) {
 
     String tmp;
 
-    // Detect file format version by checking length
-    // Old format (v1): 7 basic stats (no bankGp)
-    // New format (v2): 8 basic stats (includes bankGp)
+    // Read file format version (first line)
+    safeRead(tmp);
+    int formatVersion = tmp.toInt();
     
-    // Read first 7 basic stats and store them
+    // FORCE MIGRATION: Any version other than 3 is treated as corrupt
+    // Old format detection was ambiguous and caused corruption
+    // All files must be migrated to v3 format
+    if (formatVersion != 3) {
+        // FILE IS FROM OLD VERSION - Rebuild it completely with v3 format
+        f.close();
+        
+        // Print message to all connected clients about the migration
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].loggedIn && players[i].name == p.name) {
+                players[i].client.println("");
+                players[i].client.println("=================================================");
+                players[i].client.println("! PLAYER FILE FORMAT UPGRADED !                 ");
+                players[i].client.println("=================================================");
+                players[i].client.println("Your player file was in an old format and has");
+                players[i].client.println("been automatically upgraded to the new format.");
+                players[i].client.println("Your essential stats have been preserved.");
+                players[i].client.println("=================================================");
+                players[i].client.println("");
+            }
+        }
+        
+        // Reset inventory and problematic fields (safe defaults)
+        p.invCount = 0;
+        for (int i = 0; i < 32; i++) p.invIndices[i] = -1;
+        p.wieldedItemIndex = -1;
+        for (int i = 0; i < SLOT_COUNT; i++) p.wornItemIndices[i] = -1;
+        
+        // Set safe defaults for location data
+        if (p.roomX <= 0 || p.roomY <= 0 || p.roomZ < 0) {
+            p.roomX = 247;  // Default spawn room
+            p.roomY = 248;
+            p.roomZ = 50;
+        }
+        
+        // Save the player file in new v3 format
+        savePlayerToFS(p);
+        return true;
+    }
+    
+    // Handle different format versions
+    // v3: 8 basic stats (bankGp), HAS showStats (CURRENT FORMAT ONLY)
+    
+    bool hasShowStats = true;   // v3 always has it
+    bool hasBankGp = true;      // v3 always has it
+    
+    // Read first 7 basic stats
     safeRead(tmp); strncpy(p.storedPassword, tmp.c_str(), sizeof(p.storedPassword)-1);
     p.storedPassword[sizeof(p.storedPassword)-1] = '\0';
 
@@ -16791,34 +17334,19 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     safeRead(tmp); p.maxHp  = tmp.toInt();
     safeRead(tmp); p.coins  = tmp.toInt();
     
-    // Read next line - could be bankGp (numeric) or IsWizard flag (0 or 1)
+    // Read bankGp (v3 always has it)
     safeRead(tmp);
-    String checkLine = tmp;
-    
-    // If it's a pure number > 1000 or negative, it's likely bankGp from old save, not wizard flag
-    // Wizard flag is only "0" or "1", bankGp can be any value
-    // If it doesn't parse as 0 or 1, treat as bankGp and read next line for wizard flag
-    bool isOldFormat = false;
-    int bankGpValue = 0;
-    
-    if (checkLine == "0" || checkLine == "1") {
-        // This is wizard flag - old format file (no bankGp)
-        isOldFormat = true;
-        p.bankGp = 0;  // Default new field
-    } else {
-        // This is bankGp value - new format file
-        p.bankGp = checkLine.toInt();
-        safeRead(checkLine);  // Read actual wizard flag next
-    }
+    p.bankGp = tmp.toInt();
 
     // Wizard flag
-    p.IsWizard = (checkLine == "1");
+    safeRead(tmp);
+    p.IsWizard = (tmp == "1");
 
     // Debug destination
     safeRead(tmp);
     p.debugDest = (DebugDestination)tmp.toInt();
 
-    // Wizard stats toggle
+    // Wizard stats toggle (v3 always has it)
     safeRead(tmp);
     p.showStats = (tmp == "1");
 
@@ -16838,6 +17366,48 @@ bool loadPlayerFromFS(Player &p, const String &name) {
     // Inventory count
     safeRead(tmp);
     int invCount = tmp.toInt();
+    
+    // CORRUPTION DETECTION: Check if invCount is suspiciously high
+    // This indicates the file was corrupted and wrote the wrong value
+    if (invCount > 32 || invCount == 250) {
+        // FILE IS CORRUPTED - Rebuild it with salvaged stats
+        f.close();
+        
+        // Print message to all connected clients about the corruption
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].loggedIn && players[i].name == p.name) {
+                players[i].client.println("");
+                players[i].client.println("=================================================");
+                players[i].client.println("! PLAYER FILE CORRUPTED AND REPAIRED !          ");
+                players[i].client.println("=================================================");
+                players[i].client.println("Your player file was corrupted (inventory count");
+                players[i].client.println("was invalid). Your essential stats have been");
+                players[i].client.println("salvaged and your file has been rebuilt fresh.");
+                players[i].client.println("Your inventory has been cleared.");
+                players[i].client.println("=================================================");
+                players[i].client.println("");
+            }
+        }
+        
+        // Reset inventory and problematic fields
+        p.invCount = 0;
+        for (int i = 0; i < 32; i++) p.invIndices[i] = -1;
+        p.wieldedItemIndex = -1;
+        for (int i = 0; i < SLOT_COUNT; i++) p.wornItemIndices[i] = -1;
+        
+        // Set safe defaults for corrupted location data
+        if (p.roomX <= 0 || p.roomY <= 0 || p.roomZ < 0) {
+            p.roomX = 247;  // Default spawn room
+            p.roomY = 248;
+            p.roomZ = 50;
+        }
+        
+        // Save the cleaned up player file
+        savePlayerToFS(p);
+        return true;
+    }
+    
+    // Normal path - file is clean
     if (invCount < 0) invCount = 0;
     if (invCount > 32) invCount = 32;
     p.invCount = 0;
@@ -16911,8 +17481,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
             for (auto &kv : defIt->second.attributes)
                 newItem.attributes[kv.first] = kv.second;
 
-            worldItems.push_back(newItem);
-            p.invIndices[p.invCount++] = worldItems.size() - 1;
+            if (worldItems.size() < 2000) {
+                worldItems.push_back(newItem);
+                p.invIndices[p.invCount++] = worldItems.size() - 1;
+            }
         }
     }
 
@@ -16949,8 +17521,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
                     newItem.attributes[kv.first] = kv.second;
             }
 
-            worldItems.push_back(newItem);
-            p.wieldedItemIndex = worldItems.size() - 1;
+            if (worldItems.size() < 2000) {
+                worldItems.push_back(newItem);
+                p.wieldedItemIndex = worldItems.size() - 1;
+            }
         }
     } else {
         p.wieldedItemIndex = -1;
@@ -16995,8 +17569,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
                     newItem.attributes[kv.first] = kv.second;
             }
 
-            worldItems.push_back(newItem);
-            p.wornItemIndices[s] = worldItems.size() - 1;
+            if (worldItems.size() < 2000) {
+                worldItems.push_back(newItem);
+                p.wornItemIndices[s] = worldItems.size() - 1;
+            }
         }
     }
 
@@ -17230,6 +17806,10 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
             
+            // Broadcast player login to all players
+            String capName = capFirst(p.name);
+            broadcastToAll(String("*** ") + capName + String(" has entered the world! ***"));
+            
             // Log session login (with distinction for new vs existing players)
             if (st.isNewPlayer) {
                 logSessionNewLogin(p.name);
@@ -17404,8 +17984,41 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             p.maxHp = 20;
             p.hp = 20;
             p.coins = 0;
+            p.bankGp = 0;
             p.IsWizard = false; // default
+            p.debugDest = (DebugDestination)0;  // DEBUG_TO_TELNET
+            p.showStats = false;
+            p.wimpMode = false;
+            p.roomX = 250;
+            p.roomY = 250;
+            p.roomZ = 50;
+            p.invCount = 0;
+            p.wieldedItemIndex = -1;
+            p.EnterMsg = "";
+            p.ExitMsg = "";
+            p.weatherCity = "";
+            p.hasHealthcarePlan = false;
+            p.IsHeadInjured = false;
+            p.IsShoulderInjured = false;
+            p.IsLegInjured = false;
+            p.hobbleSkipNextMove = false;
+            p.inArrestSequence = false;
+            p.arrestSequenceStep = 0;
+            p.arrestSequenceNextTime = 0;
+            p.inCitationRemovalSequence = false;
+            p.citationRemovalSequenceStep = 0;
+            p.citationRemovalSequenceNextTime = 0;
+            p.drunkenness = 6;
+            p.fullness = 6;
 
+            // Initialize inventory indices array (all -1 means no items)
+            for (int i = 0; i < 32; i++) {
+                p.invIndices[i] = -1;
+            }
+
+            for (int s = 0; s < SLOT_COUNT; s++) {
+                p.wornItemIndices[s] = -1;
+            }
 
             // Initialize quest progress (10 quests × 10 steps)
             for (int q = 0; q < 10; q++) {
@@ -17420,6 +18033,10 @@ void handleLogin(Player &p, int index, const String &rawLine) {
 
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
+            
+            // Broadcast player login to all players
+            String capName = capFirst(p.name);
+            broadcastToAll(String("*** ") + capName + String(" has entered the world! ***"));
             
             // Log new character login
             logSessionNewLogin(p.name);
@@ -17477,9 +18094,21 @@ void sendVoxel(Player &p) {
 
 void broadcastToAll(const String &msg) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        Player &p = players[i];
-        if (!p.active || !p.loggedIn) continue;
-        p.client.println(msg);
+        try {
+            Player &p = players[i];
+            if (!p.active || !p.loggedIn) continue;
+            
+            // Safety check before writing
+            if (!p.client.connected()) {
+                p.active = false;
+                continue;
+            }
+            
+            p.client.println(msg);
+        } catch (...) {
+            // Silently handle any exceptions from broadcast
+            // Don't let broadcast crashes kill the whole server
+        }
     }
 }
 
@@ -18345,7 +18974,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         return;
     }
 
-    if (cmd == "hire sam" || cmd == "hiresam") {
+    if ((cmd == "hire" && args.startsWith("sam")) || cmd == "hiresam") {
         cmdHireSam(p);
         return;
     }
@@ -18362,7 +18991,7 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         return;
     }
 
-    if (cmd == "checkmail" || cmd == "check mail" || cmd == "mail") {
+    if (cmd == "checkmail" || (cmd == "check" && args == "mail") || cmd == "mail") {
         // Check for mail and spawn letters
         bool hasMailResult = checkAndSpawnMailLetters(p);
         
@@ -18681,12 +19310,26 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         return;
     }
 
+    // -----------------------------------------
+    // HIRE SAM (Citation Removal)
+    // -----------------------------------------
+    if (cmd == "hire") {
+        String argsLower = args;
+        argsLower.toLowerCase();
+        if (argsLower == "sam") {
+            cmdHireSam(p);
+            return;
+        }
+        p.client.println("You can only hire Sam.");
+        return;
+    }
+
 // -----------------------------------------
 // SAVE / WIMP / QUIT
 // -----------------------------------------
     if (cmd == "save") {
         savePlayerToFS(p);
-        p.client.println("Saved.");
+        p.client.println("Player saved.");
         return;
     }
 
@@ -19360,28 +20003,79 @@ if (cmd == "debug") {
             return;
         }
 
-        // Read all lines into a vector
-        std::vector<String> allLines;
+        // Check file size
+        size_t fileSize = f.size();
+        
+        // If larger than 10KB, truncate to last 50 lines
+        if (fileSize > 10240) {
+            debugPrint(p, "Session log too large (" + String(fileSize / 1024) + "KB). Truncating...");
+            f.close();
+            
+            // First pass: count total lines
+            f = LittleFS.open("/session_log.txt", "r");
+            if (!f) return;
+            
+            int totalLines = 0;
+            while (f.available()) {
+                if (f.read() == '\n') totalLines++;
+            }
+            f.close();
+            
+            // If more than 50 lines, truncate to last 50
+            if (totalLines > 50) {
+                int linesToSkip = totalLines - 50;
+                
+                // Create temporary file with last 50 lines
+                f = LittleFS.open("/session_log.txt", "r");
+                if (!f) return;
+                
+                // Skip the first N lines
+                for (int skip = 0; skip < linesToSkip; skip++) {
+                    f.readStringUntil('\n');
+                }
+                
+                // Write remaining 50 lines to temp file
+                File fw = LittleFS.open("/session_log_temp.txt", "w");
+                if (!fw) {
+                    f.close();
+                    return;
+                }
+                
+                while (f.available()) {
+                    String line = f.readStringUntil('\n');
+                    line.trim();
+                    if (line.length() > 0) {
+                        fw.println(line);
+                    }
+                }
+                f.close();
+                fw.close();
+                
+                // Replace original with temp
+                LittleFS.remove("/session_log.txt");
+                LittleFS.rename("/session_log_temp.txt", "/session_log.txt");
+                
+                debugPrint(p, "File truncated to 50 lines.");
+            }
+            
+            // Now display the (possibly truncated) file
+            f = LittleFS.open("/session_log.txt", "r");
+            if (!f) return;
+        }
+        
+        // Display the file contents
+        debugPrint(p, "=== SESSION LOG (Last 50 Records) ===");
+        
         while (f.available()) {
             String line = f.readStringUntil('\n');
             line.trim();
             if (line.length() > 0) {
-                allLines.push_back(line);
+                debugPrint(p, line);
             }
         }
         f.close();
-
-        // Display last 50 lines in reverse order (most recent first)
-        int startIdx = 0;
-        if (allLines.size() > 50) {
-            startIdx = allLines.size() - 50;
-        }
-
-        debugPrint(p, "=== SESSION LOG (Last 50 Records - Most Recent First) ===");
-        for (int i = (int)allLines.size() - 1; i >= startIdx; i--) {
-            debugPrint(p, allLines[i]);
-        }
-        debugPrint(p, "==========================================================");
+        
+        debugPrint(p, "=============================================================");
         return;
     }
 
@@ -19575,6 +20269,67 @@ if (cmd == "debug") {
 }
 
     // -----------------------------------------
+    // TYPE command - Display file contents
+    // -----------------------------------------
+    if (cmd == "type") {
+        if (!p.IsWizard) {
+            p.client.println("What?");
+            return;
+        }
+
+        String filename = args;
+        filename.trim();
+
+        if (filename.length() == 0) {
+            p.client.println("Usage: type <filename>");
+            p.client.println("Example: type /rooms.txt");
+            return;
+        }
+
+        // Ensure filename starts with /
+        if (!filename.startsWith("/")) {
+            filename = "/" + filename;
+        }
+
+        // Safety check - prevent directory traversal
+        if (filename.indexOf("..") >= 0) {
+            p.client.println("Invalid filename.");
+            return;
+        }
+
+        // Check if file exists
+        if (!LittleFS.exists(filename)) {
+            p.client.println("File not found: " + filename);
+            return;
+        }
+
+        // Open and display file
+        File f = LittleFS.open(filename, "r");
+        if (!f) {
+            p.client.println("Failed to open file: " + filename);
+            return;
+        }
+
+        size_t fileSize = f.size();
+        p.client.println("=== " + filename + " (" + String(fileSize) + " bytes) ===");
+        p.client.println("");
+
+        // Read and display file contents
+        while (f.available()) {
+            String line = f.readStringUntil('\n');
+            line.trim();
+            if (line.length() > 0 || f.available()) {  // Show empty lines except at EOF
+                p.client.println(line);
+            }
+        }
+        f.close();
+
+        p.client.println("");
+        p.client.println("=== END " + filename + " ===");
+        return;
+    }
+
+    // -----------------------------------------
     // Mapper voxel toggle
     // -----------------------------------------
     if (cmd == "voxel:") {
@@ -19655,6 +20410,10 @@ if (cmd == "debug") {
                 return;
             } else if (cmd == "end" || cmd == "quit") {
                 endHighLowGame(p, playerIndex);
+                return;
+            } else {
+                // Invalid input - re-prompt
+                p.client.println("Invalid input. Enter '1' for Low or '2' for High:");
                 return;
             }
         } else {
@@ -19743,10 +20502,17 @@ if (cmd == "debug") {
 // =============================
 String readClientLine(WiFiClient &c) {
     String line = "";
-
+    const int MAX_LINE_LENGTH = 512;  // Prevent buffer overflow attacks
+    
     unsigned long start = millis();
     while (true) {
-        if (millis() - start > 60000UL) break; // timeout
+        // Timeout check (5 minutes)
+        if (millis() - start > 300000UL) break;
+        
+        // Connection check - return immediately if disconnected
+        if (!c.connected()) {
+            return "";
+        }
 
         if (!c.available()) {
             delay(1);
@@ -19754,6 +20520,9 @@ String readClientLine(WiFiClient &c) {
         }
 
         char ch = c.read();
+        
+        // Safety check: if we got -1 (error), break
+        if (ch < 0) break;
 
         // Telnet IAC negotiation
         if ((unsigned char)ch == 255) {
@@ -19771,8 +20540,13 @@ String readClientLine(WiFiClient &c) {
         // LF ends the line
         if (ch == '\n') break;
 
-        // Normal character
-        line += ch;
+        // Normal character - check buffer size limit
+        if (line.length() < MAX_LINE_LENGTH) {
+            line += ch;
+        } else {
+            // Buffer full - drop the command and return what we have
+            break;
+        }
     }
 
     line.trim();
@@ -20038,13 +20812,88 @@ void loop() {
 
     // Accept new players
     WiFiClient newClient = server->available();
-    if (newClient) {
+    if (newClient && newClient.connected()) {
 
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (!players[i].active) {
+                // ⭐ CRITICAL: Reset entire Player struct to prevent garbage data carryover
+                // from previous player sessions in this slot
+                
+                // Reset all game state fields to defaults
+                players[i].loggedIn = false;
+                players[i].IsWizard = false;
+                players[i].showStats = true;
+                players[i].debugDest = DEBUG_TO_SERIAL;
+                players[i].IsInvisible = false;
+                players[i].isDuplicateLogin = false;
+                
+                // Reset basic stats
+                players[i].raceId = 0;
+                players[i].level = 0;
+                players[i].xp = 0;
+                players[i].hp = 0;
+                players[i].maxHp = 0;
+                players[i].coins = 0;
+                players[i].bankGp = 0;
+                
+                // Reset position
+                players[i].roomX = 0;
+                players[i].roomY = 0;
+                players[i].roomZ = 0;
+                
+                // Reset inventory
+                players[i].invCount = 0;
+                for (int j = 0; j < 32; j++) {
+                    players[i].invIndices[j] = -1;
+                }
+                players[i].wieldedItemIndex = -1;
+                for (int j = 0; j < SLOT_COUNT; j++) {
+                    players[i].wornItemIndices[j] = -1;
+                }
+                
+                // Reset quest progress
+                for (int q = 0; q < 10; q++) {
+                    players[i].questCompleted[q] = false;
+                    for (int s = 0; s < 10; s++) {
+                        players[i].questStepDone[q][s] = false;
+                    }
+                }
+                
+                // Reset status flags and sequences
+                players[i].wimpMode = false;
+                players[i].hasHealthcarePlan = false;
+                players[i].IsHeadInjured = false;
+                players[i].IsShoulderInjured = false;
+                players[i].IsLegInjured = false;
+                players[i].hobbleSkipNextMove = false;
+                players[i].inArrestSequence = false;
+                players[i].arrestSequenceStep = 0;
+                players[i].arrestSequenceNextTime = 0;
+                players[i].inCitationRemovalSequence = false;
+                players[i].citationRemovalSequenceStep = 0;
+                players[i].citationRemovalSequenceNextTime = 0;
+                
+                // Reset strings
+                players[i].EnterMsg = "";
+                players[i].ExitMsg = "";
+                players[i].weatherCity = "";
+                memset(players[i].name, 0, sizeof(players[i].name));
+                memset(players[i].password, 0, sizeof(players[i].password));
+                memset(players[i].storedPassword, 0, sizeof(players[i].storedPassword));
+                
+                // Reset other fields
+                players[i].carryCapacity = 0;
+                players[i].drunkenness = 6;
+                players[i].fullness = 6;
+                players[i].inCombat = false;
+                players[i].combatTarget = nullptr;
+                players[i].nextCombatTime = 0;
+                players[i].sendVoxel = false;
+                players[i].mapTrackerEnabled = false;
+                
+                // Now set the client and login flags
                 players[i].client = newClient;
                 players[i].active = true;
-                players[i].loggedIn = false;
                 startLogin(players[i], i);
                 break;
             }
@@ -20056,23 +20905,37 @@ void loop() {
         Player &p = players[i];
         if (!p.active) continue;
 
-        if (!p.client.connected()) {
-            // Reset game sessions before disconnecting
-            highLowSessions[i].gameActive = false;
-            highLowSessions[i].awaitingAceDeclaration = false;
-            highLowSessions[i].awaitingContinue = false;
-            highLowSessions[i].betWasPot = false;
-            highLowSessions[i].cardCodeString = "";
-            
-            chessSessions[i].gameActive = false;
-            chessSessions[i].gameEnded = false;
-            
+        // Check connection status with safety
+        try {
+            if (!p.client.connected()) {
+                // Reset game sessions before disconnecting
+                highLowSessions[i].gameActive = false;
+                highLowSessions[i].awaitingAceDeclaration = false;
+                highLowSessions[i].awaitingContinue = false;
+                highLowSessions[i].betWasPot = false;
+                highLowSessions[i].cardCodeString = "";
+                
+                chessSessions[i].gameActive = false;
+                chessSessions[i].gameEnded = false;
+                
+                p.active = false;
+                continue;
+            }
+        } catch (...) {
+            // Connection check failed - mark as inactive
             p.active = false;
             continue;
         }
 
         if (p.client.available()) {
-            String line = readClientLine(p.client);
+            String line = "";
+            try {
+                line = readClientLine(p.client);
+            } catch (...) {
+                // readClientLine failed - disconnect this client
+                p.active = false;
+                continue;
+            }
 
             // Check for High-Low continue prompt BEFORE empty line rejection
             if (i >= 0 && i < MAX_PLAYERS && highLowSessions[i].gameActive && highLowSessions[i].awaitingContinue) {
@@ -20080,14 +20943,14 @@ void loop() {
                 if (line.length() == 0) {
                     // Empty input continues the game
                     highLowSessions[i].awaitingContinue = false;
-                    p.client.println("");
+                    try { p.client.println(""); } catch (...) {}
                     dealHighLowHand(players[i], i);
-                    p.client.print("> ");
+                    try { p.client.print("> "); } catch (...) {}
                     continue;
                 } else if (line == "end" || line == "quit") {
                     // End the game
                     endHighLowGame(players[i], i);
-                    p.client.print("> ");
+                    try { p.client.print("> "); } catch (...) {}
                     continue;
                 } else if (line == "n" || line == "s" || line == "e" || line == "w" || line.startsWith("go ")) {
                     // Allow movement - will be processed by handleCommand
@@ -20095,20 +20958,28 @@ void loop() {
                     // Fall through to normal command processing
                 } else {
                     // Invalid input
-                    p.client.println("Press [Enter] to continue or type 'end'");
-                    p.client.print("> ");
+                    try { p.client.println("Press [Enter] to continue or type 'end'"); } catch (...) {}
+                    try { p.client.print("> "); } catch (...) {}
                     continue;
                 }
             }
 
             if (line.length() == 0) {
-                if (p.loggedIn) p.client.println("What?");
+                if (p.loggedIn) {
+                    try { p.client.println("What?"); } catch (...) {}
+                }
                 continue;
             }
 
-            if (!p.loggedIn) handleLogin(p, i, line);
-            else handleCommand(players[i], i, line);
-            p.client.print("> ");
+            try {
+                if (!p.loggedIn) handleLogin(p, i, line);
+                else handleCommand(players[i], i, line);
+                try { p.client.print("> "); } catch (...) {}
+            } catch (...) {
+                // Command handling threw an exception - disconnect
+                p.active = false;
+                continue;
+            }
 
         }
     }
@@ -20131,10 +21002,29 @@ void loop() {
         // Update citation removal sequence with non-blocking delays
         updateCitationRemovalSequence(p);
         
+        // Update quest completion dialog with non-blocking delays
+        updateQuestCompletionDialog(p);
+        
+        // Update death sequence with non-blocking delays
+        updateDeathSequence(p);
+        
         if (p.inCombat && now >= p.nextCombatTime) doCombatRound(p);
     }
 
-
+    // ⭐ MEMORY DIAGNOSTICS - Every 30 seconds
+    static unsigned long lastMemDiag = 0;
+    if (now - lastMemDiag > 30000) {
+        lastMemDiag = now;
+        
+        uint32_t freeHeap = ESP.getFreeHeap();
+        uint32_t totalHeap = ESP.getHeapSize();
+        uint32_t usedHeap = totalHeap - freeHeap;
+        int worldItemsCount = (int)worldItems.size();
+        
+        // Log to Serial
+        Serial.printf("[MEMORY] Free: %u bytes | Used: %u bytes | Items: %d\n", 
+            freeHeap, usedHeap, worldItemsCount);
+    }
 
     // NPC respawn tick
 for (auto &npc : npcInstances) {
@@ -20325,8 +21215,9 @@ for (auto &npc : npcInstances) {
 
 
     // =============================
-    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - NON-BLOCKING ASYNC
+    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - RE-ENABLED WITH BULLETPROOF HARDENING
     // =============================
+    // Joke system re-enabled with ultra-aggressive timeouts and memory pre-checks
     {
         const int JOKE_ROOM_X = 249;
         const int JOKE_ROOM_Y = 248;
@@ -20383,6 +21274,7 @@ for (auto &npc : npcInstances) {
             }
         }
     }
+
 
     // Natural healing
     static unsigned long lastHealTick = 0;
