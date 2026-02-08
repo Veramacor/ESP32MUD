@@ -11750,36 +11750,22 @@ void cmdWizHelp(Player &p) {
     // WIZARD UTILITIES (alphabetical)
     // ---------------------------------------------------------
     p.client.println("blind <player>          - Toggle blindness on a player");
-    p.client.println("                          Usage: blind playerName (toggles on/off)");
-    p.client.println("                          Blinded players cannot use look, map, or townmap");
     p.client.println("boot <player>           - Disconnect a player from the server");
-    p.client.println("                          Usage: boot playerName (boots player instantly)");
     p.client.println("boot all                - Disconnect all players from the server");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("download [filename]     - Download files from server");
-    p.client.println("                          Usage: download (list files)");
-    p.client.println("                                 download all (downloads all files)");
-    p.client.println("                                 download filename (downloads single file)");
-    p.client.println("                          Files are written to LittleFS in /");
     p.client.println("follow <player>         - Follow a player and see everything they see");
-    p.client.println("                          Usage: follow playerName");
-    p.client.println("                          Wizard moves with player and sees all commands");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
     p.client.println("heal <player>           - Fully heal a player");
     p.client.println("hobble <player>         - Toggle hobbling on a player");
-    p.client.println("                          Usage: hobble playerName (toggles on/off)");
-    p.client.println("                          Hobbled players move every other step");
     p.client.println("invis                   - Toggle invisibility");
     p.client.println("lame <player>           - Toggle lameness on a player");
-    p.client.println("                          Usage: lame playerName (toggles on/off)");
-    p.client.println("                          Lamed players cannot wield weapons (bare fists work)");
     p.client.println("reboot                  - Restart the world");
     p.client.println("resetworlditems         - Reset all world item spawns");
     p.client.println("stats                   - Toggle wizard stats");
     p.client.println("summon <player>         - Bring a player to your location");
     p.client.println("type <filename>         - Display file contents");
-    p.client.println("                          Usage: type /rooms.txt");
 
     // ---------------------------------------------------------
     // WIZARD FLAVOR (alphabetical)
