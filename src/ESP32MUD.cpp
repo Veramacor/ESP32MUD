@@ -21140,7 +21140,7 @@ void loop() {
         // ⭐ CRITICAL MEMORY CHECK: Reject connection immediately if heap is too low
         // This prevents system crash from accepting connections we can't handle
         uint32_t freeHeap = ESP.getFreeHeap();
-        const uint32_t MEMORY_REJECT_THRESHOLD = 30000;  // 30KB minimum to accept new player
+        const uint32_t MEMORY_REJECT_THRESHOLD = 28000;  // 28KB - TIGHT safety margin above 25KB emergency threshold
         
         if (freeHeap <= MEMORY_REJECT_THRESHOLD) {
             Serial.printf("[MEMORY] REJECTING NEW CONNECTION: Free heap %u bytes <= %u bytes\n", 
