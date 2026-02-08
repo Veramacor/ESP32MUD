@@ -16862,6 +16862,32 @@ void broadcastRoomExcept(Player &p, const String &msg, Player &exclude) {
     }
 }
 
+// =============================
+// HEAP MEMORY GATE (for item creation)
+// =============================
+// Check heap IMMEDIATELY after item creation
+// If critical, trigger emergency 2-min reboot and block further items
+bool checkHeapAndTriggerIfCritical() {
+    unsigned long now = millis();
+    uint32_t freeHeap = ESP.getFreeHeap();
+    const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
+    
+    if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
+        // Trigger emergency reboot
+        nextGlobalRespawn = now + (2UL * 60UL * 1000UL);
+        memoryTriggeredReboot = true;
+        warned5min = false;
+        warned2min = false;
+        warned1min = false;
+        warned30sec = false;
+        warned5sec = false;
+        Serial.printf("[MEMORY GATE] CRITICAL: Free heap %u bytes! Triggering 2-min reboot...\n", freeHeap);
+        broadcastToAll("[WORLD] The fabric of reality begins to unravel! EMERGENCY SHUTDOWN IN 2 MINUTES!");
+        return false;  // Block item creation
+    }
+    return true;  // Allow item creation
+}
+
 void spawnGoldAt(int x, int y, int z, int amount) {
     WorldItem wi;
     wi.name = "gold_coin";
@@ -16872,6 +16898,9 @@ void spawnGoldAt(int x, int y, int z, int amount) {
     wi.ownerName = "";
     wi.parentName = "";
     worldItems.push_back(wi);
+    
+    // ⭐ CHECK HEAP IMMEDIATELY AFTER CREATION
+    checkHeapAndTriggerIfCritical();
 }
 
 // =============================
@@ -19795,6 +19824,15 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             
             worldItems.push_back(clonedItem);
             
+            // ⭐ CHECK HEAP IMMEDIATELY AFTER CREATION
+            if (!checkHeapAndTriggerIfCritical()) {
+                // Memory critical - remove the item we just added and reject
+                worldItems.pop_back();
+                p.client.println("[SYSTEM] No more items allowed! World is unstable.");
+                broadcastToAll("[WORLD] Item creation blocked - system overload!");
+                return;
+            }
+            
             p.client.println("Cloned: " + allItemNames[cloneNum - 1]);
             announceToRoom(
                 p.roomX, p.roomY, p.roomZ,
@@ -19837,6 +19875,15 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 atoi(goldIt->second.c_str()) : 0;
             
             npcInstances.push_back(clonedNPC);
+            
+            // ⭐ CHECK HEAP IMMEDIATELY AFTER CREATION
+            if (!checkHeapAndTriggerIfCritical()) {
+                // Memory critical - remove the NPC we just added and reject
+                npcInstances.pop_back();
+                p.client.println("[SYSTEM] No more NPCs allowed! World is unstable.");
+                broadcastToAll("[WORLD] NPC creation blocked - system overload!");
+                return;
+            }
             
             p.client.println("Cloned: " + allNpcNames[npcIdx]);
             announceToRoom(
