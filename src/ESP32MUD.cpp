@@ -3815,42 +3815,139 @@ void cmdResetWorldItems(Player &p, const String &args) {
     p.client.println("Resetting world items to default...");
 
     // ---------------------------------------------------------
+    // PRE-RESET: CAPTURE ALL PLAYER ITEM NAMES (BEFORE indices become invalid)
+    // ---------------------------------------------------------
+    // Store: playerName -> invItemNames, wornItemNames, wieldedItemName
+    std::map<String, std::vector<String>> playerInvItems;    // invIndices -> names
+    std::map<String, std::map<int, String>> playerWornItems; // slot -> name
+    std::map<String, String> playerWieldedItem;              // player -> name
+    
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        
+        String pname = String(players[i].name);
+        
+        // Capture inventory item names
+        for (int j = 0; j < players[i].invCount; j++) {
+            int idx = players[i].invIndices[j];
+            if (idx >= 0 && idx < (int)worldItems.size()) {
+                playerInvItems[pname].push_back(worldItems[idx].name);
+            }
+        }
+        
+        // Capture worn item names
+        for (int slot = 0; slot < SLOT_COUNT; slot++) {
+            int idx = players[i].wornItemIndices[slot];
+            if (idx >= 0 && idx < (int)worldItems.size()) {
+                playerWornItems[pname][slot] = worldItems[idx].name;
+            }
+        }
+        
+        // Capture wielded item name
+        int idx = players[i].wieldedItemIndex;
+        if (idx >= 0 && idx < (int)worldItems.size()) {
+            playerWieldedItem[pname] = worldItems[idx].name;
+        }
+    }
+
+    // ---------------------------------------------------------
     // 1. CLEAR ALL NON-INVENTORY WORLD ITEMS
     // ---------------------------------------------------------
     for (int i = 0; i < (int)worldItems.size(); ) {
         WorldItem &wi = worldItems[i];
 
-        // Keep items owned by players
+        // Keep items owned by players (these survive the reset)
         if (wi.ownerName.length() > 0) {
             i++;
             continue;
         }
 
-        // Remove everything else
+        // Remove everything else (world-spawned items)
         worldItems.erase(worldItems.begin() + i);
     }
 
     // ---------------------------------------------------------
-    // 2. DELETE THE WORLD-ITEM SAVE FILE (LittleFS)
+    // 2. RELOAD DEFAULT WORLD ITEMS FROM FILE
     // ---------------------------------------------------------
-    if (LittleFS.exists("/world_items.vxi")) {
-        LittleFS.remove("/world_items.vxi");
-    }
-
+    // Note: loadAllWorldItems() calls worldItems.clear() which would wipe
+    // our preserved player items. Instead, reload the defaults directly.
+    // Load static items from items.vxi and world save
+    loadFileIntoItems();               // Loads default items from items.vxi
+    loadWorldItemsFromSave();          // Loads any saved world state (overlays player items)
+    linkWorldItemParents();            // Rebuild parent/child relationships
+    
     // ---------------------------------------------------------
-    // 3. RELOAD DEFAULT WORLD ITEMS
+    // 3. SAVE WORLD ITEMS (preserves all items including player-owned)
     // ---------------------------------------------------------
-    loadAllWorldItems();
-
-    // ---------------------------------------------------------
-    // 3b. RE-SAVE WORLD ITEMS (includes preserved player items)
-    // ---------------------------------------------------------
-    // Player-owned items remain in memory and need to be persisted
-    // so they survive server reboots or player logout/login cycles
+    // This persists both default items and player-owned items to disk
     saveWorldItems();
 
     // ---------------------------------------------------------
-    // 4. MERGE COIN PILES IN ALL ROOMS
+    // 4. REFRESH ALL PLAYER INVENTORY INDICES (using captured names)
+    // ---------------------------------------------------------
+    // Use the names we captured BEFORE the reload to find items in the new layout
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        
+        String pname = String(players[i].name);
+        
+        // Refresh inventory indices
+        if (playerInvItems.count(pname)) {
+            for (int j = 0; j < (int)playerInvItems[pname].size(); j++) {
+                String itemName = playerInvItems[pname][j];
+                int newIdx = -1;
+                
+                // Find this item in the new worldItems layout
+                for (int k = 0; k < (int)worldItems.size(); k++) {
+                    if (worldItems[k].name == itemName && 
+                        worldItems[k].ownerName == pname) {
+                        newIdx = k;
+                        break;
+                    }
+                }
+                
+                players[i].invIndices[j] = newIdx;
+            }
+        }
+        
+        // Refresh worn items indices
+        if (playerWornItems.count(pname)) {
+            for (auto &slotPair : playerWornItems[pname]) {
+                int slot = slotPair.first;
+                String itemName = slotPair.second;
+                int newIdx = -1;
+                
+                for (int k = 0; k < (int)worldItems.size(); k++) {
+                    if (worldItems[k].name == itemName && 
+                        worldItems[k].ownerName == pname) {
+                        newIdx = k;
+                        break;
+                    }
+                }
+                
+                players[i].wornItemIndices[slot] = newIdx;
+            }
+        }
+        
+        // Refresh wielded item index
+        if (playerWieldedItem.count(pname)) {
+            String itemName = playerWieldedItem[pname];
+            int newIdx = -1;
+            
+            for (int k = 0; k < (int)worldItems.size(); k++) {
+                if (worldItems[k].name == itemName && 
+                    worldItems[k].ownerName == pname) {
+                    newIdx = k;
+                    break;
+                }
+            }
+            
+            players[i].wieldedItemIndex = newIdx;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 5. MERGE COIN PILES IN ALL ROOMS
     // ---------------------------------------------------------
     for (int i = 0; i < (int)worldItems.size(); i++) {
         WorldItem &wi = worldItems[i];
@@ -3860,7 +3957,7 @@ void cmdResetWorldItems(Player &p, const String &args) {
     }
 
     // ---------------------------------------------------------
-    // 5. DONE
+    // 6. DONE
     // ---------------------------------------------------------
     broadcastToAll("The world shimmers and reforms as it returns to its original state.");
 }
