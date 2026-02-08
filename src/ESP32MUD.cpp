@@ -525,6 +525,9 @@ void endHighLowGame(Player &p, int playerIndex);
 String getCardName(const Card &card);
 void saveHighLowPot();
 void loadHighLowPot();
+void bootstrapJokesFromServer();
+void loadJokesFromFile();
+String getRandomJoke();
 
 // Chess game function declarations
 void initChessGame(ChessSession &session, bool playerIsWhite);
@@ -1147,232 +1150,164 @@ String extractJsonString(const String &json, const String &fieldName) {
 }
 
 // Initiate an async joke fetch (non-blocking - just starts the request)
-void startJokeFetch() {
-    if (innKeeperJokes.requestPending) {
-        Serial.println("[JOKE] Request already pending, skipping");
-        return; // Already fetching
-    }
+// =============================
+// JOKE SYSTEM - BOOTSTRAP: Fetch 20 jokes at startup, store in jokes.txt
+// =============================
+
+void bootstrapJokesFromServer() {
+    Serial.println("[JOKE BOOT] Starting joke bootstrap...");
     
-    // ⭐ PRE-FLIGHT MEMORY CHECK: Ensure we have enough free RAM
-    uint32_t freeHeap = esp_get_free_heap_size();
-    if (freeHeap < 20000) {  // Less than 20KB free
-        Serial.println(String("[JOKE] SKIPPED: Insufficient memory (free: ") + String(freeHeap) + String(" bytes)"));
+    // Check if jokes.txt already exists
+    if (LittleFS.exists("/jokes.txt")) {
+        Serial.println("[JOKE BOOT] jokes.txt already exists, loading jokes");
+        loadJokesFromFile();
         return;
     }
     
-    // ⭐ Aggressively clean up any previous HTTPClient
-    if (innKeeperJokes.httpClient != nullptr) {
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-    }
-    delay(10);  // Brief delay to let stack settle
+    Serial.println("[JOKE BOOT] Fetching 20 jokes from API...");
     
-    Serial.println("[JOKE] Creating HTTPClient...");
+    HTTPClient http;
+    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=20";
+    
     try {
-        innKeeperJokes.httpClient = new HTTPClient();
-    } catch (...) {
-        Serial.println("[JOKE] Failed to allocate HTTPClient!");
-        return;
-    }
-    
-    // Build URL with excluded joke IDs
-    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
-    
-    // Add exclude parameter if we have used jokes (cap at 20 to prevent URL overflow)
-    if (innKeeperJokes.usedJokeIds.size() > 0) {
-        jokeUrl += "&exclude=";
-        size_t maxExclude = (innKeeperJokes.usedJokeIds.size() > 20) ? 20 : innKeeperJokes.usedJokeIds.size();
-        for (size_t i = 0; i < maxExclude; i++) {
-            jokeUrl += innKeeperJokes.usedJokeIds[i];
-            if (i < maxExclude - 1) {
-                jokeUrl += ",";
+        http.setConnectTimeout(10000);  // 10 second connect timeout
+        http.setTimeout(15000);          // 15 second total timeout
+        
+        if (!http.begin(jokeUrl)) {
+            Serial.println("[JOKE BOOT] Failed to begin HTTP connection");
+            http.end();
+            return;
+        }
+        
+        int httpCode = http.GET();
+        Serial.println(String("[JOKE BOOT] HTTP Response: ") + String(httpCode));
+        
+        if (httpCode != 200) {
+            Serial.println("[JOKE BOOT] Bad HTTP response, aborting");
+            http.end();
+            return;
+        }
+        
+        String payload = http.getString();
+        http.end();
+        
+        // Parse JSON array and extract jokes
+        File jokesFile = LittleFS.open("/jokes.txt", "w");
+        if (!jokesFile) {
+            Serial.println("[JOKE BOOT] Failed to create jokes.txt");
+            return;
+        }
+        
+        // Parse JSON array - look for individual joke objects
+        int jokeCount = 0;
+        int pos = 0;
+        
+        while (pos < (int)payload.length() && jokeCount < 20) {
+            // Find start of joke object
+            int objStart = payload.indexOf('{', pos);
+            if (objStart == -1) break;
+            
+            // Find end of joke object
+            int objEnd = payload.indexOf('}', objStart);
+            if (objEnd == -1) break;
+            
+            String jokeObj = payload.substring(objStart, objEnd + 1);
+            pos = objEnd + 1;
+            
+            // Extract joke text
+            String jokeText = "";
+            
+            if (jokeObj.indexOf("\"single\"") != -1) {
+                // Single joke - extract "joke" field
+                jokeText = extractJsonString(jokeObj, "joke");
+            } else if (jokeObj.indexOf("\"twopart\"") != -1) {
+                // Two-part joke - combine setup + delivery
+                String setup = extractJsonString(jokeObj, "setup");
+                String delivery = extractJsonString(jokeObj, "delivery");
+                jokeText = setup + String(" ") + delivery;
+            } else {
+                continue;  // Unknown format
+            }
+            
+            if (jokeText.length() >= 10) {
+                // Clean up escape sequences
+                jokeText.replace("\\\"", "\"");
+                jokeText.replace("\\n", " ");  // Replace newlines with spaces for single-line format
+                jokeText.replace("\\\\", "\\");
+                
+                // Write joke as single line
+                jokesFile.println(jokeText);
+                jokeCount++;
+                Serial.printf("[JOKE BOOT] Saved joke %d: %.30s...\n", jokeCount, jokeText.c_str());
             }
         }
-    }
-    
-    Serial.println(String("[JOKE] Attempting to begin connection to: ") + jokeUrl);
-    
-    try {
-        innKeeperJokes.httpClient->setConnectTimeout(1500);  // ULTRA-aggressive: 1.5s
-        innKeeperJokes.httpClient->setTimeout(2000);         // ULTRA-aggressive: 2s total
         
-        if (innKeeperJokes.httpClient->begin(jokeUrl)) {
-            innKeeperJokes.httpClient->GET();
-            innKeeperJokes.requestPending = true;
-            innKeeperJokes.requestStartTime = millis();
-            Serial.println("[JOKE] Async request initiated (1.5s timeout)");
-        } else {
-            Serial.println("[JOKE] Failed to begin HTTP connection");
-            innKeeperJokes.httpClient->end();
-            delete innKeeperJokes.httpClient;
-            innKeeperJokes.httpClient = nullptr;
-            innKeeperJokes.requestPending = false;
+        jokesFile.close();
+        
+        Serial.printf("[JOKE BOOT] Successfully saved %d jokes to jokes.txt\n", jokeCount);
+        
+        if (jokeCount > 0) {
+            innKeeperJokes.usedJokeIds.clear();  // Reset used jokes
+            loadJokesFromFile();  // Load the jokes into memory
         }
+        
     } catch (...) {
-        Serial.println("[JOKE] Exception in startJokeFetch");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
+        Serial.println("[JOKE BOOT] Exception during bootstrap!");
+        http.end();
     }
 }
 
-// Check if async joke fetch is complete and process response (non-blocking)
-bool checkJokeFetchComplete() {
-    if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) {
-        return false;
+// =============================
+// Load jokes from jokes.txt into memory
+// =============================
+
+void loadJokesFromFile() {
+    Serial.println("[JOKE] Loading jokes from jokes.txt...");
+    
+    if (!LittleFS.exists("/jokes.txt")) {
+        Serial.println("[JOKE] jokes.txt not found");
+        return;
     }
     
-    unsigned long now = millis();
-    unsigned long elapsed = now - innKeeperJokes.requestStartTime;
-    
-    // ⭐ ULTRA-AGGRESSIVE: Check for timeout at 2 seconds (earlier than 5s)
-    if (elapsed > 2000) {
-        Serial.println("[JOKE] Request timeout after 2 seconds - force closing");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
+    File jokesFile = LittleFS.open("/jokes.txt", "r");
+    if (!jokesFile) {
+        Serial.println("[JOKE] Failed to open jokes.txt");
+        return;
     }
     
-    // Give request at least 200ms to complete
-    if (elapsed < 200) {
-        return false;
-    }
+    innKeeperJokes.usedJokeIds.clear();
+    int jokeCount = 0;
     
-    // Try to get response with timeout wrap
-    int httpCode = -1;
-    try {
-        // Set very short timeout for getSize check to prevent hanging
-        httpCode = innKeeperJokes.httpClient->getSize();
-    } catch (...) {
-        Serial.println("[JOKE] Exception during getSize() - closing connection");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
-    }
-    
-    if (httpCode == -1) {
-        // Still waiting - check if we're stuck
-        if (elapsed > 4000) {
-            // We've been waiting > 4 seconds, force close
-            Serial.println("[JOKE] Timeout waiting for response - force closing");
-            try {
-                innKeeperJokes.httpClient->end();
-            } catch (...) {}
-            try {
-                delete innKeeperJokes.httpClient;
-            } catch (...) {}
-            innKeeperJokes.httpClient = nullptr;
-            innKeeperJokes.requestPending = false;
+    while (jokesFile.available()) {
+        String joke = jokesFile.readStringUntil('\n');
+        joke.trim();
+        if (joke.length() > 0) {
+            innKeeperJokes.usedJokeIds.push_back(joke);  // Using usedJokeIds as the joke cache
+            jokeCount++;
         }
-        return false;
     }
     
-    // Response available - parse it with error handling
-    String payload = "";
-    try {
-        Serial.println("[JOKE] Response available, calling getString()...");
-        payload = innKeeperJokes.httpClient->getString();
-    } catch (...) {
-        Serial.println("[JOKE] Exception during getString() - closing connection");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
-    }
-    
-    // Clean up the HTTP client
-    try {
-        innKeeperJokes.httpClient->end();
-    } catch (...) {}
-    try {
-        delete innKeeperJokes.httpClient;
-    } catch (...) {}
-    innKeeperJokes.httpClient = nullptr;
-    innKeeperJokes.requestPending = false;
-    
-    Serial.println(String("[JOKE] Response received, size: ") + String(payload.length()));
-    Serial.println(String("[JOKE] Response snippet: ") + payload.substring(0, 100));
-    
-    // Check if it's an error response
-    if (payload.indexOf("\"error\":true") != -1) {
-        Serial.println("[JOKE] API returned error response");
-        return false;
-    }
-    
-    // Extract joke ID first (to track what we've used)
-    String jokeId = extractJsonString(payload, "id");
-    if (jokeId.length() > 0) {
-        innKeeperJokes.currentJokeId = jokeId;
-        Serial.println(String("[JOKE] Joke ID: ") + jokeId);
-    }
-    
-    // Extract joke text
-    String jokeText = "";
-    
-    // Look for "type": "single" or "type": "twopart"
-    if (payload.indexOf("\"single\"") != -1) {
-        Serial.println("[JOKE] Detected single joke format");
-        // Single joke - extract "joke" field
-        jokeText = extractJsonString(payload, "joke");
-    } else if (payload.indexOf("\"twopart\"") != -1) {
-        Serial.println("[JOKE] Detected two-part joke format");
-        // Two-part joke - extract "setup" + " " + "delivery"
-        String setup = extractJsonString(payload, "setup");
-        String delivery = extractJsonString(payload, "delivery");
-        jokeText = setup + String(" ") + delivery;
-    } else {
-        Serial.println("[JOKE] Unknown joke format!");
-        Serial.println(String("[JOKE] Full payload: ") + payload);
-    }
-    
-    // Handle Unicode escape sequences
-    jokeText.replace("\\\"", "\"");
-    jokeText.replace("\\n", "\n");
-    jokeText.replace("\\\\", "\\");
-    
-    // Validate: joke must be at least 10 characters long
-    if (jokeText.length() >= 10) {
-        innKeeperJokes.currentJoke = jokeText;
-        // Add ID to used list to prevent repeats
-        if (jokeId.length() > 0) {
-            innKeeperJokes.usedJokeIds.push_back(jokeId);
-            Serial.printf("[JOKE] Added to used list (now %d jokes tracked)\n", innKeeperJokes.usedJokeIds.size());
-        }
-        Serial.println(String("[JOKE] Successfully fetched joke: ") + jokeText.substring(0, 40) + String("..."));
-        return true;
-    } else {
-        Serial.println(String("[JOKE] Joke text too short (len=") + String(jokeText.length()) + String("), retrying..."));
-        Serial.println(String("[JOKE] Extracted text: ") + jokeText);
-        return false;
-    }
+    jokesFile.close();
+    Serial.printf("[JOKE] Loaded %d jokes from jokes.txt\n", jokeCount);
 }
+
+// =============================
+// Get random joke from loaded jokes
+// =============================
+
+String getRandomJoke() {
+    if (innKeeperJokes.usedJokeIds.empty()) {
+        return "The Inn Keeper thinks hard but can't remember any jokes!";
+    }
+    
+    int randomIndex = random(0, innKeeperJokes.usedJokeIds.size());
+    return innKeeperJokes.usedJokeIds[randomIndex];
+}
+
+// =============================
+// OLD FUNCTIONS: Removed (no longer needed)
+// startJokeFetch and checkJokeFetchComplete replaced with file-based system
+// =============================
 
 void checkGlobalRebootCountdown(unsigned long now) {
     long remaining = (long)(nextGlobalRespawn - now);
@@ -20839,6 +20774,7 @@ void setup() {
     initializePostOffices();        // initialize post offices
     initializeWeatherStations();    // initialize weather station
     loadHighLowPot();               // load high-low pot from persistent storage
+    bootstrapJokesFromServer();     // fetch 20 jokes and save to jokes.txt (or load if exists)
 
     // Initialize 6-hour reboot timer
     nextGlobalRespawn = millis() + GLOBAL_RESPAWN_INTERVAL;
@@ -21327,9 +21263,9 @@ for (auto &npc : npcInstances) {
 
 
     // =============================
-    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - RE-ENABLED WITH BULLETPROOF HARDENING
+    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - FILE-BASED
     // =============================
-    // Joke system re-enabled with ultra-aggressive timeouts and memory pre-checks
+    // Jokes are pre-loaded from jokes.txt file (no API calls during gameplay)
     {
         const int JOKE_ROOM_X = 249;
         const int JOKE_ROOM_Y = 248;
@@ -21341,44 +21277,25 @@ for (auto &npc : npcInstances) {
             // Players are in the Inn Keeper room - activate joke system
             innKeeperJokes.active = true;
             
-            // Check if async fetch completed (non-blocking check)
-            if (innKeeperJokes.requestPending) {
-                if (checkJokeFetchComplete()) {
-                    Serial.println("[JOKE SUCCESS] Fetch completed!");
-                    // Successfully received and parsed joke - broadcast it to the room
-                    broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, "");
-                    
-                    // Wrap joke text like room descriptions (80 chars max)
-                    String wrappedJoke = wordWrap(innKeeperJokes.currentJoke, MAX_OUTPUT_WIDTH);
-                    String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + ".\"";
-                    
-                    // Send wrapped joke to all players in room
-                    announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
-                    
-                    // Schedule next joke (15-20 seconds from now)
-                    innKeeperJokes.nextJokeTime = now + random(15000, 20001);
-                    Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
-                }
-            }
-            
-            // Check if it's time to initiate a new joke fetch (non-blocking start)
-            if (now >= innKeeperJokes.nextJokeTime && !innKeeperJokes.requestPending) {
-                Serial.println("[JOKE] Timer expired, initiating fetch");
-                startJokeFetch();  // Just initiate, doesn't block
-                // Schedule timeout fallback (try again in 3 seconds if request fails)
-                innKeeperJokes.nextJokeTime = now + 3000;
+            // Check if it's time to tell a joke (no network calls, just file reads)
+            if (now >= innKeeperJokes.nextJokeTime) {
+                // Get random joke from jokes.txt
+                String jokeText = getRandomJoke();
+                
+                // Wrap joke text like room descriptions (80 chars max)
+                String wrappedJoke = wordWrap(jokeText, MAX_OUTPUT_WIDTH);
+                String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + "\"";
+                
+                // Send wrapped joke to all players in room
+                announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
+                
+                // Schedule next joke (15-20 seconds from now)
+                innKeeperJokes.nextJokeTime = now + random(15000, 20001);
+                Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
             }
         } else {
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
-            // Cancel any pending request
-            if (innKeeperJokes.requestPending && innKeeperJokes.httpClient) {
-                innKeeperJokes.httpClient->end();
-                delete innKeeperJokes.httpClient;
-                innKeeperJokes.httpClient = nullptr;
-                innKeeperJokes.requestPending = false;
-                Serial.println("[JOKE] Request cancelled, no players in room");
-            }
             // Clear used joke IDs when room empties
             if (innKeeperJokes.usedJokeIds.size() > 0) {
                 Serial.printf("[JOKE] Clearing %d used joke IDs\n", innKeeperJokes.usedJokeIds.size());
