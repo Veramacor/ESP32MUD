@@ -16885,16 +16885,42 @@ bool checkHeapAndTriggerIfCritical() {
     const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
     
     if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
-        // Trigger emergency reboot
-        nextGlobalRespawn = now + (2UL * 60UL * 1000UL);
+        // CRITICAL: System is resource-starved, WiFi operations failing
+        // Aggressive emergency shutdown to prevent cascading failure
+        
+        Serial.printf("\n[MEMORY PANIC] CRITICAL: Free heap %u bytes - IMMEDIATE EMERGENCY SHUTDOWN!\n", freeHeap);
+        Serial.println("[MEMORY PANIC] Disconnecting all clients to free resources...");
+        
+        // ⭐ IMMEDIATELY disconnect all players to free WiFi resources
+        // This prevents "No more processes" errors from accumulating
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].active && players[i].client.connected()) {
+                try {
+                    // Try to send brief emergency message (best-effort only)
+                    players[i].client.println("\n*** SYSTEM CRITICAL - EMERGENCY SHUTDOWN ***\n");
+                    players[i].client.flush();
+                } catch (...) {
+                    // Ignore write failures - we're in panic mode
+                }
+                // Stop the client
+                players[i].client.stop();
+                players[i].active = false;
+                players[i].loggedIn = false;
+            }
+        }
+        
+        Serial.println("[MEMORY PANIC] All clients disconnected.");
+        Serial.println("[MEMORY PANIC] Triggering immediate reboot...");
+        
+        // Skip broadcast (it fails anyway when system is resource-starved)
         memoryTriggeredReboot = true;
-        warned5min = false;
-        warned2min = false;
-        warned1min = false;
-        warned30sec = false;
-        warned5sec = false;
-        Serial.printf("[MEMORY GATE] CRITICAL: Free heap %u bytes! Triggering 2-min reboot...\n", freeHeap);
-        broadcastToAll("[WORLD] The fabric of reality begins to unravel! EMERGENCY SHUTDOWN IN 2 MINUTES!");
+        
+        // Small delay to allow serial output to flush
+        delay(200);
+        
+        // ⭐ PANIC REBOOT: Don't wait for 2 minutes, reboot NOW
+        safeReboot();
+        
         return false;  // Block item creation
     }
     return true;  // Allow item creation
@@ -21376,19 +21402,38 @@ void loop() {
         Serial.printf("[MEMORY] Free: %u bytes | Used: %u bytes | Items: %d\n", 
             freeHeap, usedHeap, worldItemsCount);
         
-        // ⭐ MEMORY-BASED REBOOT TRIGGER: If free memory drops below 25KB, trigger 2-min countdown
+        // ⭐ MEMORY-BASED PANIC REBOOT: If free memory drops below 25KB, trigger immediate shutdown
         const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
         if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
-            // First time hitting this critical threshold - trigger 2-minute countdown
-            // This overrides any existing timer and starts an IMMEDIATE emergency countdown
-            nextGlobalRespawn = now + (2UL * 60UL * 1000UL);  // 2 minutes from now
+            // CRITICAL: System is resource-starved, WiFi operations failing
+            // Aggressive emergency shutdown to prevent cascading failure
+            
+            Serial.printf("\n[MEMORY PANIC] CRITICAL from diagnostic: Free heap %u bytes - IMMEDIATE EMERGENCY SHUTDOWN!\n", freeHeap);
+            Serial.println("[MEMORY PANIC] Disconnecting all clients to free resources...");
+            
+            // ⭐ IMMEDIATELY disconnect all players to free WiFi resources
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                if (players[i].active && players[i].client.connected()) {
+                    try {
+                        // Try to send brief emergency message (best-effort only)
+                        players[i].client.println("\n*** SYSTEM CRITICAL - EMERGENCY SHUTDOWN ***\n");
+                        players[i].client.flush();
+                    } catch (...) {
+                        // Ignore write failures - we're in panic mode
+                    }
+                    // Stop the client
+                    players[i].client.stop();
+                    players[i].active = false;
+                    players[i].loggedIn = false;
+                }
+            }
+            
+            Serial.println("[MEMORY PANIC] All clients disconnected.");
+            Serial.println("[MEMORY PANIC] Triggering immediate reboot...");
+            
             memoryTriggeredReboot = true;
-            warned5min = false;   // Reset warnings to ensure 2-min message shows first
-            warned2min = false;
-            warned1min = false;
-            warned30sec = false;
-            warned5sec = false;
-            Serial.println("[MEMORY WARNING] FREE MEMORY CRITICAL! Triggering 2-minute reboot countdown...");
+            delay(200);
+            safeReboot();
         }
     }
 
