@@ -21517,11 +21517,14 @@ for (auto &npc : npcInstances) {
                     while (jokeText.length() > 0 && (unsigned char)jokeText[jokeText.length()-1] < 32) {
                         jokeText.remove(jokeText.length()-1);
                     }
+                    // Also remove any embedded newlines from API response
+                    jokeText.replace("\n", " ");
+                    jokeText.replace("\r", " ");
                     Serial.println("[JOKE] Junk removal complete");
                     
-                    // Wrap joke text like room descriptions (80 chars max)
+                    // Wrap joke text to ~150 chars per line (accounts for prefix and quotes)
                     Serial.println("[JOKE] Calling wordWrap()...");
-                    String wrappedJoke = wordWrap(jokeText, MAX_OUTPUT_WIDTH);
+                    String wrappedJoke = wordWrap(jokeText, 150);
                     Serial.printf("[JOKE] wordWrap complete (%d chars)\n", wrappedJoke.length());
                     
                     String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + "\"";
