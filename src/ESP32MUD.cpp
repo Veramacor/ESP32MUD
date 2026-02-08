@@ -21247,10 +21247,16 @@ void loop() {
         
         // ⭐ MEMORY-BASED REBOOT TRIGGER: If free memory drops below 25KB, trigger 2-min countdown
         const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
-        if (freeHeap <= MEMORY_REBOOT_THRESHOLD && nextGlobalRespawn == 0) {
-            // First time hitting this threshold - trigger 2-minute countdown
+        if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
+            // First time hitting this critical threshold - trigger 2-minute countdown
+            // This overrides any existing timer and starts an IMMEDIATE emergency countdown
             nextGlobalRespawn = now + (2UL * 60UL * 1000UL);  // 2 minutes from now
             memoryTriggeredReboot = true;
+            warned5min = false;   // Reset warnings to ensure 2-min message shows first
+            warned2min = false;
+            warned1min = false;
+            warned30sec = false;
+            warned5sec = false;
             Serial.println("[MEMORY WARNING] FREE MEMORY CRITICAL! Triggering 2-minute reboot countdown...");
         }
     }
