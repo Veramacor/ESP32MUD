@@ -15215,7 +15215,7 @@ bool checkAndSpawnMailLetters(Player &p) {
             Serial.println(letter.from.c_str());
             
             letter_item.attributes["type"] = std::string("letter");
-            letter_item.attributes["name"] = std::string("An unaddressed letter");
+            letter_item.attributes["name"] = std::string("unaddressed letter");
             letter_item.attributes["desc"] = std::string(letter.body.c_str());
             letter_item.attributes["subject"] = std::string(letter.subject.c_str());
             letter_item.attributes["from"] = std::string(letter.from.c_str());
