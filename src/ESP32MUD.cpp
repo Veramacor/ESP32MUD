@@ -246,6 +246,9 @@ bool warned1min  = false;
 bool warned30sec = false;
 bool warned5sec  = false;
 
+// Memory-based reboot trigger flag
+bool memoryTriggeredReboot = false;  // true if reboot was triggered by low memory
+
 
 
 unsigned long lastShopRestock = 0;
@@ -1430,7 +1433,15 @@ void checkGlobalRebootCountdown(unsigned long now) {
         return;
     }
 
-    if (!warned5min && remaining <= 5L * 60L * 1000L) {
+    // If memory-triggered reboot just started, show special message
+    if (memoryTriggeredReboot && !warned2min) {
+        warned2min = true;
+        broadcastToAll("THE WORLD HAS BECOME UNSTABLE....");
+        return;  // Show this message on first call, then continue with countdown
+    }
+
+    // Skip 5-min warning if memory-triggered (start from 2-min directly)
+    if (!warned5min && remaining <= 5L * 60L * 1000L && !memoryTriggeredReboot) {
         warned5min = true;
         broadcastToAll("The world trembles ominously... a great change approaches in 5 minutes.");
     }
@@ -5461,8 +5472,12 @@ void movePlayer(Player &p, int index, const char *dir) {
 
     cmdLook(p);
 
-    // Check for mail when entering post office
-    if (getPostOfficeForRoom(p) != nullptr) {
+    // Check for mail when entering post office (disabled during reboot countdown to save memory)
+    unsigned long currentTime = millis();
+    unsigned long timeUntilReboot = (nextGlobalRespawn > currentTime) ? (nextGlobalRespawn - currentTime) : 0;
+    bool inRebootCountdown = (timeUntilReboot > 0);  // Any active countdown disables mail
+    
+    if (getPostOfficeForRoom(p) != nullptr && !inRebootCountdown) {
         checkAndSpawnMailLetters(p);
     }
 
@@ -19019,7 +19034,16 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
     if (cmd == "checkmail" || (cmd == "check" && args == "mail") || cmd == "mail") {
-        // Check for mail and spawn letters
+        // Check for mail and spawn letters (disabled during reboot countdown to save memory)
+        unsigned long currentTime = millis();
+        unsigned long timeUntilReboot = (nextGlobalRespawn > currentTime) ? (nextGlobalRespawn - currentTime) : 0;
+        bool inRebootCountdown = (timeUntilReboot > 0);
+        
+        if (inRebootCountdown) {
+            p.client.println("The postal system is currently offline due to world instability.");
+            return;
+        }
+        
         bool hasMailResult = checkAndSpawnMailLetters(p);
         
         // Provide feedback
@@ -20923,6 +20947,7 @@ void setup() {
     warned1min  = false;
     warned30sec = false;
     warned5sec  = false;
+    memoryTriggeredReboot = false;  // Reset memory reboot flag
 
     return;
 
@@ -21212,6 +21237,15 @@ void loop() {
         // Log to Serial
         Serial.printf("[MEMORY] Free: %u bytes | Used: %u bytes | Items: %d\n", 
             freeHeap, usedHeap, worldItemsCount);
+        
+        // ⭐ MEMORY-BASED REBOOT TRIGGER: If free memory drops below 25KB, trigger 2-min countdown
+        const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
+        if (freeHeap <= MEMORY_REBOOT_THRESHOLD && nextGlobalRespawn == 0) {
+            // First time hitting this threshold - trigger 2-minute countdown
+            nextGlobalRespawn = now + (2UL * 60UL * 1000UL);  // 2 minutes from now
+            memoryTriggeredReboot = true;
+            Serial.println("[MEMORY WARNING] FREE MEMORY CRITICAL! Triggering 2-minute reboot countdown...");
+        }
     }
 
     // NPC respawn tick
