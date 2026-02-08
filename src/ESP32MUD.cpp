@@ -782,6 +782,9 @@ struct Player {
     // Hobble tracking: alternate accepting/rejecting movement commands
     bool hobbleSkipNextMove = false; // If true, skip the next movement command
 
+    // Criminal flag (runtime only, not saved) - cached from register.txt check at login
+    bool isCriminal = false;  // Set once at login, checked on movement to avoid file I/O
+
     // Arrest sequence state (for non-blocking delayed messages)
     bool inArrestSequence = false;
     int arrestSequenceStep = 0;      // 0-7: different stages of arrest
@@ -5402,7 +5405,7 @@ void movePlayer(Player &p, int index, const char *dir) {
     checkNPCAggro(p);
 
     // CHECK: TOWN LAW - Confiscate weapons if criminal enters town boundaries
-    if (isPlayerCriminal(p.name) && isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
+    if (p.isCriminal && isWithinTownBoundaries(p.roomX, p.roomY, p.roomZ)) {
         // Check if player has any weapons wielded or in inventory
         bool hasWeapons = false;
         
@@ -7389,6 +7392,7 @@ void updateCitationRemovalSequence(Player &p) {
         case 3:
             // Remove from criminal register
             removeFromCriminalRegister(p.name);
+            p.isCriminal = false;  // Update in-memory flag immediately
             
             p.client.println("The record has been CLEARED from the Criminal Register!");
             p.client.println("You may now wield weapons and carry items freely in this town!");
@@ -12412,6 +12416,7 @@ void updateArrestSequence(Player &p, int playerIndex) {
         case 6: {
             // Add to criminal register
             addToCriminalRegister(p.name, "Town Murder", "Citation - weapons restricted");
+            p.isCriminal = true;  // Update in-memory flag immediately
             
             p.client.println("A citation has been posted to the Criminal Register.");
             p.client.println("You are released from jail.");
@@ -17712,6 +17717,13 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             // Successful login
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
+            
+            // Check criminal status once at login and cache in flag (avoids file I/O on every movement)
+            p.isCriminal = isPlayerCriminal(p.name);
+            Serial.print("[LOGIN] Player ");
+            Serial.print(p.name);
+            Serial.print(" criminal flag set to: ");
+            Serial.println(p.isCriminal ? "TRUE" : "FALSE");
             
             // Broadcast player login to all players
             String capName = capFirst(p.name);
