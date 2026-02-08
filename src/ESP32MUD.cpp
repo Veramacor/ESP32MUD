@@ -1189,7 +1189,7 @@ void bootstrapJokesFromServer() {
         Serial.printf("[JOKE BOOT] Attempt %d/%d (have %d, need %d)...\n", attempt, MAX_RETRIES, totalJokes, TARGET_JOKES);
         
         HTTPClient http;
-        String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
+        String jokeUrl = "http://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
         
         try {
             http.setConnectTimeout(10000);
@@ -3322,6 +3322,17 @@ String wordWrap(const String &text, int width = MAX_OUTPUT_WIDTH) {
         
         // Accumulate characters into word
         word += c;
+        
+        // CRITICAL FIX: If word alone exceeds width, force it to next line
+        // This prevents single words from being broken across lines
+        if (currentLine.length() > 0 && (int)(currentLine.length() + 1 + word.length()) > width && (int)word.length() < width) {
+            // Word doesn't fit on current line but fits on its own - move to next line
+            while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                currentLine = currentLine.substring(0, currentLine.length() - 1);
+            }
+            result += currentLine + "\n";
+            currentLine = "";
+        }
     }
     
     // Handle remaining word
@@ -3331,12 +3342,20 @@ String wordWrap(const String &text, int width = MAX_OUTPUT_WIDTH) {
         } else if ((int)(currentLine.length() + 1 + word.length()) <= width) {
             currentLine += " " + word;
         } else {
-            // Trim trailing spaces before adding line
-            while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
-                currentLine = currentLine.substring(0, currentLine.length() - 1);
+            // CRITICAL FIX: Only move word to next line if it's not too long
+            // If word alone exceeds width, let it be forced (shouldn't happen with normal text)
+            if ((int)word.length() < width) {
+                // Trim trailing spaces before adding line
+                while (currentLine.length() > 0 && currentLine[currentLine.length() - 1] == ' ') {
+                    currentLine = currentLine.substring(0, currentLine.length() - 1);
+                }
+                result += currentLine + "\n";
+                currentLine = word;
+            } else {
+                // Word is longer than width - add to current line anyway (shouldn't happen)
+                if (!currentLine.isEmpty()) currentLine += " ";
+                currentLine += word;
             }
-            result += currentLine + "\n";
-            currentLine = word;
         }
     }
     
@@ -14764,7 +14783,7 @@ String extractPlayerNameFromEmail(const String &emailBody) {
 }
 
 /**
- * Fetch mail from the web server via HTTP API
+ * Fetch mail from the web server via plain HTTP (non-HTTPS) to avoid SSL memory overhead
  * Returns true if successful, populates letters vector
  */
 bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters) {
@@ -14773,9 +14792,8 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
         return false;
     }
     
-    HTTPClient http;
-    // Don't pass player name - get ALL unread emails and filter by body content
-    String url = "https://www.storyboardacs.com/retrieveESP32mail.php";
+    // Use plain HTTP (not HTTPS) to reduce memory overhead - no SSL/TLS needed
+    String url = "http://www.storyboardacs.com/retrieveESP32mail.php";
     
     Serial.println("");
     Serial.println("========== MAIL FETCH START ==========");
@@ -14784,229 +14802,301 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
     Serial.print("[MAIL] URL: ");
     Serial.println(url);
     
-    http.setConnectTimeout(5000);   // 5 second connection timeout
-    http.setTimeout(10000);          // 10 second total timeout
-    
-    Serial.println("[MAIL] Attempting HTTP connection...");
-    
-    if (!http.begin(url)) {
-        Serial.println("[MAIL] ERROR: Failed to begin HTTP request");
-        try {
-            http.end();
-        } catch (...) {}
-        return false;
-    }
-    
-    Serial.println("[MAIL] HTTP connection started, sending GET request...");
-    http.addHeader("Content-Type", "application/json");
-    
-    int httpCode = http.GET();
-    Serial.print("[MAIL] HTTP Response Code: ");
-    Serial.println(httpCode);
-    
-    if (httpCode != HTTP_CODE_OK) {
-        Serial.print("[MAIL] ERROR: HTTP error code ");
+    // RETRY LOOP: Plain HTTP connections are more reliable and use far less memory
+    // Allow up to 3 attempts just in case network is flaky
+    const int MAX_MAIL_RETRIES = 3;
+    for (int attempt = 1; attempt <= MAX_MAIL_RETRIES; attempt++) {
+        Serial.print("[MAIL] Attempt ");
+        Serial.print(attempt);
+        Serial.print("/");
+        Serial.println(MAX_MAIL_RETRIES);
+        
+        uint32_t freeHeap = ESP.getFreeHeap();
+        Serial.printf("[MAIL] Free heap before attempt: %u bytes\n", freeHeap);
+        
+        HTTPClient http;
+        http.setConnectTimeout(5000);   // 5 second connection timeout
+        http.setTimeout(10000);          // 10 second total timeout
+        
+        Serial.println("[MAIL] Attempting HTTP connection...");
+        
+        if (!http.begin(url)) {
+            Serial.println("[MAIL] ERROR: Failed to begin HTTP request");
+            try {
+                http.end();
+            } catch (...) {}
+            
+            if (attempt < MAX_MAIL_RETRIES) {
+                Serial.println("[MAIL] Retrying after delay...");
+                delay(1000);  // Wait 1 second before retry
+            }
+            continue;
+        }
+        
+        Serial.println("[MAIL] HTTP connection started, sending GET request...");
+        http.addHeader("Content-Type", "application/json");
+        
+        int httpCode = http.GET();
+        Serial.print("[MAIL] HTTP Response Code: ");
         Serial.println(httpCode);
+        
+        if (httpCode != HTTP_CODE_OK) {
+            Serial.print("[MAIL] ERROR: HTTP error code ");
+            Serial.println(httpCode);
+            try {
+                http.end();
+            } catch (...) {}
+            
+            if (attempt < MAX_MAIL_RETRIES) {
+                Serial.println("[MAIL] Retrying after delay...");
+                delay(1000);  // Wait 1 second before retry
+            }
+            continue;
+        }
+        
+        // SUCCESS: Got a valid response
+        String response = http.getString();
         try {
             http.end();
         } catch (...) {}
-        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
-        return false;
-    }
-    
-    String response = http.getString();
-    try {
-        http.end();
-    } catch (...) {}
-    
-    Serial.print("[MAIL] Response length: ");
-    Serial.print(response.length());
-    Serial.println(" bytes");
-    
-    if (response.length() > 500) {
-        Serial.print("[MAIL] Response (first 500 chars): ");
-        Serial.println(response.substring(0, 500));
-    } else {
-        Serial.print("[MAIL] Full Response: ");
-        Serial.println(response);
-    }
-    
-    // Parse JSON response
-    // Format: {"success": true, "emails": [...], "count": N, "errors": [...]}
-    
-    // Simple JSON parsing (no external library)
-    // Check for success - handle both "success": true and "success":true (no spaces)
-    if (response.indexOf("\"success\":true") == -1 && response.indexOf("\"success\": true") == -1) {
-        Serial.println("[MAIL] ERROR: Server returned error or success=false");
-        Serial.println("[MAIL] Looking for success flag in response...");
-        Serial.println(response);
-        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
-        return false;
-    }
-    
-    Serial.println("[MAIL] Response success=true");
-    
-    if (response.indexOf("\"count\":0") != -1 || response.indexOf("\"count\": 0") != -1) {
-        Serial.println("[MAIL] No new mail (count=0)");
-        Serial.println("========== MAIL FETCH END (SUCCESS, NO MAIL) ==========\n");
-        return true;  // Success, just no mail
-    }
-    
-    Serial.println("[MAIL] Response contains emails, parsing...");
-    
-    // Extract email array
-    // Look for "emails": [...]
-    int emailsStart = response.indexOf("\"emails\": [");
-    if (emailsStart == -1) {
-        emailsStart = response.indexOf("\"emails\":[");  // Also try without space
-    }
-    if (emailsStart == -1) {
-        Serial.println("[MAIL] ERROR: Could not find emails array in response");
-        Serial.println("========== MAIL FETCH END (ERROR) ==========\n");
-        return false;
-    }
-    
-    Serial.println("[MAIL] Found emails array, parsing individual emails...");
-    
-    // Parse each email object in the array
-    // Very basic parsing - assumes well-formed JSON
-    int pos = emailsStart;
-    if (response.indexOf("\"emails\": [") != -1) {
-        pos += 11;  // Move past "emails": [
-    } else {
-        pos += 10;  // Move past "emails":[
-    }
-    
-    int emailCount = 0;
-    
-    while (pos < response.length()) {
-        // Look for opening brace of email object
-        int objStart = response.indexOf('{', pos);
-        if (objStart == -1) break;
         
-        // Find closing brace
-        int objEnd = response.indexOf('}', objStart);
-        if (objEnd == -1) break;
+        Serial.print("[MAIL] Response length: ");
+        Serial.print(response.length());
+        Serial.println(" bytes");
         
-        String emailObj = response.substring(objStart, objEnd + 1);
-        
-        Serial.print("[MAIL] Parsing email object ");
-        Serial.print(emailCount + 1);
-        Serial.print(": ");
-        Serial.println(emailObj.substring(0, 100));
-        
-        // Parse fields
-        Letter letter;
-        
-        // Extract "to"
-        int toStart = emailObj.indexOf("\"to\": \"");
-        if (toStart == -1) toStart = emailObj.indexOf("\"to\":\"");
-        if (toStart != -1) {
-            toStart = emailObj.indexOf("\"", toStart + 4) + 1;
-            int toEnd = emailObj.indexOf("\"", toStart);
-            if (toEnd != -1) {
-                letter.to = emailObj.substring(toStart, toEnd);
-            }
+        if (response.length() > 500) {
+            Serial.print("[MAIL] Response (first 500 chars): ");
+            Serial.println(response.substring(0, 500));
+        } else {
+            Serial.print("[MAIL] Full Response: ");
+            Serial.println(response);
         }
         
-        // Extract "from"
-        int fromStart = emailObj.indexOf("\"from\": \"");
-        if (fromStart == -1) fromStart = emailObj.indexOf("\"from\":\"");
-        if (fromStart != -1) {
-            fromStart = emailObj.indexOf("\"", fromStart + 5) + 1;
-            int fromEnd = emailObj.indexOf("\"", fromStart);
-            if (fromEnd != -1) {
-                letter.from = emailObj.substring(fromStart, fromEnd);
+        // Check for empty response
+        if (response.length() == 0) {
+            Serial.println("[MAIL] ERROR: Empty response from server");
+            if (attempt < MAX_MAIL_RETRIES) {
+                Serial.println("[MAIL] Retrying after delay...");
+                delay(1000);
             }
+            continue;
         }
         
-        // Extract "subject"
-        int subjStart = emailObj.indexOf("\"subject\": \"");
-        if (subjStart == -1) subjStart = emailObj.indexOf("\"subject\":\"");
-        if (subjStart != -1) {
-            subjStart = emailObj.indexOf("\"", subjStart + 8) + 1;
-            int subjEnd = emailObj.indexOf("\"", subjStart);
-            if (subjEnd != -1) {
-                letter.subject = emailObj.substring(subjStart, subjEnd);
+        // Parse JSON response
+        // Format: {"success": true, "emails": [...], "count": N, "errors": [...]}
+        
+        // Simple JSON parsing (no external library)
+        // Check for success - handle both "success": true and "success":true (no spaces)
+        if (response.indexOf("\"success\":true") == -1 && response.indexOf("\"success\": true") == -1) {
+            Serial.println("[MAIL] ERROR: Server returned error or success=false");
+            Serial.println("[MAIL] Looking for success flag in response...");
+            Serial.println(response);
+            
+            // Check if there's an error message in the response
+            int errorIdx = response.indexOf("\"error\"");
+            if (errorIdx != -1) {
+                Serial.println("[MAIL] Server returned an error field");
             }
+            if (attempt < MAX_MAIL_RETRIES) {
+                Serial.println("[MAIL] Retrying after delay...");
+                delay(1000);
+            }
+            continue;
         }
         
-        // Extract "body" (note: body may contain escaped newlines and special chars)
-        // This is more robust - find "body": then skip to the opening quote, then extract until closing quote
-        int bodyStart = emailObj.indexOf("\"body\":");
-        if (bodyStart != -1) {
-            // Find the opening quote for the body value
-            bodyStart = emailObj.indexOf("\"", bodyStart + 7);
+        Serial.println("[MAIL] Response success=true");
+        
+        // Check count field
+        if (response.indexOf("\"count\":0") != -1 || response.indexOf("\"count\": 0") != -1) {
+            Serial.println("[MAIL] No new mail (count=0)");
+            Serial.println("========== MAIL FETCH END (SUCCESS, NO MAIL) ==========\n");
+            return false;  // Return FALSE to indicate no mail (not an error, just no mail)
+        }
+        
+        // Check if count field exists and what it is
+        int countIdx = response.indexOf("\"count\":");
+        if (countIdx != -1) {
+            int countValueStart = response.indexOf(":", countIdx) + 1;
+            int countValueEnd = response.indexOf(",", countValueStart);
+            if (countValueEnd == -1) countValueEnd = response.indexOf("}", countValueStart);
+            String countStr = response.substring(countValueStart, countValueEnd);
+            countStr.trim();
+            Serial.print("[MAIL] Server reported count: ");
+            Serial.println(countStr);
+        }
+        
+        Serial.println("[MAIL] Response contains emails, parsing...");
+        
+        // Extract email array
+        // Look for "emails": [...]
+        int emailsStart = response.indexOf("\"emails\": [");
+        if (emailsStart == -1) {
+            emailsStart = response.indexOf("\"emails\":[");  // Also try without space
+        }
+        if (emailsStart == -1) {
+            Serial.println("[MAIL] ERROR: Could not find emails array in response");
+            if (attempt < MAX_MAIL_RETRIES) {
+                Serial.println("[MAIL] Retrying after delay...");
+                delay(1000);
+            }
+            continue;
+        }
+        
+        Serial.println("[MAIL] Found emails array, parsing individual emails...");
+        
+        // Parse each email object in the array
+        // Very basic parsing - assumes well-formed JSON
+        int pos = emailsStart;
+        if (response.indexOf("\"emails\": [") != -1) {
+            pos += 11;  // Move past "emails": [
+        } else {
+            pos += 10;  // Move past "emails":[
+        }
+        
+        int emailCount = 0;
+        
+        while (pos < response.length()) {
+            // Look for opening brace of email object
+            int objStart = response.indexOf('{', pos);
+            if (objStart == -1) break;
+            
+            // Find closing brace
+            int objEnd = response.indexOf('}', objStart);
+            if (objEnd == -1) break;
+            
+            String emailObj = response.substring(objStart, objEnd + 1);
+            
+            Serial.print("[MAIL] Parsing email object ");
+            Serial.print(emailCount + 1);
+            Serial.print(": ");
+            if (emailObj.length() > 100) {
+                Serial.println(emailObj.substring(0, 100));
+            } else {
+                Serial.println(emailObj);
+            }
+            
+            // Parse fields
+            Letter letter;
+            
+            // Extract "to"
+            int toStart = emailObj.indexOf("\"to\": \"");
+            if (toStart == -1) toStart = emailObj.indexOf("\"to\":\"");
+            if (toStart != -1) {
+                toStart = emailObj.indexOf("\"", toStart + 4) + 1;
+                int toEnd = emailObj.indexOf("\"", toStart);
+                if (toEnd != -1) {
+                    letter.to = emailObj.substring(toStart, toEnd);
+                }
+            }
+            
+            // Extract "from"
+            int fromStart = emailObj.indexOf("\"from\": \"");
+            if (fromStart == -1) fromStart = emailObj.indexOf("\"from\":\"");
+            if (fromStart != -1) {
+                fromStart = emailObj.indexOf("\"", fromStart + 5) + 1;
+                int fromEnd = emailObj.indexOf("\"", fromStart);
+                if (fromEnd != -1) {
+                    letter.from = emailObj.substring(fromStart, fromEnd);
+                }
+            }
+            
+            // Extract "subject"
+            int subjStart = emailObj.indexOf("\"subject\": \"");
+            if (subjStart == -1) subjStart = emailObj.indexOf("\"subject\":\"");
+            if (subjStart != -1) {
+                subjStart = emailObj.indexOf("\"", subjStart + 8) + 1;
+                int subjEnd = emailObj.indexOf("\"", subjStart);
+                if (subjEnd != -1) {
+                    letter.subject = emailObj.substring(subjStart, subjEnd);
+                }
+            }
+            
+            // Extract "body" (note: body may contain escaped newlines and special chars)
+            // This is more robust - find "body": then skip to the opening quote, then extract until closing quote
+            int bodyStart = emailObj.indexOf("\"body\":");
             if (bodyStart != -1) {
-                bodyStart++;  // Move past the opening quote
-                
-                // Find the closing quote - must handle escaped characters
-                int bodyEnd = bodyStart;
-                while (bodyEnd < emailObj.length()) {
-                    char c = emailObj[bodyEnd];
-                    if (c == '\\' && (bodyEnd + 1) < emailObj.length()) {
-                        // Skip escaped character
-                        bodyEnd += 2;
-                    } else if (c == '"') {
-                        // Found unescaped closing quote
-                        break;
-                    } else {
-                        bodyEnd++;
+                // Find the opening quote for the body value
+                bodyStart = emailObj.indexOf("\"", bodyStart + 7);
+                if (bodyStart != -1) {
+                    bodyStart++;  // Move past the opening quote
+                    
+                    // Find the closing quote - must handle escaped characters
+                    int bodyEnd = bodyStart;
+                    while (bodyEnd < emailObj.length()) {
+                        char c = emailObj[bodyEnd];
+                        if (c == '\\' && (bodyEnd + 1) < emailObj.length()) {
+                            // Skip escaped character
+                            bodyEnd += 2;
+                        } else if (c == '"') {
+                            // Found unescaped closing quote
+                            break;
+                        } else {
+                            bodyEnd++;
+                        }
+                    }
+                    
+                    if (bodyEnd <= emailObj.length()) {
+                        letter.body = emailObj.substring(bodyStart, bodyEnd);
+                        // Unescape JSON sequences
+                        letter.body.replace("\\r\\n", "\r\n");
+                        letter.body.replace("\\n", "\n");
+                        letter.body.replace("\\\"", "\"");
+                        letter.body.replace("\\\\", "\\");
                     }
                 }
-                
-                if (bodyEnd <= emailObj.length()) {
-                    letter.body = emailObj.substring(bodyStart, bodyEnd);
-                    // Unescape JSON sequences
-                    letter.body.replace("\\r\\n", "\r\n");
-                    letter.body.replace("\\n", "\n");
-                    letter.body.replace("\\\"", "\"");
-                    letter.body.replace("\\\\", "\\");
+            }
+            
+            // Extract "messageId"
+            int msgIdStart = emailObj.indexOf("\"messageId\": \"");
+            if (msgIdStart == -1) msgIdStart = emailObj.indexOf("\"messageId\":\"");
+            if (msgIdStart != -1) {
+                msgIdStart = emailObj.indexOf("\"", msgIdStart + 10) + 1;
+                int msgIdEnd = emailObj.indexOf("\"", msgIdStart);
+                if (msgIdEnd != -1) {
+                    letter.messageId = emailObj.substring(msgIdStart, msgIdEnd);
                 }
             }
-        }
-        
-        // Extract "messageId"
-        int msgIdStart = emailObj.indexOf("\"messageId\": \"");
-        if (msgIdStart == -1) msgIdStart = emailObj.indexOf("\"messageId\":\"");
-        if (msgIdStart != -1) {
-            msgIdStart = emailObj.indexOf("\"", msgIdStart + 10) + 1;
-            int msgIdEnd = emailObj.indexOf("\"", msgIdStart);
-            if (msgIdEnd != -1) {
-                letter.messageId = emailObj.substring(msgIdStart, msgIdEnd);
+            
+            // Extract "displayName" (preferred playername or sender email part)
+            int displayNameStart = emailObj.indexOf("\"displayName\": \"");
+            if (displayNameStart == -1) displayNameStart = emailObj.indexOf("\"displayName\":\"");
+            if (displayNameStart != -1) {
+                displayNameStart = emailObj.indexOf("\"", displayNameStart + 13) + 1;
+                int displayNameEnd = emailObj.indexOf("\"", displayNameStart);
+                if (displayNameEnd != -1) {
+                    letter.displayName = emailObj.substring(displayNameStart, displayNameEnd);
+                }
             }
-        }
-        
-        // Extract "displayName" (preferred playername or sender email part)
-        int displayNameStart = emailObj.indexOf("\"displayName\": \"");
-        if (displayNameStart == -1) displayNameStart = emailObj.indexOf("\"displayName\":\"");
-        if (displayNameStart != -1) {
-            displayNameStart = emailObj.indexOf("\"", displayNameStart + 13) + 1;
-            int displayNameEnd = emailObj.indexOf("\"", displayNameStart);
-            if (displayNameEnd != -1) {
-                letter.displayName = emailObj.substring(displayNameStart, displayNameEnd);
+            
+            if (letter.body.length() > 0) {
+                letters.push_back(letter);
+                Serial.print("[MAIL] SUCCESS: Parsed email from: ");
+                Serial.println(letter.from);
+                Serial.print("[MAIL] Email to: ");
+                Serial.println(letter.to);
+                Serial.print("[MAIL] Email subject: ");
+                Serial.println(letter.subject);
+                emailCount++;
+            } else {
+                Serial.println("[MAIL] WARNING: Email has empty body, skipping");
             }
+            
+            pos = objEnd + 1;
         }
         
-        if (letter.body.length() > 0) {
-            letters.push_back(letter);
-            Serial.print("[MAIL] SUCCESS: Parsed email from: ");
-            Serial.println(letter.from);
-            Serial.print("[MAIL] Email subject: ");
-            Serial.println(letter.subject);
-            emailCount++;
-        } else {
-            Serial.println("[MAIL] WARNING: Email has empty body, skipping");
-        }
+        Serial.print("[MAIL] Successfully parsed ");
+        Serial.print(letters.size());
+        Serial.println(" emails from server");
+        Serial.println("========== MAIL FETCH END (SUCCESS) ==========\n");
         
-        pos = objEnd + 1;
+        // Return true if we got ANY mail, false if no mail
+        return letters.size() > 0;
     }
     
-    Serial.print("[MAIL] Successfully parsed ");
-    Serial.print(letters.size());
-    Serial.println(" emails");
-    Serial.println("========== MAIL FETCH END (SUCCESS) ==========\n");
-    return true;
+    // All retries exhausted
+    Serial.println("[MAIL] ERROR: All retry attempts failed");
+    Serial.println("========== MAIL FETCH END (ERROR - ALL RETRIES FAILED) ==========\n");
+    return false;
 }
 
 /**
@@ -19350,12 +19440,24 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             return;
         }
         
+        Serial.println("[MAIL] === MANUAL MAIL CHECK INITIATED ===");
+        Serial.print("[MAIL] Player: ");
+        Serial.println(p.name);
+        Serial.print("[MAIL] Location: (");
+        Serial.print(p.roomX);
+        Serial.print(",");
+        Serial.print(p.roomY);
+        Serial.print(",");
+        Serial.println(p.roomZ);
+        Serial.println(")");
+        
         bool hasMailResult = checkAndSpawnMailLetters(p);
         
         // Provide feedback
         if (!hasMailResult) {
             p.client.println("No mail today, sorry.");
         }
+        Serial.println("[MAIL] === MANUAL MAIL CHECK COMPLETE ===");
         return;
     }
 
