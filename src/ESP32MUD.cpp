@@ -248,6 +248,7 @@ bool warned5sec  = false;
 
 // Memory-based reboot trigger flag
 bool memoryTriggeredReboot = false;  // true if reboot was triggered by low memory
+bool memoryConnectionLocked = false;  // true once hard memory gate is hit - LOCK OUT all connections
 
 
 
@@ -21097,6 +21098,7 @@ void setup() {
     warned30sec = false;
     warned5sec  = false;
     memoryTriggeredReboot = false;  // Reset memory reboot flag
+    memoryConnectionLocked = false;  // Reset connection lock flag
 
     return;
 
@@ -21175,9 +21177,21 @@ void loop() {
     // Accept new players
     WiFiClient newClient = server->available();
     if (newClient && newClient.connected()) {
-        // ⭐ CRITICAL MEMORY CHECK: Reject connection immediately if heap is too low
-        // OR if soft warning has been triggered (memoryTriggeredReboot flag)
+        // ⭐ CRITICAL MEMORY CHECK: Once hard gate is hit, LOCK OUT all connections permanently
         // This prevents cascading resource exhaustion from rapid login attempts
+        
+        // If connection lock is already engaged, reject immediately
+        if (memoryConnectionLocked) {
+            Serial.printf("[MEMORY] REJECTING NEW CONNECTION [LOCKED GATE]: Connection gate is locked\n");
+            newClient.println("The world is too unstable right now. Connection rejected.");
+            newClient.println("Please try connecting again in a moment.");
+            newClient.flush();
+            delay(100);
+            newClient.stop();
+            return;  // Exit loop iteration, don't process this connection
+        }
+        
+        // Check current heap and engage lock if we hit hard threshold
         uint32_t freeHeap = ESP.getFreeHeap();
         const uint32_t MEMORY_SOFT_WARNING_THRESHOLD = 35000;  // 35KB - firewall all new logins at soft threshold
         const uint32_t MEMORY_HARD_REJECT_THRESHOLD = 28000;   // 28KB - absolute hard gate
@@ -21191,6 +21205,7 @@ void loop() {
         if (freeHeap <= MEMORY_HARD_REJECT_THRESHOLD) {
             rejectConnection = true;
             rejectReason = "[HARD GATE]";
+            memoryConnectionLocked = true;  // ⭐ LOCK OUT all future connections
         } else if (freeHeap <= MEMORY_SOFT_WARNING_THRESHOLD && memoryTriggeredReboot) {
             rejectConnection = true;
             rejectReason = "[SOFT WARNING FIREWALL]";
