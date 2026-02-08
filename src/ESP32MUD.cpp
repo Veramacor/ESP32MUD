@@ -439,6 +439,7 @@ void showItemDescriptionNormal(Player &p, WorldItem &wi);
 void echoCommandToFollowingWizards(int playerIndex, const String &input);
 void mergeCoinPilesAt(int x, int y, int z);
 void spawnGoldAt(int x, int y, int z, int amount);
+void removePlayerInventoryItems(const String &playerName);
 
 // Item resolution
 int resolveItem(Player &p, const String &raw);
@@ -2405,6 +2406,44 @@ void checkSpace() {
 // Item definition loaders
 // =============================
 
+// =============================
+// PLAYER LOGOUT CLEANUP
+// =============================
+// Remove all items owned by a player from the world (memory cleanup on logout)
+// Items that were dropped (ownerName == "") stay in the world
+// This releases heap memory used by the player's inventory
+void removePlayerInventoryItems(const String &playerName) {
+    if (playerName.length() == 0) return;  // Safety check
+    
+    Serial.printf("[CLEANUP] Removing inventory items for player: %s\n", playerName.c_str());
+    
+    int removedCount = 0;
+    
+    // Iterate backwards to safely remove items while iterating
+    for (int i = worldItems.size() - 1; i >= 0; i--) {
+        if (worldItems[i].ownerName == playerName) {
+            Serial.printf("[CLEANUP] Removing item: %s (owned by %s)\n", 
+                         worldItems[i].name.c_str(), playerName.c_str());
+            
+            // Also remove any children this item might have
+            if (!worldItems[i].children.empty()) {
+                Serial.printf("[CLEANUP] Item %s has %d children, will be cleaned up with parent\n", 
+                             worldItems[i].name.c_str(), worldItems[i].children.size());
+            }
+            
+            // Erase this item from the vector
+            worldItems.erase(worldItems.begin() + i);
+            removedCount++;
+        }
+    }
+    
+    if (removedCount > 0) {
+        Serial.printf("[CLEANUP] Removed %d items for %s - memory released to heap\n", 
+                     removedCount, playerName.c_str());
+    } else {
+        Serial.printf("[CLEANUP] Player %s had no inventory items to remove\n", playerName.c_str());
+    }
+}
 
 void resetPlayer(Player &p) {
     int playerIndex = -1;
@@ -17830,6 +17869,8 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                     logSessionLogout(players[i].name);  // Log the old session logout
                     players[i].client.println("You have logged in elsewhere. Disconnecting...");
                     players[i].client.stop();
+                    // Clean up inventory items before disconnecting old session
+                    removePlayerInventoryItems(String(players[i].name));
                     players[i].active = false;
                     players[i].loggedIn = false;
                     
@@ -19415,6 +19456,9 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         
         // Log session logout
         logSessionLogout(p.name);
+        
+        // Remove all inventory items owned by this player from heap memory
+        removePlayerInventoryItems(String(p.name));
 
         announceToRoom(
             250, 250, 50,
@@ -19855,6 +19899,8 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                     if (i != index) {  // Don't boot the wizard
                         players[i].client.println("You have been booted from the server by a wizard.");
                         logSessionBooted(players[i].name);  // Log boot event
+                        // Clean up inventory items before disconnecting
+                        removePlayerInventoryItems(String(players[i].name));
                         delay(50);
                         if (players[i].client) {
                             players[i].client.stop();
@@ -19895,6 +19941,8 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         p.client.println(String("Booting ") + players[targetIndex].name + String("..."));
         players[targetIndex].client.println("You have been booted from the server by a wizard.");
         logSessionBooted(players[targetIndex].name);  // Log boot event
+        // Clean up inventory items before disconnecting
+        removePlayerInventoryItems(String(players[targetIndex].name));
         delay(50);
         
         if (players[targetIndex].client) {
@@ -21156,6 +21204,10 @@ void loop() {
         } catch (...) {
             // Connection check failed - mark as inactive
             p.active = false;
+            // Clean up inventory items when player disconnects
+            if (p.loggedIn) {
+                removePlayerInventoryItems(String(p.name));
+            }
             continue;
         }
 
@@ -21166,6 +21218,10 @@ void loop() {
             } catch (...) {
                 // readClientLine failed - disconnect this client
                 p.active = false;
+                // Clean up inventory items when player disconnects
+                if (p.loggedIn) {
+                    removePlayerInventoryItems(String(p.name));
+                }
                 continue;
             }
 
@@ -21210,6 +21266,10 @@ void loop() {
             } catch (...) {
                 // Command handling threw an exception - disconnect
                 p.active = false;
+                // Clean up inventory items when player disconnects
+                if (p.loggedIn) {
+                    removePlayerInventoryItems(String(p.name));
+                }
                 continue;
             }
 
