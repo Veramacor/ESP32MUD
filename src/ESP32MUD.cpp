@@ -3843,6 +3843,13 @@ void cmdResetWorldItems(Player &p, const String &args) {
     loadAllWorldItems();
 
     // ---------------------------------------------------------
+    // 3b. RE-SAVE WORLD ITEMS (includes preserved player items)
+    // ---------------------------------------------------------
+    // Player-owned items remain in memory and need to be persisted
+    // so they survive server reboots or player logout/login cycles
+    saveWorldItems();
+
+    // ---------------------------------------------------------
     // 4. MERGE COIN PILES IN ALL ROOMS
     // ---------------------------------------------------------
     for (int i = 0; i < (int)worldItems.size(); i++) {
