@@ -1170,10 +1170,10 @@ void bootstrapJokesFromServer() {
         return;
     }
     
-    Serial.println("[JOKE BOOT] Fetching 20 jokes from API...");
+    Serial.println("[JOKE BOOT] Fetching 10 jokes from API...");
     
     HTTPClient http;
-    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=20";
+    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
     
     try {
         http.setConnectTimeout(10000);  // 10 second connect timeout
@@ -1208,7 +1208,7 @@ void bootstrapJokesFromServer() {
         int jokeCount = 0;
         int pos = 0;
         
-        while (pos < (int)payload.length() && jokeCount < 20) {
+        while (pos < (int)payload.length() && jokeCount < 10) {
             // Find start of joke object
             int objStart = payload.indexOf('{', pos);
             if (objStart == -1) break;
@@ -1236,7 +1236,7 @@ void bootstrapJokesFromServer() {
             }
             
             if (jokeText.length() >= 10) {
-                // Clean up escape sequences - MUST be on single line!
+                // CRITICAL: Clean up escape sequences - MUST be on single line!
                 jokeText.replace("\\\"", "\"");
                 jokeText.replace("\\n", " ");    // Replace escaped newlines with spaces
                 jokeText.replace("\\r", " ");    // Replace carriage returns with spaces
@@ -1248,10 +1248,15 @@ void bootstrapJokesFromServer() {
                 jokeText.replace("\r", " ");
                 jokeText.replace("\t", " ");
                 
+                // Collapse multiple spaces to single space for clean output
+                while (jokeText.indexOf("  ") != -1) {
+                    jokeText.replace("  ", " ");
+                }
+                
                 // Trim whitespace
                 jokeText.trim();
                 
-                // Write joke as single line
+                // VERIFY: Write joke as single line (println adds newline after)
                 jokesFile.println(jokeText);
                 jokeCount++;
                 Serial.printf("[JOKE BOOT] Saved joke %d: %.30s...\n", jokeCount, jokeText.c_str());
