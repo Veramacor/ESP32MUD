@@ -16882,9 +16882,26 @@ void broadcastRoomExcept(Player &p, const String &msg, Player &exclude) {
 bool checkHeapAndTriggerIfCritical() {
     unsigned long now = millis();
     uint32_t freeHeap = ESP.getFreeHeap();
-    const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
+    const uint32_t MEMORY_SOFT_WARNING_THRESHOLD = 35000;  // 35KB - trigger 2-min graceful shutdown
+    const uint32_t MEMORY_PANIC_THRESHOLD = 25000;  // 25KB - trigger immediate emergency reboot
     
-    if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
+    // ⭐ TIER 1: SOFT WARNING (35KB) - Graceful 2-minute countdown
+    if (freeHeap <= MEMORY_SOFT_WARNING_THRESHOLD && freeHeap > MEMORY_PANIC_THRESHOLD && !memoryTriggeredReboot) {
+        // Trigger 2-minute graceful shutdown (enough heap to broadcast safely)
+        nextGlobalRespawn = now + (2UL * 60UL * 1000UL);
+        memoryTriggeredReboot = true;
+        warned5min = false;   // Reset warnings
+        warned2min = false;
+        warned1min = false;
+        warned30sec = false;
+        warned5sec = false;
+        Serial.printf("[MEMORY WARNING] Soft threshold breached: Free heap %u bytes (35KB threshold) - Triggering 2-min graceful shutdown\n", freeHeap);
+        broadcastToAll("[WORLD] World memory low! System will reboot in 2 MINUTES. No new items can be created.");
+        return false;  // Block item creation during countdown
+    }
+    
+    // ⭐ TIER 2: PANIC SHUTDOWN (25KB) - Immediate emergency reboot
+    if (freeHeap <= MEMORY_PANIC_THRESHOLD && !memoryTriggeredReboot) {
         // CRITICAL: System is resource-starved, WiFi operations failing
         // Aggressive emergency shutdown to prevent cascading failure
         
@@ -16912,13 +16929,8 @@ bool checkHeapAndTriggerIfCritical() {
         Serial.println("[MEMORY PANIC] All clients disconnected.");
         Serial.println("[MEMORY PANIC] Triggering immediate reboot...");
         
-        // Skip broadcast (it fails anyway when system is resource-starved)
         memoryTriggeredReboot = true;
-        
-        // Small delay to allow serial output to flush
         delay(200);
-        
-        // ⭐ PANIC REBOOT: Don't wait for 2 minutes, reboot NOW
         safeReboot();
         
         return false;  // Block item creation
@@ -21402,9 +21414,24 @@ void loop() {
         Serial.printf("[MEMORY] Free: %u bytes | Used: %u bytes | Items: %d\n", 
             freeHeap, usedHeap, worldItemsCount);
         
-        // ⭐ MEMORY-BASED PANIC REBOOT: If free memory drops below 25KB, trigger immediate shutdown
-        const uint32_t MEMORY_REBOOT_THRESHOLD = 25000;  // 25KB
-        if (freeHeap <= MEMORY_REBOOT_THRESHOLD && !memoryTriggeredReboot) {
+        const uint32_t MEMORY_SOFT_WARNING_THRESHOLD = 35000;  // 35KB - graceful 2-min shutdown
+        const uint32_t MEMORY_PANIC_THRESHOLD = 25000;  // 25KB - immediate reboot
+        
+        // ⭐ TIER 1: SOFT WARNING (35KB) - Graceful 2-minute countdown
+        if (freeHeap <= MEMORY_SOFT_WARNING_THRESHOLD && freeHeap > MEMORY_PANIC_THRESHOLD && !memoryTriggeredReboot) {
+            // Trigger 2-minute graceful shutdown (enough heap to broadcast safely)
+            nextGlobalRespawn = now + (2UL * 60UL * 1000UL);
+            memoryTriggeredReboot = true;
+            warned5min = false;   // Reset warnings
+            warned2min = false;
+            warned1min = false;
+            warned30sec = false;
+            warned5sec = false;
+            Serial.printf("[MEMORY WARNING] Soft threshold breached from diagnostic: Free heap %u bytes (35KB threshold) - Triggering 2-min graceful shutdown\n", freeHeap);
+            broadcastToAll("[WORLD] World memory low! System will reboot in 2 MINUTES. No new items can be created.");
+        }
+        // ⭐ TIER 2: PANIC SHUTDOWN (25KB) - Immediate emergency reboot
+        else if (freeHeap <= MEMORY_PANIC_THRESHOLD && !memoryTriggeredReboot) {
             // CRITICAL: System is resource-starved, WiFi operations failing
             // Aggressive emergency shutdown to prevent cascading failure
             
