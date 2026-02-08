@@ -1230,10 +1230,20 @@ void bootstrapJokesFromServer() {
             }
             
             if (jokeText.length() >= 10) {
-                // Clean up escape sequences
+                // Clean up escape sequences - MUST be on single line!
                 jokeText.replace("\\\"", "\"");
-                jokeText.replace("\\n", " ");  // Replace newlines with spaces for single-line format
+                jokeText.replace("\\n", " ");    // Replace escaped newlines with spaces
+                jokeText.replace("\\r", " ");    // Replace carriage returns with spaces
+                jokeText.replace("\\t", " ");    // Replace tabs with spaces
                 jokeText.replace("\\\\", "\\");
+                
+                // Also remove any actual newline characters that might exist
+                jokeText.replace("\n", " ");
+                jokeText.replace("\r", " ");
+                jokeText.replace("\t", " ");
+                
+                // Trim whitespace
+                jokeText.trim();
                 
                 // Write joke as single line
                 jokesFile.println(jokeText);
