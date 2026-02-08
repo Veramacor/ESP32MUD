@@ -1357,48 +1357,76 @@ String getRandomJoke() {
         }
         
         String jokeText = "";
-        int currentLine = 0;
-        int maxLines = 20;  // Safety limit: jokes.txt should never have more than 20 lines
+        int currentJoke = 0;  // Count jokes (separated by blank lines)
+        int maxLines = 50;    // Safety limit: read up to 50 physical lines
+        int linesRead = 0;
         
-        Serial.printf("[JOKE_FUNC] Reading file until line %d...\n", lineToUse);
-        while (jokesFile.available() && currentLine < maxLines) {
+        Serial.printf("[JOKE_FUNC] Reading file to find joke #%d...\n", lineToUse);
+        while (jokesFile.available() && linesRead < maxLines) {
             String line = jokesFile.readStringUntil('\n');
-            currentLine++;
-            Serial.printf("[JOKE_FUNC] Read line %d (%d chars)\n", currentLine, line.length());
+            linesRead++;
+            line.trim();
+            Serial.printf("[JOKE_FUNC] Physical line %d: %d chars\n", linesRead, line.length());
             
-            if (currentLine == lineToUse) {
-                jokeText = line;
-                Serial.printf("[JOKE_FUNC] Found target line! Length: %d\n", jokeText.length());
-                
-                // AGGRESSIVE cleanup: Remove ANYTHING that's not a normal printable character
-                Serial.println("[JOKE_FUNC] Starting aggressive cleanup...");
-                String cleaned = "";
-                for (int i = 0; i < (int)jokeText.length(); i++) {
-                    char ch = jokeText[i];
-                    // Keep only normal printable ASCII (space=32 to ~=126) and common punctuation
-                    if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
-                        cleaned += ch;
+            // Empty line = end of current joke
+            if (line.length() == 0) {
+                if (jokeText.length() > 0) {
+                    // Just finished reading a joke
+                    currentJoke++;
+                    Serial.printf("[JOKE_FUNC] Found end of joke #%d\n", currentJoke);
+                    
+                    if (currentJoke == lineToUse) {
+                        // This is the joke we want!
+                        Serial.printf("[JOKE_FUNC] Target joke #%d complete! Length: %d\n", lineToUse, jokeText.length());
+                        break;
                     }
+                    jokeText = "";  // Reset for next joke
                 }
-                jokeText = cleaned;
-                Serial.printf("[JOKE_FUNC] After aggressive cleanup: %d chars\n", jokeText.length());
-                jokeText.trim();
-                
-                // Final space collapse
-                Serial.println("[JOKE_FUNC] Starting final space collapse...");
-                int collapseAttempts = 0;
-                while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
-                    jokeText.replace("  ", " ");
-                    collapseAttempts++;
+            } else {
+                // Add this line to the current joke with a space separator
+                if (jokeText.length() > 0) {
+                    jokeText += " ";
                 }
-                Serial.printf("[JOKE_FUNC] Space collapse complete (%d attempts)\n", collapseAttempts);
-                if (collapseAttempts >= 50) {
-                    Serial.printf("[JOKE_FUNC] WARNING: Space collapse hit iteration limit on line %d\n", lineToUse);
-                }
-                jokeText.trim();
-                
-                break;
+                jokeText += line;
             }
+        }
+        
+        // Handle case where file doesn't end with blank line
+        if (jokeText.length() > 0 && currentJoke < lineToUse) {
+            currentJoke++;
+            Serial.printf("[JOKE_FUNC] Reached EOF, final joke #%d\n", currentJoke);
+            if (currentJoke != lineToUse) {
+                jokeText = "";
+            }
+        }
+        
+        // AGGRESSIVE cleanup: Remove ANYTHING that's not normal ASCII or letters/numbers/punctuation
+        if (jokeText.length() > 0) {
+            Serial.println("[JOKE_FUNC] Starting aggressive cleanup...");
+            String cleaned = "";
+            for (int i = 0; i < (int)jokeText.length(); i++) {
+                char ch = jokeText[i];
+                // Keep only normal printable ASCII (space=32 to ~=126)
+                if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
+                    cleaned += ch;
+                }
+            }
+            jokeText = cleaned;
+            Serial.printf("[JOKE_FUNC] After aggressive cleanup: %d chars\n", jokeText.length());
+            jokeText.trim();
+            
+            // Final space collapse
+            Serial.println("[JOKE_FUNC] Starting final space collapse...");
+            int collapseAttempts = 0;
+            while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
+                jokeText.replace("  ", " ");
+                collapseAttempts++;
+            }
+            Serial.printf("[JOKE_FUNC] Space collapse complete (%d attempts)\n", collapseAttempts);
+            if (collapseAttempts >= 50) {
+                Serial.printf("[JOKE_FUNC] WARNING: Space collapse hit iteration limit on joke #%d\n", lineToUse);
+            }
+            jokeText.trim();
         }
         
         jokesFile.close();
