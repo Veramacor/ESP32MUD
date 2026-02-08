@@ -1157,7 +1157,13 @@ String extractJsonString(const String &json, const String &fieldName) {
 void bootstrapJokesFromServer() {
     Serial.println("[JOKE BOOT] Starting joke bootstrap...");
     
-    // Check if jokes.txt already exists
+    // DELETE old jokes.txt to force fresh fetch (ensures single-line format)
+    if (LittleFS.exists("/jokes.txt")) {
+        Serial.println("[JOKE BOOT] Removing old jokes.txt to fetch fresh jokes...");
+        LittleFS.remove("/jokes.txt");
+    }
+    
+    // Check if jokes.txt exists (should not after delete above)
     if (LittleFS.exists("/jokes.txt")) {
         Serial.println("[JOKE BOOT] jokes.txt already exists, loading jokes");
         loadJokesFromFile();
