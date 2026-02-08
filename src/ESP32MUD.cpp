@@ -21176,13 +21176,29 @@ void loop() {
     WiFiClient newClient = server->available();
     if (newClient && newClient.connected()) {
         // ⭐ CRITICAL MEMORY CHECK: Reject connection immediately if heap is too low
-        // This prevents system crash from accepting connections we can't handle
+        // OR if soft warning has been triggered (memoryTriggeredReboot flag)
+        // This prevents cascading resource exhaustion from rapid login attempts
         uint32_t freeHeap = ESP.getFreeHeap();
-        const uint32_t MEMORY_REJECT_THRESHOLD = 28000;  // 28KB - TIGHT safety margin above 25KB emergency threshold
+        const uint32_t MEMORY_SOFT_WARNING_THRESHOLD = 35000;  // 35KB - firewall all new logins at soft threshold
+        const uint32_t MEMORY_HARD_REJECT_THRESHOLD = 28000;   // 28KB - absolute hard gate
         
-        if (freeHeap <= MEMORY_REJECT_THRESHOLD) {
-            Serial.printf("[MEMORY] REJECTING NEW CONNECTION: Free heap %u bytes <= %u bytes\n", 
-                         freeHeap, MEMORY_REJECT_THRESHOLD);
+        // Reject if:
+        // 1) Heap at/below hard threshold (28KB - emergency), OR
+        // 2) Heap at/below soft threshold AND soft warning was triggered (35KB)
+        bool rejectConnection = false;
+        const char *rejectReason = nullptr;
+        
+        if (freeHeap <= MEMORY_HARD_REJECT_THRESHOLD) {
+            rejectConnection = true;
+            rejectReason = "[HARD GATE]";
+        } else if (freeHeap <= MEMORY_SOFT_WARNING_THRESHOLD && memoryTriggeredReboot) {
+            rejectConnection = true;
+            rejectReason = "[SOFT WARNING FIREWALL]";
+        }
+        
+        if (rejectConnection) {
+            Serial.printf("[MEMORY] REJECTING NEW CONNECTION %s: Free heap %u bytes\n", 
+                         rejectReason, freeHeap);
             newClient.println("The world is too unstable right now. Connection rejected.");
             newClient.println("Please try connecting again in a moment.");
             newClient.flush();
