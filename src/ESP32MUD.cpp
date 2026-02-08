@@ -19912,7 +19912,8 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 return;
             }
             
-            p.client.println("Cloned: " + allItemNames[cloneNum - 1]);
+            uint32_t heapKB = ESP.getFreeHeap() / 1024;
+            p.client.println("Cloned: " + allItemNames[cloneNum - 1] + " -> Heap Memory: " + String(heapKB) + "KB");
             announceToRoom(
                 p.roomX, p.roomY, p.roomZ,
                 allItemNames[cloneNum - 1] + " appears in a flash of light!",
@@ -19964,7 +19965,8 @@ void handleCommand(Player &p, int index, const String &rawLine) {
                 return;
             }
             
-            p.client.println("Cloned: " + allNpcNames[npcIdx]);
+            uint32_t heapKB = ESP.getFreeHeap() / 1024;
+            p.client.println("Cloned: " + allNpcNames[npcIdx] + " -> Heap Memory: " + String(heapKB) + "KB");
             announceToRoom(
                 p.roomX, p.roomY, p.roomZ,
                 allNpcNames[npcIdx] + " materializes before you!",
