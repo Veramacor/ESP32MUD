@@ -1162,133 +1162,172 @@ String extractJsonString(const String &json, const String &fieldName) {
 // =============================
 
 void bootstrapJokesFromServer() {
-    Serial.println("[JOKE BOOT] Starting joke bootstrap...");
+    Serial.println("[JOKE BOOT] Starting joke bootstrap with retry logic...");
     
-    // DELETE old jokes.txt to force fresh fetch (ensures single-line format)
+    // Check if jokes.txt exists and count current jokes
+    int existingJokes = 0;
     if (LittleFS.exists("/jokes.txt")) {
-        Serial.println("[JOKE BOOT] Removing old jokes.txt to fetch fresh jokes...");
-        LittleFS.remove("/jokes.txt");
+        File f = LittleFS.open("/jokes.txt", "r");
+        if (f) {
+            while (f.available()) {
+                String line = f.readStringUntil('\n');
+                if (line.length() > 0) {
+                    existingJokes++;
+                }
+            }
+            f.close();
+            Serial.printf("[JOKE BOOT] Found %d existing jokes in jokes.txt\n", existingJokes);
+        }
     }
     
-    Serial.println("[JOKE BOOT] Fetching 10 jokes from API...");
+    // Retry loop: up to 5 attempts to reach 20 total jokes
+    int totalJokes = existingJokes;
+    const int MAX_RETRIES = 5;
+    const int TARGET_JOKES = 20;
     
-    HTTPClient http;
-    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
-    
-    try {
-        http.setConnectTimeout(10000);  // 10 second connect timeout
-        http.setTimeout(15000);          // 15 second total timeout
+    for (int attempt = 1; attempt <= MAX_RETRIES && totalJokes < TARGET_JOKES; attempt++) {
+        Serial.printf("[JOKE BOOT] Attempt %d/%d (have %d, need %d)...\n", attempt, MAX_RETRIES, totalJokes, TARGET_JOKES);
         
-        if (!http.begin(jokeUrl)) {
-            Serial.println("[JOKE BOOT] Failed to begin HTTP connection");
-            http.end();
-            return;
-        }
+        HTTPClient http;
+        String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
         
-        int httpCode = http.GET();
-        Serial.println(String("[JOKE BOOT] HTTP Response: ") + String(httpCode));
-        
-        if (httpCode != 200) {
-            Serial.println("[JOKE BOOT] Bad HTTP response, aborting");
-            http.end();
-            return;
-        }
-        
-        String payload = http.getString();
-        http.end();
-        
-        // Parse JSON array and extract jokes - ONE JOKE = ONE LINE in jokes.txt
-        File jokesFile = LittleFS.open("/jokes.txt", "w");
-        if (!jokesFile) {
-            Serial.println("[JOKE BOOT] Failed to create jokes.txt");
-            return;
-        }
-        
-        // Parse JSON array - look for individual joke objects
-        int jokeCount = 0;
-        int pos = 0;
-        
-        while (pos < (int)payload.length() && jokeCount < 10) {
-            // Find start of joke object
-            int objStart = payload.indexOf('{', pos);
-            if (objStart == -1) break;
+        try {
+            http.setConnectTimeout(10000);
+            http.setTimeout(15000);
             
-            // Find end of joke object
-            int objEnd = payload.indexOf('}', objStart);
-            if (objEnd == -1) break;
-            
-            String jokeObj = payload.substring(objStart, objEnd + 1);
-            pos = objEnd + 1;
-            
-            // Extract joke text
-            String jokeText = "";
-            
-            if (jokeObj.indexOf("\"single\"") != -1) {
-                // Single joke - extract "joke" field
-                jokeText = extractJsonString(jokeObj, "joke");
-            } else if (jokeObj.indexOf("\"twopart\"") != -1) {
-                // Two-part joke - combine setup + delivery
-                String setup = extractJsonString(jokeObj, "setup");
-                String delivery = extractJsonString(jokeObj, "delivery");
-                jokeText = setup + String(" ") + delivery;
-            } else {
-                continue;  // Unknown format
+            if (!http.begin(jokeUrl)) {
+                Serial.println("[JOKE BOOT] Failed to begin HTTP connection, will retry...");
+                http.end();
+                delay(1000);
+                continue;
             }
             
-            if (jokeText.length() >= 10) {
-                // CRITICAL: Convert to single line, no embedded newlines, sanitized
+            int httpCode = http.GET();
+            Serial.printf("[JOKE BOOT] HTTP Response: %d\n", httpCode);
+            
+            if (httpCode != 200) {
+                Serial.println("[JOKE BOOT] Bad HTTP response, will retry...");
+                http.end();
+                delay(1000);
+                continue;
+            }
+            
+            String payload = http.getString();
+            http.end();
+            
+            if (payload.length() == 0) {
+                Serial.println("[JOKE BOOT] Empty response from server, will retry...");
+                delay(1000);
+                continue;
+            }
+            
+            // Open jokes.txt in APPEND mode (or CREATE if doesn't exist)
+            File jokesFile = LittleFS.open("/jokes.txt", "a");
+            if (!jokesFile) {
+                Serial.println("[JOKE BOOT] Failed to open jokes.txt for append");
+                delay(1000);
+                continue;
+            }
+            
+            // Parse JSON array - look for individual joke objects
+            int newJokesThisAttempt = 0;
+            int pos = 0;
+            
+            while (pos < (int)payload.length() && totalJokes < TARGET_JOKES) {
+                // Find start of joke object
+                int objStart = payload.indexOf('{', pos);
+                if (objStart == -1) break;
                 
-                // Step 1: Handle ALL escape sequences from JSON
-                jokeText.replace("\\\"", "\"");
-                jokeText.replace("\\n", " ");    // Escaped newlines → spaces
-                jokeText.replace("\\r", " ");    // Escaped carriage returns → spaces
-                jokeText.replace("\\t", " ");    // Escaped tabs → spaces
-                jokeText.replace("\\\\", "\\");
+                // Find end of joke object
+                int objEnd = payload.indexOf('}', objStart);
+                if (objEnd == -1) break;
                 
-                // Step 2: Remove actual control characters (convert to spaces)
-                jokeText.replace("\n", " ");
-                jokeText.replace("\r", " ");
-                jokeText.replace("\t", " ");
-                jokeText.replace("\0", "");
+                String jokeObj = payload.substring(objStart, objEnd + 1);
+                pos = objEnd + 1;
                 
-                // Step 3: AGGRESSIVE ASCII filter - keep ONLY printable ASCII (32-126)
-                String cleaned = "";
-                for (int i = 0; i < (int)jokeText.length(); i++) {
-                    char ch = jokeText[i];
-                    if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
-                        cleaned += ch;
+                // Extract joke text
+                String jokeText = "";
+                
+                if (jokeObj.indexOf("\"single\"") != -1) {
+                    // Single joke - extract "joke" field
+                    jokeText = extractJsonString(jokeObj, "joke");
+                } else if (jokeObj.indexOf("\"twopart\"") != -1) {
+                    // Two-part joke - combine setup + delivery
+                    String setup = extractJsonString(jokeObj, "setup");
+                    String delivery = extractJsonString(jokeObj, "delivery");
+                    jokeText = setup + String(" ") + delivery;
+                } else {
+                    continue;  // Unknown format
+                }
+                
+                if (jokeText.length() >= 10) {
+                    // SANITIZE TO SINGLE LINE: no embedded newlines, control chars removed
+                    // CRITICAL: Must handle ESCAPED sequences BEFORE actual control chars
+                    
+                    // Step 1: Handle ESCAPED sequences from JSON (these are literal backslash-n in the string)
+                    // These MUST be done FIRST before we do the actual control char replacements
+                    jokeText.replace("\\n", " ");   // Escaped newline → space
+                    jokeText.replace("\\r", " ");   // Escaped carriage return → space
+                    jokeText.replace("\\t", " ");   // Escaped tab → space
+                    jokeText.replace("\\\"", "\""); // Escaped quote → unescaped quote
+                    jokeText.replace("\\\\", "\\"); // Escaped backslash → single backslash
+                    
+                    // Step 2: Remove actual control characters (byte values < 32)
+                    jokeText.replace("\n", " ");
+                    jokeText.replace("\r", " ");
+                    jokeText.replace("\t", " ");
+                    jokeText.replace("\0", "");
+                    
+                    // Step 3: AGGRESSIVE ASCII filter - keep ONLY printable ASCII (32-126)
+                    // This catches any remaining control characters or extended ASCII
+                    String cleaned = "";
+                    for (int i = 0; i < (int)jokeText.length(); i++) {
+                        char ch = jokeText[i];
+                        if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
+                            cleaned += ch;
+                        }
+                    }
+                    jokeText = cleaned;
+                    
+                    // Step 4: Collapse multiple spaces to single space
+                    int collapseAttempts = 0;
+                    while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
+                        jokeText.replace("  ", " ");
+                        collapseAttempts++;
+                    }
+                    jokeText.trim();
+                    
+                    // Step 5: Final validation - verify NO embedded newlines
+                    if (jokeText.length() > 0 && jokeText.indexOf("\n") == -1 && jokeText.indexOf("\r") == -1) {
+                        // Write ONE JOKE AS ONE LINE (println adds \n at end)
+                        jokesFile.println(jokeText);
+                        totalJokes++;
+                        newJokesThisAttempt++;
+                        Serial.printf("[JOKE BOOT] Saved joke %d (%d chars): %.40s...\n", totalJokes, jokeText.length(), jokeText.c_str());
+                        
+                        if (totalJokes >= TARGET_JOKES) break;
                     }
                 }
-                jokeText = cleaned;
-                
-                // Step 4: Collapse multiple spaces to single space
-                int collapseAttempts = 0;
-                while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
-                    jokeText.replace("  ", " ");
-                    collapseAttempts++;
-                }
-                jokeText.trim();
-                
-                // Step 5: Final validation - must be single line
-                if (jokeText.length() > 0 && jokeText.indexOf("\n") == -1 && jokeText.indexOf("\r") == -1) {
-                    // Write ONE JOKE AS ONE LINE (println adds \n at end)
-                    jokesFile.println(jokeText);
-                    jokeCount++;
-                    Serial.printf("[JOKE BOOT] Saved joke %d (%d chars): %.50s...\n", jokeCount, jokeText.length(), jokeText.c_str());
-                } else {
-                    Serial.printf("[JOKE BOOT] REJECTED joke (invalid): %.40s...\n", jokeText.c_str());
-                }
             }
+            
+            jokesFile.close();
+            Serial.printf("[JOKE BOOT] Attempt %d: Added %d new jokes (total now %d)\n", attempt, newJokesThisAttempt, totalJokes);
+            
+            if (totalJokes >= TARGET_JOKES) {
+                Serial.printf("[JOKE BOOT] SUCCESS: Reached target of %d jokes!\n", TARGET_JOKES);
+                break;
+            }
+            
+            delay(1000);
+            
+        } catch (...) {
+            Serial.printf("[JOKE BOOT] Exception during attempt %d!\n", attempt);
+            http.end();
+            delay(1000);
         }
-        
-        jokesFile.close();
-        
-        Serial.printf("[JOKE BOOT] Successfully saved %d jokes to jokes.txt\n", jokeCount);
-        
-    } catch (...) {
-        Serial.println("[JOKE BOOT] Exception during bootstrap!");
-        http.end();
     }
+    
+    Serial.printf("[JOKE BOOT] Bootstrap complete: %d jokes available (target was %d)\n", totalJokes, TARGET_JOKES);
 }
 
 // =============================
@@ -21936,11 +21975,9 @@ for (auto &npc : npcInstances) {
         } else {
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
-            // Clear used joke IDs when room empties
-            if (innKeeperJokes.usedJokeIds.size() > 0) {
-                Serial.printf("[JOKE] Clearing %d used joke IDs\n", innKeeperJokes.usedJokeIds.size());
-                innKeeperJokes.usedJokeIds.clear();
-            }
+            // DO NOT clear used joke IDs when room empties!
+            // The list should persist across room entries/exits
+            // It only resets in getRandomJoke() when all jokes are exhausted
         }
     }
 
