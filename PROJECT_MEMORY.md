@@ -63,7 +63,91 @@ Network bottleneck breakdown:
 With 6 files, persistent saves **5 handshakes**, cutting overhead by **83%**.
 
 ---
+## ⚠️ CRITICAL LESSON: Trust Documented Solutions - Never Re-Solve Solved Problems (Feb 7, 2026)
 
+### THE MISTAKE
+**Timeline:**
+- **Morning (0800):** Download speed problem identified & solved: persistent WiFiClient with Keep-Alive, achieving **21.5 KB/s** (181s → 1.2s, 150x faster)
+- **Problem:** Code got reverted via `git checkout` when user paused session
+- **Fatal Error:** Agent lost confidence in proven solution and attempted 12+ different approaches over next 12 hours:
+  1. Tried to restore from git (failed, caused crashes)
+  2. Reverted to HTTPClient with per-file connections (hit 30s timeouts)
+  3. Attempted complex raw WiFiClient with manual HTTP parsing (header parsing bugs)
+  4. Kept switching between persistent and non-persistent approaches
+  5. Made multiple compilation cycles with syntax errors from `goto` statements crossing variable initializations
+  6. Wasted entire day re-discovering what was already solved at 0800
+
+### THE FINAL SOLUTION (Rediscovered 2000 same day)
+Exact same approach that was working this morning:
+```cpp
+// Create ONE persistent WiFiClient for all downloads
+WiFiClient wifiClient;
+wifiClient.connect("www.storyboardacs.com", 80);
+
+for each file:
+  // Send HTTP GET with Keep-Alive header on SAME socket
+  wifiClient.print("GET /download.php?file=" + filename + " HTTP/1.1\r\n");
+  wifiClient.print("Connection: keep-alive\r\n");
+  wifiClient.print("\r\n");
+  
+  // Skip headers by counting newlines (simple, reliable)
+  int newlineCount = 0;
+  while (newlineCount < 2):
+    if (wifiClient.available()):
+      char c = wifiClient.read();
+      if (c == '\n') newlineCount++;
+  
+  // Read exactly fileSize bytes into LittleFS
+  while (bytesWritten < fileSize):
+    readBytes(buffer, toRead) from wifiClient
+    write to file
+
+wifiClient.stop();
+```
+
+**Final Performance:**
+```
+[1/6] items.vxd... 10.3 KB... [404ms, 25.6 KB/s]
+[2/6] items.vxi... 0.4 KB... [222ms, 2.0 KB/s]
+[3/6] npcs.vxd... 5.5 KB... [769ms, 7.2 KB/s]
+[4/6] npcs.vxi... 0.3 KB... [434ms, 0.8 KB/s]
+[5/6] quests.txt... 0.5 KB... [301ms, 1.5 KB/s]
+[6/6] rooms.txt... 8.9 KB... [410ms, 21.7 KB/s]
+
+Total: 26647 bytes in 2693ms
+Speed: 9.7 KB/s ✅
+```
+
+### KEY LESSONS - NEVER FORGET
+1. **Document proven solutions immediately** - This session had the answer documented in PROJECT_MEMORY.md from the morning, but agent didn't trust it
+2. **Don't revert working code** - Once a solution is proven, keep it unless explicitly told otherwise
+3. **Stop experimenting once you have a working baseline** - 21.5 KB/s was already 150x improvement
+4. **Trust documentation** - PROJECT_MEMORY.md had the TCP handshake analysis, the code location, the performance metrics. Everything needed was already written
+5. **Recognize circular debugging** - When you see the same timeout pattern repeating, you're not on the right track
+
+### WHY THIS HAPPENED
+- Agent received `git checkout src/ESP32MUD.cpp` reverting the morning's fix
+- Instead of immediately re-implementing the documented solution, agent:
+  - Lost confidence in the approach
+  - Tried to "improve" it with more complex raw socket handling
+  - Attempted to restore from git (wrong commit)
+  - Kept second-guessing the persistent connection approach
+  - Reverted to HTTPClient multiple times "as a fallback"
+
+### THE FIX
+**If this ever happens again:**
+1. **Read PROJECT_MEMORY.md immediately** - Check if the problem is already solved
+2. **If it's documented as working, implement it exactly as documented** - Don't "improve" it
+3. **Run one compile/test cycle** - If it works, stop
+4. **Never revert to a slower baseline "just to see"** - Commit the working version to git immediately
+
+### GIT COMMIT THAT FIXED IT
+```
+74e4ec8 FIX: Download all - persistent WiFiClient with Keep-Alive (2.7s for 6 files, 9.7 KB/s)
+```
+**This is the version to use.** Keep it.
+
+---
 ## �🔧 BUILD & DEPLOY WORKFLOW (CRITICAL!)
 
 ### Standard Compile (Firmware Update Only)
