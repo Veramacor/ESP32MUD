@@ -1,4 +1,4 @@
-﻿#include <Arduino.h>
+#include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
@@ -51,13 +51,11 @@ int base64_decode(uint8_t *output, int outlen, const char *input) {
 #define MAX_INVENTORY 32
 #define MAX_WEIGHT 10
 #define MAX_NPCS       50
+#define MAX_ITEMS      40    // Hard cap on world items to prevent socket exhaustion
 #define NPC_RESPAWN_SECONDS 600
 #define MAX_OUTPUT_WIDTH 80   // Word wrap for descriptions and long text (MUD convention)
 #define MAX_QRCODE_WIDTH 100  // QR code display width for better reliability with longer messages
 #define GLOBAL_DIALOG_DELAY 3000  // 3 second delay for ALL non-blocking dialogs (quest, arrest, citation, etc.)
-
-// Path for WiFi provisioning credentials
-const char* credPath = "/credentials.txt";
 
 //Check for Serial connection if there is none we MUST skip provisioning
 bool NoSerial = false;  
@@ -279,20 +277,28 @@ int globalHighLowPot = 50;
 struct JokeSession {
     bool active = false;                    // timer running when players in room
     unsigned long nextJokeTime = 0;         // when to fetch next joke
+    unsigned long lastRequestTime = 0;      // when last fetch was initiated
+    unsigned long nextRequestDelay = 0;     // when to start next fetch (25-50 sec random)
     String currentJoke = "";                // stored joke text
     String currentJokeId = "";              // joke ID to prevent repeats
-    std::vector<String> usedJokeIds;        // list of joke IDs already shown
+    
+    // Jokes from jokes.txt file (loaded at boot)
+    std::vector<String> localJokes;         // jokes loaded from jokes.txt
+    std::vector<int> jokesIndex;            // shuffled indices of jokes
+    int nextJokeIndex = 0;                  // next joke to tell from shuffled list
+    int jokesUsedInSession = 0;             // count of jokes told in current cycle
     
     // Async HTTP state
-    bool requestPending = false;            // HTTP request in flight
+    bool requestPending = false;            // request in flight
+    bool jokeReady = false;                 // true when joke has been fetched
     unsigned long requestStartTime = 0;     // when request was initiated
-    HTTPClient* httpClient = nullptr;       // pointer to active HTTP client
-    const int REQUEST_TIMEOUT = 5000;       // 5 second timeout for HTTP request
+    const int REQUEST_TIMEOUT = 10000;      // 10 second timeout for HTTP request
 };
 
 JokeSession innKeeperJokes;
 
 bool g_inYmodem = false;
+bool g_registerFileExists = false;  // Cache flag: true if register.txt exists
 
 bool receivingFile = false;
 File currentFile;
@@ -429,6 +435,8 @@ String addArticle(const String &text);
 void cmdLook(Player &p);
 void cmdLookAt(Player &p, const String &input);
 void cmdLookIn(Player &p, const String &input);
+void cmdFollow(Player &p, const String &args);
+void broadcastToFollowers(Player &p, const String &msg);
 void showItemDescription(Player &p, WorldItem &wi);
 void showItemDescriptionNormal(Player &p, WorldItem &wi);
 void mergeCoinPilesAt(int x, int y, int z);
@@ -798,6 +806,9 @@ struct Player {
     int questCompletionDialogStep = 0;               // Current line index
     unsigned long questCompletionDialogNextTime = 0; // When to show next line
     
+    // Wizard follow system
+    char followingPlayer[32] = {0};  // Name of player this wizard is following (empty if not following)
+
     // Death sequence dialog state (for non-blocking delayed messages)
     bool inDeathSequence = false;
     std::vector<String> deathDialogLines;   // Death messages to display
@@ -1014,7 +1025,7 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     
     // Create HTTP client for API call
     HTTPClient http;
-    String apiUrl = "https://www.storyboardacs.com/sendESP32mail.php";
+    String apiUrl = "http://www.storyboardacs.com/sendESP32mail.php";  // Changed to HTTP to avoid SSL memory overhead
     
     // Build JSON payload with proper escaping
     String escapedBody = escapeJsonString(g_emailBody);
@@ -1137,233 +1148,191 @@ String extractJsonString(const String &json, const String &fieldName) {
     Serial.println("[JOKE PARSE] No closing quote found!");
     return "";  // No closing quote found
 }
-
 // Initiate an async joke fetch (non-blocking - just starts the request)
-void startJokeFetch() {
-    if (innKeeperJokes.requestPending) {
-        Serial.println("[JOKE] Request already pending, skipping");
-        return; // Already fetching
+// ⭐ BOOT-TIME JOKE DOWNLOAD: Fetch 10 jokes from API at boot and save to jokes.txt
+bool downloadAndSaveBootJokes() {
+    Serial.println("\n[BOOT JOKE] Starting 10-joke download from JokeAPI...");
+    
+    HTTPClient http;
+    http.begin("https://v2.jokeapi.dev/joke/Any?format=txt&safe-mode");
+    http.setConnectTimeout(5000);
+    http.setTimeout(5000);
+    
+    // Download 10 jokes one by one (30 second total window)
+    unsigned long bootJokeStartTime = millis();
+    const unsigned long BOOT_JOKE_TIMEOUT = 30000;  // 30 seconds total
+    
+    File jokesFile = LittleFS.open("/jokes.txt", "w");
+    if (!jokesFile) {
+        Serial.println("[BOOT JOKE] ERROR: Could not create jokes.txt");
+        return false;
     }
     
-    // ⭐ PRE-FLIGHT MEMORY CHECK: Ensure we have enough free RAM
-    uint32_t freeHeap = esp_get_free_heap_size();
-    if (freeHeap < 20000) {  // Less than 20KB free
-        Serial.println(String("[JOKE] SKIPPED: Insufficient memory (free: ") + String(freeHeap) + String(" bytes)"));
-        return;
-    }
-    
-    // ⭐ Aggressively clean up any previous HTTPClient
-    if (innKeeperJokes.httpClient != nullptr) {
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-    }
-    delay(10);  // Brief delay to let stack settle
-    
-    Serial.println("[JOKE] Creating HTTPClient...");
-    try {
-        innKeeperJokes.httpClient = new HTTPClient();
-    } catch (...) {
-        Serial.println("[JOKE] Failed to allocate HTTPClient!");
-        return;
-    }
-    
-    // Build URL with excluded joke IDs
-    String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist";
-    
-    // Add exclude parameter if we have used jokes (cap at 20 to prevent URL overflow)
-    if (innKeeperJokes.usedJokeIds.size() > 0) {
-        jokeUrl += "&exclude=";
-        size_t maxExclude = (innKeeperJokes.usedJokeIds.size() > 20) ? 20 : innKeeperJokes.usedJokeIds.size();
-        for (size_t i = 0; i < maxExclude; i++) {
-            jokeUrl += innKeeperJokes.usedJokeIds[i];
-            if (i < maxExclude - 1) {
-                jokeUrl += ",";
-            }
+    int jokesDownloaded = 0;
+    for (int i = 0; i < 10; i++) {
+        // Check timeout
+        if (millis() - bootJokeStartTime > BOOT_JOKE_TIMEOUT) {
+            Serial.printf("[BOOT JOKE] Timeout reached. Downloaded %d jokes in 30 seconds.\n", jokesDownloaded);
+            break;
         }
-    }
-    
-    Serial.println(String("[JOKE] Attempting to begin connection to: ") + jokeUrl);
-    
-    try {
-        innKeeperJokes.httpClient->setConnectTimeout(1500);  // ULTRA-aggressive: 1.5s
-        innKeeperJokes.httpClient->setTimeout(2000);         // ULTRA-aggressive: 2s total
         
-        if (innKeeperJokes.httpClient->begin(jokeUrl)) {
-            innKeeperJokes.httpClient->GET();
-            innKeeperJokes.requestPending = true;
-            innKeeperJokes.requestStartTime = millis();
-            Serial.println("[JOKE] Async request initiated (1.5s timeout)");
+        int httpCode = http.GET();
+        if (httpCode == 200) {
+            String joke = http.getString();
+            joke.trim();
+            
+            if (joke.length() > 0) {
+                // Concatenate multi-line jokes onto one line (some jokes have setup/delivery on separate lines)
+                String singleLineJoke = "";
+                int idx = 0;
+                while (idx < joke.length()) {
+                    char c = joke[idx];
+                    if (c == '\n' || c == '\r') {
+                        // Skip newlines and carriage returns, but add a space if we're not at the start
+                        if (singleLineJoke.length() > 0 && singleLineJoke[singleLineJoke.length()-1] != ' ') {
+                            singleLineJoke += " ";
+                        }
+                        idx++;
+                    } else {
+                        singleLineJoke += c;
+                        idx++;
+                    }
+                }
+                
+                singleLineJoke.trim();
+                
+                if (singleLineJoke.length() > 0) {
+                    // Write as single line (one joke per line in file)
+                    jokesFile.println(singleLineJoke);
+                    jokesDownloaded++;
+                    Serial.printf("[BOOT JOKE] Downloaded joke %d (%d chars): %.60s...\n", jokesDownloaded, singleLineJoke.length(), singleLineJoke.c_str());
+                }
+            }
         } else {
-            Serial.println("[JOKE] Failed to begin HTTP connection");
-            innKeeperJokes.httpClient->end();
-            delete innKeeperJokes.httpClient;
-            innKeeperJokes.httpClient = nullptr;
-            innKeeperJokes.requestPending = false;
+            Serial.printf("[BOOT JOKE] HTTP error on joke %d: %d\n", i+1, httpCode);
         }
-    } catch (...) {
-        Serial.println("[JOKE] Exception in startJokeFetch");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
+        
+        // Small delay between requests
+        delay(100);
+        yield();
     }
+    
+    http.end();
+    jokesFile.close();
+    
+    Serial.printf("[BOOT JOKE] ✅ Downloaded and saved %d jokes to jokes.txt\n", jokesDownloaded);
+    return jokesDownloaded > 0;
 }
 
-// Check if async joke fetch is complete and process response (non-blocking)
-bool checkJokeFetchComplete() {
-    if (!innKeeperJokes.requestPending || !innKeeperJokes.httpClient) {
-        return false;
+// Load jokes from jokes.txt into memory
+void loadBootJokes() {
+    if (!LittleFS.exists("/jokes.txt")) {
+        Serial.println("[JOKE] jokes.txt not found after boot download");
+        return;
     }
     
+    File jokeFile = LittleFS.open("/jokes.txt", "r");
+    if (!jokeFile) {
+        Serial.println("[JOKE] ERROR: Could not open jokes.txt");
+        return;
+    }
+    
+    Serial.println("[JOKE] Loading jokes from jokes.txt...");
+    
+    innKeeperJokes.localJokes.clear();
+    innKeeperJokes.jokesIndex.clear();
+    int count = 0;
+    
+    while (jokeFile.available()) {
+        String joke = jokeFile.readStringUntil('\n');
+        joke.trim();
+        if (joke.length() > 0) {
+            innKeeperJokes.localJokes.push_back(joke);
+            innKeeperJokes.jokesIndex.push_back(count);
+            count++;
+        }
+    }
+    jokeFile.close();
+    
+    Serial.printf("[JOKE] ✅ Loaded %d jokes from file\n", count);
+    
+    // Shuffle jokes using Fisher-Yates
+    if (count > 0) {
+        for (int i = innKeeperJokes.jokesIndex.size() - 1; i > 0; i--) {
+            int j = random(0, i + 1);
+            int temp = innKeeperJokes.jokesIndex[i];
+            innKeeperJokes.jokesIndex[i] = innKeeperJokes.jokesIndex[j];
+            innKeeperJokes.jokesIndex[j] = temp;
+        }
+    }
+    
+    innKeeperJokes.nextJokeIndex = 0;
+    innKeeperJokes.jokesUsedInSession = 0;
+}
+
+// Get next joke from loaded jokes (non-blocking, from file)
+void getNextBootJoke() {
+    if (innKeeperJokes.localJokes.size() == 0) {
+        Serial.println("[JOKE] No jokes loaded!");
+        return;
+    }
+    
+    // Check if we've gone through all jokes
+    if (innKeeperJokes.nextJokeIndex >= innKeeperJokes.jokesIndex.size()) {
+        // Reshuffle
+        Serial.println("[JOKE] Reshuffling jokes for new cycle...");
+        for (int i = innKeeperJokes.jokesIndex.size() - 1; i > 0; i--) {
+            int j = random(0, i + 1);
+            int temp = innKeeperJokes.jokesIndex[i];
+            innKeeperJokes.jokesIndex[i] = innKeeperJokes.jokesIndex[j];
+            innKeeperJokes.jokesIndex[j] = temp;
+        }
+        innKeeperJokes.nextJokeIndex = 0;
+    }
+    
+    // Get next joke
+    int jokeIndex = innKeeperJokes.jokesIndex[innKeeperJokes.nextJokeIndex];
+    innKeeperJokes.currentJoke = innKeeperJokes.localJokes[jokeIndex];
+    innKeeperJokes.nextJokeIndex++;
+    innKeeperJokes.jokeReady = true;
+    innKeeperJokes.nextRequestDelay = random(15000, 40000);  // 15-40 seconds until next joke
+    
+    Serial.printf("[JOKE] Next joke ready (will tell in 15-40 sec): %.60s...\n", innKeeperJokes.currentJoke.c_str());
+}
+
+// Non-blocking joke fetch from file (no HTTP calls during gameplay)
+void startJokeFetch() {
+    // Only start if not already pending
+    if (innKeeperJokes.requestPending) return;
+    
+    // Check if enough time has passed since last request
     unsigned long now = millis();
-    unsigned long elapsed = now - innKeeperJokes.requestStartTime;
-    
-    // ⭐ ULTRA-AGGRESSIVE: Check for timeout at 2 seconds (earlier than 5s)
-    if (elapsed > 2000) {
-        Serial.println("[JOKE] Request timeout after 2 seconds - force closing");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
+    if (now - innKeeperJokes.lastRequestTime < innKeeperJokes.nextRequestDelay) {
+        return;  // Not time yet
     }
     
-    // Give request at least 200ms to complete
-    if (elapsed < 200) {
-        return false;
-    }
+    // Mark as pending - will stay true until joke is delivered
+    innKeeperJokes.requestPending = true;
+    innKeeperJokes.lastRequestTime = now;
+    innKeeperJokes.jokeReady = false;  // Reset the ready flag
     
-    // Try to get response with timeout wrap
-    int httpCode = -1;
-    try {
-        // Set very short timeout for getSize check to prevent hanging
-        httpCode = innKeeperJokes.httpClient->getSize();
-    } catch (...) {
-        Serial.println("[JOKE] Exception during getSize() - closing connection");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
-    }
+    Serial.printf("[JOKE] Fetching next joke from file...\n");
     
-    if (httpCode == -1) {
-        // Still waiting - check if we're stuck
-        if (elapsed > 4000) {
-            // We've been waiting > 4 seconds, force close
-            Serial.println("[JOKE] Timeout waiting for response - force closing");
-            try {
-                innKeeperJokes.httpClient->end();
-            } catch (...) {}
-            try {
-                delete innKeeperJokes.httpClient;
-            } catch (...) {}
-            innKeeperJokes.httpClient = nullptr;
-            innKeeperJokes.requestPending = false;
-        }
-        return false;
-    }
+    // Get next joke from file (no HTTP calls during gameplay)
+    getNextBootJoke();
     
-    // Response available - parse it with error handling
-    String payload = "";
-    try {
-        Serial.println("[JOKE] Response available, calling getString()...");
-        payload = innKeeperJokes.httpClient->getString();
-    } catch (...) {
-        Serial.println("[JOKE] Exception during getString() - closing connection");
-        try {
-            innKeeperJokes.httpClient->end();
-        } catch (...) {}
-        try {
-            delete innKeeperJokes.httpClient;
-        } catch (...) {}
-        innKeeperJokes.httpClient = nullptr;
-        innKeeperJokes.requestPending = false;
-        return false;
-    }
-    
-    // Clean up the HTTP client
-    try {
-        innKeeperJokes.httpClient->end();
-    } catch (...) {}
-    try {
-        delete innKeeperJokes.httpClient;
-    } catch (...) {}
-    innKeeperJokes.httpClient = nullptr;
-    innKeeperJokes.requestPending = false;
-    
-    Serial.println(String("[JOKE] Response received, size: ") + String(payload.length()));
-    Serial.println(String("[JOKE] Response snippet: ") + payload.substring(0, 100));
-    
-    // Check if it's an error response
-    if (payload.indexOf("\"error\":true") != -1) {
-        Serial.println("[JOKE] API returned error response");
-        return false;
-    }
-    
-    // Extract joke ID first (to track what we've used)
-    String jokeId = extractJsonString(payload, "id");
-    if (jokeId.length() > 0) {
-        innKeeperJokes.currentJokeId = jokeId;
-        Serial.println(String("[JOKE] Joke ID: ") + jokeId);
-    }
-    
-    // Extract joke text
-    String jokeText = "";
-    
-    // Look for "type": "single" or "type": "twopart"
-    if (payload.indexOf("\"single\"") != -1) {
-        Serial.println("[JOKE] Detected single joke format");
-        // Single joke - extract "joke" field
-        jokeText = extractJsonString(payload, "joke");
-    } else if (payload.indexOf("\"twopart\"") != -1) {
-        Serial.println("[JOKE] Detected two-part joke format");
-        // Two-part joke - extract "setup" + " " + "delivery"
-        String setup = extractJsonString(payload, "setup");
-        String delivery = extractJsonString(payload, "delivery");
-        jokeText = setup + String(" ") + delivery;
-    } else {
-        Serial.println("[JOKE] Unknown joke format!");
-        Serial.println(String("[JOKE] Full payload: ") + payload);
-    }
-    
-    // Handle Unicode escape sequences
-    jokeText.replace("\\\"", "\"");
-    jokeText.replace("\\n", "\n");
-    jokeText.replace("\\\\", "\\");
-    
-    // Validate: joke must be at least 10 characters long
-    if (jokeText.length() >= 10) {
-        innKeeperJokes.currentJoke = jokeText;
-        // Add ID to used list to prevent repeats
-        if (jokeId.length() > 0) {
-            innKeeperJokes.usedJokeIds.push_back(jokeId);
-            Serial.printf("[JOKE] Added to used list (now %d jokes tracked)\n", innKeeperJokes.usedJokeIds.size());
-        }
-        Serial.println(String("[JOKE] Successfully fetched joke: ") + jokeText.substring(0, 40) + String("..."));
+    // After getting the joke, mark it as ready for broadcast
+    innKeeperJokes.jokeReady = true;
+}
+
+// Check if joke is ready to be told
+bool checkJokeFetchComplete() {
+    // Return true if we have a joke ready
+    if (innKeeperJokes.jokeReady && innKeeperJokes.currentJoke.length() > 0) {
+        innKeeperJokes.jokeReady = false;  // Reset flag
         return true;
-    } else {
-        Serial.println(String("[JOKE] Joke text too short (len=") + String(jokeText.length()) + String("), retrying..."));
-        Serial.println(String("[JOKE] Extracted text: ") + jokeText);
-        return false;
     }
+    return false;
 }
 
 void checkGlobalRebootCountdown(unsigned long now) {
@@ -2282,6 +2251,25 @@ void announceToRoomExcept(int x, int y, int z, const String &msg, int excludeA, 
     }
 }
 
+// ⭐ Send output to all wizards following a player
+void broadcastToFollowers(Player &p, const String &msg) {
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        if (!players[i].IsWizard) continue;
+        if (players[i].followingPlayer[0] == '\0') continue;
+        
+        if (strcmp(players[i].followingPlayer, p.name) == 0) {
+            // This wizard is following the player
+            try {
+                if (players[i].client.connected()) {
+                    players[i].client.println(msg);
+                }
+            } catch (...) {
+                // Connection error
+            }
+        }
+    }
+}
 
 bool loadRoomForPlayer(Player &p, int x, int y, int z) {
   VoxelResult vr = FindVoxel(x, y, z);
@@ -2324,6 +2312,15 @@ void checkSpace() {
   Serial.printf("Total space: %d bytes\n", total);
   Serial.printf("Used space:  %d bytes\n", used);
   Serial.printf("Free space:  %d bytes\n", total - used);
+}
+
+// =============================
+// Item Cap Enforcement
+// =============================
+
+// Check if world is at max item capacity
+bool isWorldItemCapReached() {
+    return (int)worldItems.size() >= MAX_ITEMS;
 }
 
 // =============================
@@ -2921,11 +2918,11 @@ void loadWorldItemLine(const String &line) {
     wi.parentName = parentName;
     wi.value = value;
 
-    // ⭐ SAFETY: Limit world items to 2000 to prevent memory exhaustion
-    if (worldItems.size() < 2000) {
+    // ⭐ SAFETY: Limit world items to MAX_ITEMS to prevent memory exhaustion
+    if (!isWorldItemCapReached() && worldItems.size() < 2000) {
         worldItems.push_back(wi);
     } else {
-        Serial.printf("[WARNING] World items limit (2000) reached! Discarding item: %s\n", itemName);
+        Serial.printf("[WARNING] World items limit (%d) reached! Discarding item: %s\n", MAX_ITEMS, itemName);
     }
 }
 
@@ -2974,25 +2971,42 @@ void loadAllWorldItems() {
 
 
 void loadAllNPCInstances() {
+    Serial.println("[NPCS] Attempting to open /npcs.vxi...");
+    
+    if (!LittleFS.exists("/npcs.vxi")) {
+        Serial.println("[NPCS] ERROR: /npcs.vxi does not exist!");
+        return;
+    }
+    
     File f = LittleFS.open("/npcs.vxi", "r");
     if (!f) {
-        Serial.println("ERROR: Could not open /npcs.vxi");
+        Serial.println("[NPCS] ERROR: Could not open /npcs.vxi");
         return;
     }
 
-    Serial.println("Loading NPC instances from /npcs.vxi...");
+    int fileSize = f.size();
+    Serial.printf("[NPCS] File size: %d bytes\n", fileSize);
 
+    Serial.println("[NPCS] Loading NPC instances from /npcs.vxi...");
+
+    int lineCount = 0;
+    int successCount = 0;
+    
     while (f.available()) {
         String line = f.readStringUntil('\n');
         line.trim();
         if (line.length() == 0) continue;
-
+        
+        lineCount++;
+        Serial.printf("[NPCS] Line %d: %s\n", lineCount, line.c_str());
+        
         loadNPCInstance(line);
+        successCount++;
     }
 
     f.close();
 
-    Serial.printf("Loaded %d NPC instances.\n", npcInstances.size());
+    Serial.printf("[NPCS] Processed %d lines, loaded %d NPC instances.\n", lineCount, npcInstances.size());
 }
 
 
@@ -3548,7 +3562,7 @@ void loadWorldItemsFromSave() {
                         break;
                     }
                 }
-                if (!found && worldItems.size() < 2000) worldItems.push_back(temp);
+                if (!found && !isWorldItemCapReached() && worldItems.size() < 2000) worldItems.push_back(temp);
             }
             temp = WorldItem();
             inItem = true;
@@ -3587,7 +3601,7 @@ void loadWorldItemsFromSave() {
                 break;
             }
         }
-        if (!found && worldItems.size() < 2000) worldItems.push_back(temp);
+        if (!found && !isWorldItemCapReached() && worldItems.size() < 2000) worldItems.push_back(temp);
     }
 
     f.close();
@@ -3712,6 +3726,13 @@ void loadNPCInstance(const String &line) {
     // Expected format:
     // x,y,z,npcId,mobileFlag
 
+    if (line.length() == 0) {
+        Serial.println("[NPCS] Skipping empty line");
+        return;
+    }
+
+    Serial.printf("[NPCS] Parsing: %s\n", line.c_str());
+
     int parts[5];
     String fields[5];
 
@@ -3730,8 +3751,10 @@ void loadNPCInstance(const String &line) {
         fields[idx++] = line.substring(start);
     }
 
+    Serial.printf("[NPCS] Found %d fields\n", idx);
+
     if (idx < 4) {
-        Serial.println("[WARN] Bad NPC instance line: " + line);
+        Serial.println("[NPCS] Bad NPC instance line: " + line);
         return;
     }
 
@@ -3741,10 +3764,12 @@ void loadNPCInstance(const String &line) {
     String npcId = fields[3];
     int mobileFlag = (idx >= 5) ? fields[4].toInt() : 0;
 
+    Serial.printf("[NPCS] x=%d, y=%d, z=%d, npcId=%s, mobile=%d\n", x, y, z, npcId.c_str(), mobileFlag);
+
     // Must have a definition (std::string key)
     std::string key = npcId.c_str();
     if (!npcDefs.count(key)) {
-        Serial.println("[WARN] Unknown NPC ID in instance: " + npcId);
+        Serial.println("[NPCS] Unknown NPC ID in instance: " + npcId);
         return;
     }
 
@@ -3799,6 +3824,7 @@ void loadNPCInstance(const String &line) {
     npc.nextDialogTime = millis() + random(3000, 30001);
 
     npcInstances.push_back(npc);
+    Serial.printf("[NPCS] Successfully loaded NPC instance: %s\n", npcId.c_str());
 }
 
 
@@ -5176,6 +5202,10 @@ int createWorldItem(const String &itemName, const String &parentName) {
     wi.y = py;
     wi.z = pz;
 
+    if (isWorldItemCapReached()) {
+        return -1;  // Failed to add item (world full)
+    }
+
     if (worldItems.size() < 2000) {
         worldItems.push_back(wi);
     }
@@ -5393,6 +5423,28 @@ void movePlayer(Player &p, int index, const char *dir) {
     }
 
     cmdLook(p);
+
+    // ⭐ SYNC FOLLOWERS: Move all wizards following this player
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        if (!players[i].IsWizard) continue;
+        if (players[i].followingPlayer[0] == '\0') continue; // Not following anyone
+        
+        if (strcmp(players[i].followingPlayer, p.name) == 0) {
+            // This wizard is following the moved player
+            // Teleport wizard to same location
+            if (loadRoomForPlayer(players[i], p.roomX, p.roomY, p.roomZ)) {
+                // Send follower a "Following" indicator and room look
+                players[i].client.print("[Following ");
+                players[i].client.print(p.name);
+                players[i].client.println("]");
+                
+                // Send the same room view
+                cmdLook(players[i]);
+                players[i].client.print("> ");
+            }
+        }
+    }
 
     // Check for mail when entering post office
     if (getPostOfficeForRoom(p) != nullptr) {
@@ -6932,6 +6984,12 @@ void cmdBuy(Player &p, const String &arg) {
     // Set description to the shop display name
     newItem.attributes["description"] = shopItem->itemName.c_str();
 
+    // Check world item capacity
+    if (isWorldItemCapReached()) {
+        p.client.println("[SHOP] The world can hold no more items!");
+        return;
+    }
+
     if (worldItems.size() < 2000) {
         worldItems.push_back(newItem);
     }
@@ -8216,148 +8274,173 @@ void cmdDownload(Player &p, const String &filename) {
     
     // DOWNLOAD ALL FILES mode: check if "all" was specified
     if (fname.equalsIgnoreCase("all")) {
-        p.client.println("Downloading all files from server...");
+        p.client.println("Downloading all files from server (binary streaming)...");
+        Serial.println("[DOWNLOAD ALL] Starting download all process");
         
-        // Get file list
+        // Get file list first
         HTTPClient httpList;
+        Serial.println("[DOWNLOAD ALL] Connecting to file list endpoint...");
         httpList.begin("http://www.storyboardacs.com/download.php");
         httpList.setConnectTimeout(10000);
         httpList.setTimeout(15000);
         
         int httpCode = httpList.GET();
+        Serial.printf("[DOWNLOAD ALL] File list HTTP code: %d\n", httpCode);
         if (httpCode != 200) {
             p.client.println("Error: Could not get file list (HTTP " + String(httpCode) + ")");
+            Serial.printf("[DOWNLOAD ALL] ERROR: File list failed with code %d\n", httpCode);
             httpList.end();
             return;
         }
         
         String listResponse = httpList.getString();
+        Serial.printf("[DOWNLOAD ALL] Got file list, size: %d bytes\n", listResponse.length());
         httpList.end();
         
-        // Count total files
-        int fileCount = 0;
+        // Parse list to get all files
+        std::vector<String> allFiles;
         int pos = 0;
-        while ((pos = listResponse.indexOf("\"name\":", pos)) != -1) {
-            fileCount++;
-            pos += 7;
-        }
-        
-        if (fileCount == 0) {
-            p.client.println("Error: No files found in server response");
-            return;
-        }
-        
-        // Download each file with timing info using PERSISTENT CONNECTION
-        int filesDownloaded = 0;
-        unsigned long totalBytes = 0;
-        unsigned long startTime = millis();
-        int currentFile = 1;
-        pos = 0;
-        
-        // Create ONE persistent WiFiClient for all downloads
-        WiFiClient wifiClient;
-        if (!wifiClient.connect("www.storyboardacs.com", 80)) {
-            p.client.println("Error: Could not connect to server");
-            return;
-        }
-        
         while (true) {
             int namePos = listResponse.indexOf("\"name\":", pos);
             if (namePos == -1) break;
             
-            // Extract filename
             int nameStartPos = listResponse.indexOf("\"", namePos + 7);
             int nameEndPos = listResponse.indexOf("\"", nameStartPos + 1);
-            String remoteFilename = listResponse.substring(nameStartPos + 1, nameEndPos);
+            String filename = listResponse.substring(nameStartPos + 1, nameEndPos);
             
-            // Extract size
-            int sizePos = listResponse.indexOf("\"size\":", nameEndPos);
-            if (sizePos == -1) {
-                pos = nameEndPos;
+            allFiles.push_back(filename);
+            Serial.printf("[DOWNLOAD ALL] Found file: %s\n", filename.c_str());
+            pos = nameEndPos;
+        }
+        
+        if (allFiles.size() == 0) {
+            p.client.println("Error: No files found in response");
+            Serial.printf("[DOWNLOAD ALL] ERROR: No files found!\n");
+            return;
+        }
+        
+        Serial.printf("[DOWNLOAD ALL] Parsed %d files from list\n", allFiles.size());
+        p.client.println("Starting download of " + String(allFiles.size()) + " files...\n");
+        p.client.flush();
+        
+        // Download ALL files using binary streaming (much faster than base64)
+        int filesDownloaded = 0;
+        unsigned long totalBytes = 0;
+        unsigned long startTime = millis();
+        
+        for (int i = 0; i < (int)allFiles.size(); i++) {
+            String filename = allFiles[i];
+            Serial.printf("[DOWNLOAD ALL] Starting file %d/%d: %s\n", i+1, allFiles.size(), filename.c_str());
+            
+            if (p.client.connected()) {
+                p.client.print("[" + String(i+1) + "/" + String(allFiles.size()) + "] " + filename + "... ");
+                p.client.flush();
+            }
+            
+            HTTPClient streamHttp;
+            String downloadUrl = "http://www.storyboardacs.com/download.php?file=" + filename;
+            
+            Serial.printf("[DOWNLOAD ALL] URL: %s\n", downloadUrl.c_str());
+            streamHttp.begin(downloadUrl);
+            streamHttp.setConnectTimeout(10000);
+            streamHttp.setTimeout(30000);
+            
+            int streamCode = streamHttp.GET();
+            Serial.printf("[DOWNLOAD ALL] HTTP code for %s: %d\n", filename.c_str(), streamCode);
+            
+            if (streamCode != 200) {
+                if (p.client.connected()) {
+                    p.client.println("ERROR " + String(streamCode));
+                    p.client.flush();
+                }
+                Serial.printf("[DOWNLOAD ALL] ERROR: HTTP %d for %s\n", streamCode, filename.c_str());
+                streamHttp.end();
                 continue;
             }
             
-            int sizeStartPos = sizePos + 7;
-            while (sizeStartPos < listResponse.length() && !isdigit(listResponse[sizeStartPos])) {
-                sizeStartPos++;
-            }
-            int sizeEndPos = sizeStartPos;
-            while (sizeEndPos < listResponse.length() && isdigit(listResponse[sizeEndPos])) {
-                sizeEndPos++;
-            }
-            int fileSize = listResponse.substring(sizeStartPos, sizeEndPos).toInt();
-            
-            // Display progress
-            float sizeKB = fileSize / 1024.0;
-            p.client.print("[" + String(currentFile) + "/" + String(fileCount) + "] " + 
-                          remoteFilename + "... " + String(sizeKB, 1) + " KB... ");
-            
-            unsigned long fileStartTime = millis();
-            
-            // Send HTTP GET request on persistent connection with Keep-Alive
-            wifiClient.print("GET /download.php?file=" + remoteFilename + " HTTP/1.1\r\n");
-            wifiClient.print("Host: www.storyboardacs.com\r\n");
-            wifiClient.print("Connection: keep-alive\r\n");
-            wifiClient.print("\r\n");
-            wifiClient.flush();
-            
-            // Skip HTTP headers by counting newlines until blank line
-            int newlineCount = 0;
-            unsigned long headerTimeout = millis();
-            while (newlineCount < 2 && millis() - headerTimeout < 5000) {
-                if (wifiClient.available()) {
-                    char c = wifiClient.read();
-                    if (c == '\n') newlineCount++;
-                    else if (c != '\r' && c != '\n') newlineCount = 0;
-                    headerTimeout = millis();
+            int fileSize = streamHttp.getSize();
+            Serial.printf("[DOWNLOAD ALL] File size for %s: %d bytes\n", filename.c_str(), fileSize);
+            if (fileSize <= 0) {
+                if (p.client.connected()) {
+                    p.client.println("ERROR (size)");
+                    p.client.flush();
                 }
+                Serial.printf("[DOWNLOAD ALL] ERROR: Invalid file size for %s\n", filename.c_str());
+                streamHttp.end();
+                continue;
             }
             
-            // Now read exactly fileSize bytes of file data
-            File file = LittleFS.open("/" + remoteFilename, "w");
+            File file = LittleFS.open("/" + filename, "w");
             if (!file) {
-                p.client.println("(file create error)");
-                pos = sizeEndPos;
-                currentFile++;
+                if (p.client.connected()) {
+                    p.client.println("ERROR (create)");
+                    p.client.flush();
+                }
+                Serial.printf("[DOWNLOAD ALL] ERROR: Could not create file %s\n", filename.c_str());
+                streamHttp.end();
+                continue;
+            }
+            
+            WiFiClient *stream = streamHttp.getStreamPtr();
+            if (!stream) {
+                if (p.client.connected()) {
+                    p.client.println("ERROR (stream)");
+                    p.client.flush();
+                }
+                file.close();
+                streamHttp.end();
                 continue;
             }
             
             int bytesWritten = 0;
-            uint8_t buffer[512];
-            unsigned long readTimeout = millis();
-            const unsigned long READ_TIMEOUT = 15000;
+            uint8_t buffer[4096];
+            int bytesRead = 0;
+            unsigned long fileStartTime = millis();
+            const unsigned long TIMEOUT = 60000;  // 60 second timeout
             
-            while (bytesWritten < fileSize && millis() - readTimeout < READ_TIMEOUT) {
-                if (wifiClient.available()) {
-                    int toRead = (fileSize - bytesWritten < 512) ? (fileSize - bytesWritten) : 512;
-                    int bytesRead = wifiClient.readBytes(buffer, toRead);
-                    if (bytesRead > 0) {
-                        file.write(buffer, bytesRead);
-                        bytesWritten += bytesRead;
-                        readTimeout = millis();
-                    }
+            while (streamHttp.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+                int writeResult = file.write(buffer, bytesRead);
+                if (writeResult != bytesRead) {
+                    Serial.printf("[DOWNLOAD ALL] Write error: wrote %d/%d bytes\n", writeResult, bytesRead);
+                    if (p.client.connected()) p.client.println("WRITE_ERROR!");
+                    break;
                 }
+                bytesWritten += bytesRead;
+                
+                if (millis() - fileStartTime > TIMEOUT) {
+                    if (p.client.connected()) {
+                        p.client.println("TIMEOUT!");
+                        p.client.flush();
+                    }
+                    file.close();
+                    LittleFS.remove("/" + filename);
+                    streamHttp.end();
+                    continue;  // Skip to next file
+                }
+                yield();  // Prevent watchdog timeout
             }
             
             file.close();
+            streamHttp.end();
             
             if (bytesWritten == fileSize) {
-                unsigned long fileElapsed = millis() - fileStartTime;
-                float fileSpeed = (fileSize / 1024.0) / (fileElapsed / 1000.0);
-                p.client.println("[" + String(fileElapsed) + "ms, " + String(fileSpeed, 1) + " KB/s]");
+                if (p.client.connected()) {
+                    p.client.println(String(fileSize) + " bytes");
+                    p.client.flush();
+                }
                 filesDownloaded++;
-                totalBytes += fileSize;
+                totalBytes += bytesWritten;
+                Serial.printf("[DOWNLOAD ALL] SUCCESS: %s (%d bytes)\n", filename.c_str(), bytesWritten);
             } else {
-                p.client.println("(incomplete: " + String(bytesWritten) + "/" + String(fileSize) + ")");
-                // Don't stop the persistent connection, just log the error and continue
+                if (p.client.connected()) {
+                    p.client.println("INCOMPLETE (" + String(bytesWritten) + "/" + String(fileSize) + ")");
+                    p.client.flush();
+                }
+                Serial.printf("[DOWNLOAD ALL] ERROR: Incomplete download (%d/%d bytes) for %s\n", bytesWritten, fileSize, filename.c_str());
             }
             
-            pos = sizeEndPos;
-            currentFile++;
+            yield();  // Prevent watchdog timeout
         }
-        
-        wifiClient.stop();
-
         
         unsigned long elapsed = millis() - startTime;
         float speed = (totalBytes / 1024.0) / (elapsed / 1000.0);
@@ -8372,6 +8455,72 @@ void cmdDownload(Player &p, const String &filename) {
         p.client.println("Rebuilding room indexes...");
         buildRoomIndexesIfNeeded(true);  // Force rebuild
         p.client.println("Room indexes rebuilt.");
+        
+        // Ensure all critical files exist (download missing ones)
+        p.client.println("");
+        p.client.println("Verifying critical files...");
+        
+        const char* criticalFiles[] = {"quests.txt", "npcs.vxi", "npc.vxd", "items.vxi", "items.vxd", "rooms.txt"};
+        int numCritical = 6;
+        
+        for (int i = 0; i < numCritical; i++) {
+            const char* filename = criticalFiles[i];
+            String filepath = String("/") + filename;
+            
+            if (!LittleFS.exists(filepath)) {
+                p.client.println("⚠️  " + String(filename) + " missing - downloading...");
+                p.client.flush();
+                
+                HTTPClient fileHttp;
+                String url = "http://www.storyboardacs.com/download.php?file=" + String(filename);
+                fileHttp.begin(url);
+                fileHttp.setConnectTimeout(10000);
+                fileHttp.setTimeout(30000);
+                
+                int httpCode = fileHttp.GET();
+                if (httpCode == 200) {
+                    int fileSize = fileHttp.getSize();
+                    if (fileSize > 0) {
+                        File file = LittleFS.open(filepath, "w");
+                        if (file) {
+                            WiFiClient *stream = fileHttp.getStreamPtr();
+                            if (stream) {
+                                uint8_t buffer[4096];
+                                int bytesRead = 0;
+                                int bytesWritten = 0;
+                                
+                                while (fileHttp.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+                                    bytesWritten += file.write(buffer, bytesRead);
+                                    yield();
+                                }
+                                
+                                file.close();
+                                if (bytesWritten == fileSize) {
+                                    p.client.println("  ✅ Downloaded (" + String(bytesWritten) + " bytes)");
+                                    filesDownloaded++;
+                                    totalBytes += bytesWritten;
+                                } else {
+                                    p.client.println("  ❌ Incomplete: " + String(bytesWritten) + "/" + String(fileSize) + " bytes");
+                                    LittleFS.remove(filepath);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    p.client.println("  ❌ HTTP " + String(httpCode));
+                }
+                fileHttp.end();
+            }
+            
+            p.client.flush();
+            yield();
+        }
+        
+        // Reload NPCs after all downloads complete
+        p.client.println("");
+        p.client.println("Reloading NPCs...");
+        loadAllNPCInstances();
+        p.client.println("✅ NPCs reloaded");
         
         return;
     }
@@ -11722,6 +11871,10 @@ void cmdWizHelp(Player &p) {
     p.client.println("                                 download all (downloads all files)");
     p.client.println("                                 download filename (downloads single file)");
     p.client.println("                          Files are written to LittleFS in /");
+    p.client.println("follow <player>         - Follow a player (see everything they see)");
+    p.client.println("                          Usage: follow playerName (start following)");
+    p.client.println("                                 follow (stop following)");
+    p.client.println("                          Wizard moves with player and sees all commands");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
     p.client.println("heal <player>           - Fully heal a player");
     p.client.println("hobble <player>         - Toggle hobbling on a player");
@@ -11871,8 +12024,11 @@ void cmdSay(Player &p, const char *message) {
         return;
     }
 
-    p.client.print("You say: ");
-    p.client.println(message);
+    // Format: "<Player> says: "message""
+    String formattedMsg = capFirst(p.name) + String(" says: \"") + String(message) + String("\"");
+    
+    // Everyone in room sees the same thing (including the speaker)
+    p.client.println(formattedMsg);
 
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!players[i].active) continue;
@@ -11880,10 +12036,7 @@ void cmdSay(Player &p, const char *message) {
         if (players[i].roomX == p.roomX &&
             players[i].roomY == p.roomY &&
             players[i].roomZ == p.roomZ) {
-
-            players[i].client.print(capFirst(p.name));
-            players[i].client.print(" says: ");
-            players[i].client.println(message);
+            players[i].client.println(formattedMsg);
         }
     }
 
@@ -12103,7 +12256,8 @@ bool isWithinTownBoundaries(int x, int y, int z) {
 
 // Check if player is registered as a criminal (in register.txt)
 bool isPlayerCriminal(const String &playerName) {
-    if (!LittleFS.exists("/register.txt")) {
+    // ⭐ Use cached flag instead of checking filesystem
+    if (!g_registerFileExists) {
         return false;
     }
     
@@ -12181,12 +12335,14 @@ void addToCriminalRegister(const String &playerName, const String &offense, cons
     if (f) {
         f.println(entry);
         f.close();
+        g_registerFileExists = true;  // ⭐ Set flag when file is created/written
     }
 }
 
 // Remove entry from criminal register
 bool removeFromCriminalRegister(const String &playerName) {
-    if (!LittleFS.exists("/register.txt")) {
+    // ⭐ Use cached flag instead of checking filesystem
+    if (!g_registerFileExists) {
         return false;
     }
     
@@ -13480,6 +13636,75 @@ void cmdGoto(Player &p, const String &args) {
     p.client.println("No such player or room.");
 }
 
+// ============================================================
+// FOLLOW: Wizard command to follow a player and see everything
+// ============================================================
+void cmdFollow(Player &p, const String &args) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    String target = args;
+    target.trim();
+
+    // No argument: show usage or unfollow
+    if (target.length() == 0) {
+        if (p.followingPlayer[0] != '\0') {
+            String unfollowMsg = String("You stop following ") + String(p.followingPlayer) + ".";
+            p.client.println(unfollowMsg);
+            p.followingPlayer[0] = '\0';
+        } else {
+            p.client.println("Usage: follow <player>   OR   follow (to unfollow)");
+        }
+        return;
+    }
+
+    // Toggle: if already following this player, unfollow
+    if (strcmp(p.followingPlayer, target.c_str()) == 0) {
+        String unfollowMsg = String("You stop following ") + String(p.followingPlayer) + ".";
+        p.client.println(unfollowMsg);
+        p.followingPlayer[0] = '\0';
+        return;
+    }
+
+    // Find the target player
+    Player* targetPlayer = nullptr;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!players[i].active || !players[i].loggedIn) continue;
+        if (npcNameMatches(players[i].name, target)) {
+            targetPlayer = &players[i];
+            break;
+        }
+    }
+
+    if (!targetPlayer) {
+        p.client.println("No such player.");
+        return;
+    }
+
+    if (targetPlayer == &p) {
+        p.client.println("You can't follow yourself.");
+        return;
+    }
+
+    // Start following
+    strncpy(p.followingPlayer, targetPlayer->name, 31);
+    p.followingPlayer[31] = '\0';
+
+    String followMsg = String("You are now following ") + String(p.followingPlayer) + ".";
+    p.client.println(followMsg);
+
+    // Teleport wizard to target's location
+    if (!loadRoomForPlayer(p, targetPlayer->roomX, targetPlayer->roomY, targetPlayer->roomZ)) {
+        p.client.println("Failed to follow.");
+        p.followingPlayer[0] = '\0';
+        return;
+    }
+
+    cmdLook(p);
+}
+
 void cmdSummon(Player &p, const String &args) {
     if (!p.IsWizard) {
         p.client.println("What?");
@@ -13880,6 +14105,12 @@ void mergeCoinPilesAt(int x, int y, int z) {
 
     // If there were any coins, create a single merged pile
     if (total > 0) {
+        // Check world item capacity
+        if (isWorldItemCapReached()) {
+            Serial.println("[MERGE] Cannot merge coins - world item cap reached");
+            return;
+        }
+        
         WorldItem wi;
         wi.name = "gold_coin";
         wi.value = total;
@@ -13954,10 +14185,13 @@ void cmdGet(Player &p, const String &input) {
                     wi.ownerName = "DELETED";
                 }
 
-                if (take == 1)
+                if (take == 1) {
                     p.client.println("You pick up 1 gold coin.");
-                else
+                    broadcastRoomExcept(p, String(p.name) + " picks up 1 gold coin.", p);
+                } else {
                     p.client.println("You pick up " + String(take) + " gold coins.");
+                    broadcastRoomExcept(p, String(p.name) + " picks up " + String(take) + " gold coins.", p);
+                }
                 return;
             }
         }
@@ -14053,6 +14287,7 @@ void cmdGet(Player &p, const String &input) {
     targetItem.x = targetItem.y = targetItem.z = -1;
 
     p.client.println("You pick up " + getItemDisplayName(targetItem) + ".");
+    broadcastRoomExcept(p, String(p.name) + " picks up " + getItemDisplayName(targetItem) + ".", p);
 }
 
 // =============================================================
@@ -14458,7 +14693,7 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
     
     HTTPClient http;
     // Don't pass player name - get ALL unread emails and filter by body content
-    String url = "https://www.storyboardacs.com/retrieveESP32mail.php";
+    String url = "http://www.storyboardacs.com/retrieveESP32mail.php";  // Changed to HTTP to avoid SSL memory overhead
     
     Serial.println("");
     Serial.println("========== MAIL FETCH START ==========");
@@ -14709,7 +14944,7 @@ bool checkAndSpawnMailLetters(Player &p) {
     
     std::vector<Letter> letters;
     
-    // Fetch ALL unread emails (not filtered by player)
+    // Fetch mail from server
     if (!fetchMailFromServer(String(p.name), letters)) {
         Serial.println("[MAIL] RESULT: Failed to fetch mail from server");
         Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
@@ -14722,72 +14957,8 @@ bool checkAndSpawnMailLetters(Player &p) {
         return false;  // No mail found
     }
     
-    Serial.print("[MAIL] Found ");
-    Serial.print(letters.size());
-    Serial.println(" unread letters from server, spawning as items...");
-    
-    // Use all letters directly - no recipient filtering
-    // Each letter will be displayed with the sender's email address part
-    
-    Serial.print("[MAIL] RESULT: Found ");
-    Serial.print(letters.size());
-    Serial.println(" letters - announcing to player and spawning items");
-    
-    // Mail found - announce it
-    p.client.println("\nThe Postal Clerk says: \"You've got mail!\" and drops the mail on the floor.");
-    
-    // Create letter items in the room
-    for (int i = 0; i < (int)letters.size(); i++) {
-        Letter &letter = letters[i];
-        
-        Serial.print("[MAIL] Creating letter item ");
-        Serial.print(i + 1);
-        Serial.print(" of ");
-        Serial.println(letters.size());
-        
-        // Use player's name for the letter (not the sender)
-        String letterName = "Letter for " + String(capFirst(p.name));
-        
-        Serial.print("[MAIL] Letter for player: ");
-        Serial.println(p.name);
-        
-        // Create world item for the letter
-        WorldItem letter_item;
-        letter_item.name = "letter";
-        letter_item.parentName = "";
-        letter_item.ownerName = "";  // Not owned - in room
-        
-        // Position at post office
-        letter_item.x = p.roomX;
-        letter_item.y = p.roomY;
-        letter_item.z = p.roomZ;
-        
-        Serial.print("[MAIL] Position: (");
-        Serial.print(letter_item.x);
-        Serial.print(",");
-        Serial.print(letter_item.y);
-        Serial.print(",");
-        Serial.print(letter_item.z);
-        Serial.println(")");
-        
-        // Set attributes
-        letter_item.attributes["type"] = std::string("letter");
-        letter_item.attributes["name"] = std::string(letterName.c_str());
-        letter_item.attributes["desc"] = std::string(letter.body.c_str());
-        letter_item.attributes["subject"] = std::string(letter.subject.c_str());
-        letter_item.attributes["from"] = std::string(letter.from.c_str());
-        letter_item.attributes["weight"] = std::string("0");
-        letter_item.attributes["value"] = std::string("0");
-        
-        // Add to world
-        worldItems.push_back(letter_item);
-        
-        Serial.print("[MAIL] Letter item created and added to world - Total world items: ");
-        Serial.println(worldItems.size());
-    }
-    
     Serial.println("========== POST OFFICE MAIL CHECK END ==========\n");
-    return true;  // Mail was found and spawned
+    return true;  // Mail found
 }
 
 void updateDrunkennessRecovery(Player &p) {
@@ -15234,9 +15405,11 @@ void cmdGive(Player &p, const String &args) {
             if (amount == 1) {
                 p.client.println("You give 1 gold coin to " + String(tp->name) + ".");
                 tp->client.println(String(p.name) + " gives you 1 gold coin.");
+                broadcastRoomExcept(p, String(p.name) + " gives 1 gold coin to " + String(tp->name) + ".", p);
             } else {
                 p.client.println("You give " + String(amount) + " gold coins to " + String(tp->name) + ".");
                 tp->client.println(String(p.name) + " gives you " + String(amount) + " gold coins.");
+                broadcastRoomExcept(p, String(p.name) + " gives " + String(amount) + " gold coins to " + String(tp->name) + ".", p);
             }
 
             return;
@@ -15291,6 +15464,7 @@ void cmdGive(Player &p, const String &args) {
                      " to " + String(tp->name) + ".");
     tp->client.println(String(p.name) + " gives you " +
                        getItemDisplayName(wi) + ".");
+    broadcastRoomExcept(p, String(p.name) + " gives " + getItemDisplayName(wi) + " to " + String(tp->name) + ".", p);
 }
 
 
@@ -15580,6 +15754,8 @@ void cmdGetAll(Player &p) {
 
     if (!gotAny)
         p.client.println("There is nothing here to take.");
+    else
+        broadcastRoomExcept(p, String(p.name) + " picks up items from the ground.", p);
 }
 
 
@@ -15966,6 +16142,13 @@ void cmdDrop(Player &p, const String &input) {
 
             p.coins -= amount;
 
+            // Check world item capacity
+            if (isWorldItemCapReached()) {
+                p.coins += amount;  // Restore coins
+                p.client.println("The world can hold no more items!");
+                return;
+            }
+
             WorldItem wi;
             wi.name = "gold_coin";
             wi.x = p.roomX;
@@ -15977,10 +16160,13 @@ void cmdDrop(Player &p, const String &input) {
 
             worldItems.push_back(wi);
 
-            if (amount == 1)
+            if (amount == 1) {
                 p.client.println("You drop 1 gold coin.");
-            else
+                broadcastRoomExcept(p, String(p.name) + " drops 1 gold coin.", p);
+            } else {
                 p.client.println("You drop " + String(amount) + " gold coins.");
+                broadcastRoomExcept(p, String(p.name) + " drops " + String(amount) + " gold coins.", p);
+            }
             return;
         }
     }
@@ -16048,6 +16234,7 @@ void cmdDrop(Player &p, const String &input) {
     p.invCount--;
 
     p.client.println("You drop " + getItemDisplayName(wi) + ".");
+    broadcastRoomExcept(p, String(p.name) + " drops " + getItemDisplayName(wi) + ".", p);
 }
 
 
@@ -16133,6 +16320,12 @@ void cmdDropAll(Player &p) {
     // 2. Drop merged coin pile (if any)
     // ---------------------------------------------------------
     if (totalCoins > 0) {
+        // Check world item capacity
+        if (isWorldItemCapReached()) {
+            p.client.println("The world can hold no more items!");
+            return;
+        }
+        
         WorldItem wi;
         wi.name = "gold_coin";
         wi.value = totalCoins;
@@ -16155,6 +16348,8 @@ void cmdDropAll(Player &p) {
 
     if (!droppedAny)
         p.client.println("You have nothing to drop.");
+    else
+        broadcastRoomExcept(p, String(p.name) + " drops everything.", p);
 }
 
 
@@ -16694,6 +16889,12 @@ void broadcastRoomExcept(Player &p, const String &msg, Player &exclude) {
 }
 
 void spawnGoldAt(int x, int y, int z, int amount) {
+    // Check world item capacity
+    if (isWorldItemCapReached()) {
+        Serial.println("[SPAWN] Cannot spawn gold - world item cap reached");
+        return;
+    }
+    
     WorldItem wi;
     wi.name = "gold_coin";
     wi.value = amount;
@@ -17388,7 +17589,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
             for (auto &kv : defIt->second.attributes)
                 newItem.attributes[kv.first] = kv.second;
 
-            if (worldItems.size() < 2000) {
+            // Check world item capacity
+            if (isWorldItemCapReached()) {
+                Serial.println("[RESTORE] Cannot restore item - world item cap reached");
+            } else if (worldItems.size() < 2000) {
                 worldItems.push_back(newItem);
                 p.invIndices[p.invCount++] = worldItems.size() - 1;
             }
@@ -17428,7 +17632,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
                     newItem.attributes[kv.first] = kv.second;
             }
 
-            if (worldItems.size() < 2000) {
+            // Check world item capacity
+            if (isWorldItemCapReached()) {
+                Serial.println("[RESTORE] Cannot restore wielded item - world item cap reached");
+            } else if (worldItems.size() < 2000) {
                 worldItems.push_back(newItem);
                 p.wieldedItemIndex = worldItems.size() - 1;
             }
@@ -17476,7 +17683,10 @@ bool loadPlayerFromFS(Player &p, const String &name) {
                     newItem.attributes[kv.first] = kv.second;
             }
 
-            if (worldItems.size() < 2000) {
+            // Check world item capacity
+            if (isWorldItemCapReached()) {
+                Serial.println("[RESTORE] Cannot restore worn item - world item cap reached");
+            } else if (worldItems.size() < 2000) {
                 worldItems.push_back(newItem);
                 p.wornItemIndices[s] = worldItems.size() - 1;
             }
@@ -17651,9 +17861,6 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 // Existing player
                 recalcBonuses(p);   // ⭐ ADD THIS LINE ⭐
                 
-                // Rebuild container children for items in inventory
-                linkWorldItemParents();
-
                 st.stage = LOGIN_PASSWORD;
                 st.isNewPlayer = false;
                 p.client.println("Enter your password:");
@@ -17751,13 +17958,13 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 p.client.println("ESP32MUD v" + String(ESP32MUD_VERSION));
                 p.client.println("Compiled: " + String(COMPILE_DATE) + " " + formatCompileTimeWithTimezone(COMPILE_TIME));
                 
-                // Program size (flash) - APP0 partition: 0x10000-0x110000 = 1,048,576 bytes (1024 KB)
+                // Program size (flash) - Partition: factory app 0x100000 (1MB)
                 uint32_t sketchSize = ESP.getSketchSize();
-                uint32_t appPartitionSize = 1048576;  // 0x100000 = 1,048,576 bytes from no_ota.csv
-                int programPercent = (sketchSize * 100) / appPartitionSize;
-                p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(appPartitionSize / 1024) + " KB) -> " + String(programPercent) + "%");
+                uint32_t sketchSpace = 0x100000;  // 1MB factory partition from no_ota.csv
+                int programPercent = (sketchSize * 100) / sketchSpace / 2;  // Divide by 2 for actual 2MB partition
+                p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(sketchSpace / 1024) + " KB) -> " + String(programPercent) + "%");
                 
-                // LittleFS space - LITTLEFS partition: 0x110000-0x3F0000 = 3,010,560 bytes (2940 KB)
+                // LittleFS space - Partition: littlefs 0x2E0000 (~2.8MB)
                 size_t fsUsed = LittleFS.usedBytes();
                 size_t fsTotal = LittleFS.totalBytes();
                 int fsPercent = (fsUsed * 100) / fsTotal;
@@ -19350,6 +19557,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
         return;
     }
 
+    if (cmd == "follow") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+        cmdFollow(p, args);
+        return;
+    }
+
     if (cmd == "summon") {
         if (!p.IsWizard) { p.client.println("What?"); return; }
         cmdSummon(p, args);
@@ -19599,6 +19812,12 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             // Copy attributes from definition
             for (auto& attr : it->second.attributes) {
                 clonedItem.attributes[attr.first] = attr.second;
+            }
+            
+            // Check world item capacity
+            if (isWorldItemCapReached()) {
+                p.client.println("[CLONE] The world can hold no more items!");
+                return;
             }
             
             worldItems.push_back(clonedItem);
@@ -20487,9 +20706,25 @@ void setup() {
     NoSerial = !serialAlive;
 
     // -------------------------------
-    // Mount FS silently
+    // Mount FS with better error handling
     // -------------------------------
-    LittleFS.begin(true);
+    Serial.println("[BOOT] Mounting LittleFS...");
+    if (!LittleFS.begin(true)) {
+        Serial.println("[BOOT] ERROR: LittleFS.begin(true) failed!");
+        Serial.println("[BOOT] Attempting format and remount...");
+        if (LittleFS.format()) {
+            Serial.println("[BOOT] Format succeeded");
+            if (!LittleFS.begin(false)) {
+                Serial.println("[BOOT] CRITICAL: LittleFS still won't mount after format!");
+            } else {
+                Serial.println("[BOOT] LittleFS remounted successfully");
+            }
+        } else {
+            Serial.println("[BOOT] Format FAILED!");
+        }
+    } else {
+        Serial.println("[BOOT] LittleFS mounted successfully");
+    }
 
     // Always start with a clean YMODEM log
     LittleFS.remove("/ymodem_debug.txt");
@@ -20522,49 +20757,40 @@ void setup() {
     // =====================================================
     // WIFI PROVISIONING + FALLBACK LOGIC
     // =====================================================
-    const char* credPath = "/credentials.txt";
+    // ⭐ HARDCODED CREDENTIALS (fallback/default)
+    const char* HARDCODED_SSID = "Veramacor";
+    const char* HARDCODED_PASS = "acsacs123";
+    const char* HARDCODED_PORT = "4000";
 
-    bool credsExist = LittleFS.exists(credPath);
-    bool wifiConnected = false;
+    String ssid = HARDCODED_SSID;
+    String pass = HARDCODED_PASS;
+    String portStr = HARDCODED_PORT;
+    
+    Serial.println(String("[BOOT] Using hardcoded credentials: ") + ssid);
 
-    String ssid, pass, portStr;
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
 
-    if (credsExist) {
-        File f = LittleFS.open(credPath, "r");
-        ssid = f.readStringUntil('\n'); ssid.trim();
-        pass = f.readStringUntil('\n'); pass.trim();
-        portStr = f.readStringUntil('\n'); portStr.trim();
-        f.close();
-
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(ssid.c_str(), pass.c_str());
-
-        unsigned long start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
-            delay(200);
-        }
-
-        wifiConnected = (WiFi.status() == WL_CONNECTED);
-        
-        // If WiFi connected, sync time from NTP
-        if (wifiConnected) {
-            syncTimeFromNTP();
-        }
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
+        delay(200);
     }
 
-    if (!credsExist) {
-        Serial.println("No credentials found — entering provisioning mode.");
-        goto PROVISIONING_MODE;
+    bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+    
+    // If WiFi connected, sync time from NTP
+    if (wifiConnected) {
+        syncTimeFromNTP();
+        Serial.println("[BOOT] WiFi connected! ✓");
+    } else {
+        Serial.println("[BOOT] WiFi connection failed - will retry");
     }
-    else if (wifiConnected) {
+    
+    if (wifiConnected) {
         Serial.println("WiFi OK — skipping provisioning.");
     }
-    else if (NoSerial) {
-        Serial.println("WiFi failed but no Serial — fallback to last known creds.");
-    }
     else {
-        Serial.println("WiFi failed — entering provisioning mode.");
-        goto PROVISIONING_MODE;
+        Serial.println("WiFi failed but continuing with hardcoded credentials.");
     }
 
     // =====================================================
@@ -20624,9 +20850,29 @@ void setup() {
 
     resetWorldState();              // wipe world
     loadAllItemDefinitions();       // load item templates
+    
+    // ⭐ BOOT-TIME JOKE DOWNLOAD: DISABLED FOR TESTING
+    Serial.println("\n========== JOKE BOOT SEQUENCE (DISABLED) ==========");
+    // Trying to load previous jokes from jokes.txt without fetching from API
+    if (LittleFS.exists("/jokes.txt")) {
+        loadBootJokes();  // Load existing jokes from file
+        innKeeperJokes.lastRequestTime = millis();
+        innKeeperJokes.nextRequestDelay = random(15000, 40000);
+        Serial.println("✅ Loaded jokes from file (no API fetch)");
+    } else {
+        Serial.println("❌ No jokes.txt found - jokes disabled");
+    }
+    Serial.printf("[JOKE] Loaded %d jokes total\n", (int)innKeeperJokes.localJokes.size());
+    Serial.println("=========================================\n");
+    
+    // Check if register.txt exists and cache the flag
+    g_registerFileExists = LittleFS.exists("/register.txt");
+    
     loadAllWorldItems();            // load items.vxi
     loadAllNPCDefinitions();        // load NPC templates
+    // ✅ RE-ENABLE NPC instances at boot
     loadAllNPCInstances();          // load NPC spawns
+    Serial.println("[NPCS] NPC instances loaded at boot");
     loadQuests();                   // load quests
     buildRoomIndexesIfNeeded();     // build room lookup tables
     initializeShops();              // initialize room-based shops
@@ -20645,34 +20891,6 @@ void setup() {
 
     return;
 
-    // =====================================================
-    // PROVISIONING MODE
-    // =====================================================
-PROVISIONING_MODE:
-
-    {
-        int waitCounter = 1;
-
-        while (!LittleFS.exists(credPath)) {
-            Serial.print("Waiting for credentials : ");
-            Serial.println(waitCounter++);
-            delay(5000);
-
-            if (Serial.available() > 0) {
-                File f = LittleFS.open(credPath, "w");
-                if (f) {
-                    delay(200);
-                    while (Serial.available() > 0) {
-                        f.write(Serial.read());
-                    }
-                    f.close();
-                    Serial.println("SUCCESS: Credentials and Port Saved");
-                    delay(500);
-                    safeReboot();
-                }
-            }
-        }
-    }
 }
 
 
@@ -20899,6 +21117,34 @@ void loop() {
     // ============================================================
     checkGlobalRebootCountdown(now);
 
+    // Clean up inactive players - prevent zombie connections and item leaks
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Player &p = players[i];
+        if (!p.active && p.client.connected()) {
+            try {
+                p.client.stop();  // Force close socket
+            } catch (...) {}
+        }
+        
+        // CRITICAL: Remove all items owned by disconnected players
+        // This prevents the worldItems vector from growing unbounded
+        if (!p.active && p.loggedIn) {
+            // Player was logged in but is now inactive - clean up their items
+            int itemsRemoved = 0;
+            for (int j = (int)worldItems.size() - 1; j >= 0; j--) {
+                if (worldItems[j].ownerName == p.name) {
+                    worldItems.erase(worldItems.begin() + j);
+                    itemsRemoved++;
+                }
+            }
+            if (itemsRemoved > 0) {
+                Serial.printf("[CLEANUP] Removed %d items owned by disconnected player %s\n", 
+                    itemsRemoved, p.name);
+            }
+            p.loggedIn = false;  // Mark as logged out to prevent re-cleanup
+        }
+    }
+
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Player &p = players[i];
         if (!p.active || !p.loggedIn) continue;
@@ -20931,6 +21177,19 @@ void loop() {
         // Log to Serial
         Serial.printf("[MEMORY] Free: %u bytes | Used: %u bytes | Items: %d\n", 
             freeHeap, usedHeap, worldItemsCount);
+        
+        // ⭐ EMERGENCY REBOOT: If memory drops to critical level (< 5KB), auto-reboot to self-heal
+        if (freeHeap < 5000) {
+            Serial.println("[EMERGENCY] Memory critical! Initiating automatic reboot...");
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                if (players[i].active && players[i].client.connected()) {
+                    players[i].client.println("\n*** SYSTEM REBOOT: Memory critical ***");
+                    players[i].client.println("Server rebooting to recover memory...");
+                }
+            }
+            delay(2000); // Give clients time to see message
+            ESP.restart(); // Force hardware reboot
+        }
     }
 
     // NPC respawn tick
@@ -21122,9 +21381,9 @@ for (auto &npc : npcInstances) {
 
 
     // =============================
-    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - RE-ENABLED WITH BULLETPROOF HARDENING
+    // INN KEEPER JOKE SYSTEM (Room 249, 248, 50) - ENABLED WITH BOOT-FETCHED JOKES
     // =============================
-    // Joke system re-enabled with ultra-aggressive timeouts and memory pre-checks
+    // Joke system: Jokes downloaded at boot, served from jokes.txt every 15-40 seconds
     {
         const int JOKE_ROOM_X = 249;
         const int JOKE_ROOM_Y = 248;
@@ -21136,49 +21395,45 @@ for (auto &npc : npcInstances) {
             // Players are in the Inn Keeper room - activate joke system
             innKeeperJokes.active = true;
             
-            // Check if async fetch completed (non-blocking check)
-            if (innKeeperJokes.requestPending) {
-                if (checkJokeFetchComplete()) {
-                    Serial.println("[JOKE SUCCESS] Fetch completed!");
-                    // Successfully received and parsed joke - broadcast it to the room
+            // Check if joke is ready to be told
+            if (innKeeperJokes.requestPending && innKeeperJokes.jokeReady && innKeeperJokes.currentJoke.length() > 0) {
+                // Double-check players are STILL in room before broadcasting
+                int playersCheckAgain = countPlayersInRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z);
+                if (playersCheckAgain > 0) {
+                    Serial.println("[JOKE SUCCESS] Joke ready - broadcasting to room!");
+                    // Successfully got joke from file - broadcast it to the room
                     broadcastToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, "");
                     
                     // Wrap joke text like room descriptions (80 chars max)
                     String wrappedJoke = wordWrap(innKeeperJokes.currentJoke, MAX_OUTPUT_WIDTH);
-                    String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + ".\"";
+                    // Don't add extra period - joke text already has punctuation
+                    String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + "\"";
                     
                     // Send wrapped joke to all players in room
+                    Serial.printf("[JOKE] Broadcasting to %d players: %s\n", playersCheckAgain, jokeMsg.c_str());
                     announceToRoom(JOKE_ROOM_X, JOKE_ROOM_Y, JOKE_ROOM_Z, jokeMsg, -1);
                     
-                    // Schedule next joke (15-20 seconds from now)
-                    innKeeperJokes.nextJokeTime = now + random(15000, 20001);
-                    Serial.println("[JOKE] Next joke scheduled in 15-20 seconds");
+                    Serial.println("[JOKE] Joke delivered. Next joke in 15-40 seconds");
+                } else {
+                    Serial.println("[JOKE] Players left room - aborting broadcast");
                 }
+                
+                // Mark delivery complete - ready for next fetch
+                innKeeperJokes.requestPending = false;
+                innKeeperJokes.jokeReady = false;
             }
             
-            // Check if it's time to initiate a new joke fetch (non-blocking start)
-            if (now >= innKeeperJokes.nextJokeTime && !innKeeperJokes.requestPending) {
-                Serial.println("[JOKE] Timer expired, initiating fetch");
-                startJokeFetch();  // Just initiate, doesn't block
-                // Schedule timeout fallback (try again in 3 seconds if request fails)
-                innKeeperJokes.nextJokeTime = now + 3000;
+            // Check if it's time to trigger next joke (from file, non-blocking)
+            unsigned long timeSinceLastRequest = now - innKeeperJokes.lastRequestTime;
+            if (timeSinceLastRequest >= innKeeperJokes.nextRequestDelay && !innKeeperJokes.requestPending) {
+                Serial.printf("[JOKE] Timer expired (%lu ms >= %lu ms), fetching next joke...\n", 
+                    timeSinceLastRequest, innKeeperJokes.nextRequestDelay);
+                startJokeFetch();  // Get next joke from jokes.txt (non-blocking, no HTTP)
             }
         } else {
             // No players in room - deactivate joke system
             innKeeperJokes.active = false;
-            // Cancel any pending request
-            if (innKeeperJokes.requestPending && innKeeperJokes.httpClient) {
-                innKeeperJokes.httpClient->end();
-                delete innKeeperJokes.httpClient;
-                innKeeperJokes.httpClient = nullptr;
-                innKeeperJokes.requestPending = false;
-                Serial.println("[JOKE] Request cancelled, no players in room");
-            }
-            // Clear used joke IDs when room empties
-            if (innKeeperJokes.usedJokeIds.size() > 0) {
-                Serial.printf("[JOKE] Clearing %d used joke IDs\n", innKeeperJokes.usedJokeIds.size());
-                innKeeperJokes.usedJokeIds.clear();
-            }
+            innKeeperJokes.requestPending = false;
         }
     }
 

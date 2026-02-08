@@ -1,0 +1,396 @@
+﻿void cmdDownload(Player &p, const String &filename) {
+    String fname = filename;
+    fname.trim();
+    
+    // LIST mode: no filename provided
+    if (fname.length() == 0) {
+        p.client.println("Fetching file list from server...");
+        
+        HTTPClient http;
+        http.begin("http://www.storyboardacs.com/download.php");
+        http.setConnectTimeout(10000);
+        http.setTimeout(15000);
+        
+        int httpCode = http.GET();
+        
+        Serial.println("[DOWNLOAD] List request HTTP code: " + String(httpCode));
+        
+        if (httpCode != 200) {
+            p.client.println("Error: HTTP " + String(httpCode));
+            http.end();
+            return;
+        }
+        
+        String response = http.getString();
+        http.end();
+        
+        // Parse JSON and format for display
+        p.client.println("");
+        p.client.println("Filename              Size(KB)      Modified");
+        p.client.println("---------------------------------------------");
+        
+        // Simple JSON parsing for array of objects
+        int pos = 0;
+        while (true) {
+            // Find next "name" field
+            int namePos = response.indexOf("\"name\":", pos);
+            if (namePos == -1) break;
+            
+            // Extract filename
+            int nameStartPos = response.indexOf("\"", namePos + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String filename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            // Find size field after this name
+            int sizePos = response.indexOf("\"size\":", nameEndPos);
+            int sizeStartPos = response.indexOf(":", sizePos) + 1;
+            while (response[sizeStartPos] == ' ') sizeStartPos++;
+            int sizeEndPos = sizeStartPos;
+            while (sizeEndPos < response.length() && isdigit(response[sizeEndPos])) sizeEndPos++;
+            int sizeBytes = response.substring(sizeStartPos, sizeEndPos).toInt();
+            float sizeKB = sizeBytes / 1024.0;
+            
+            // Find modified field
+            int modPos = response.indexOf("\"modified\":", sizeEndPos);
+            int modStartPos = response.indexOf("\"", modPos + 11);
+            int modEndPos = response.indexOf("\"", modStartPos + 1);
+            String modified = response.substring(modStartPos + 1, modEndPos);
+            
+            // Format and print line
+            String line = filename;
+            while (line.length() < 22) line += " ";
+            line += String(sizeKB, 1);
+            while (line.length() < 38) line += " ";
+            line += modified;
+            p.client.println(line);
+            
+            pos = modEndPos;
+        }
+        p.client.println("");
+        return;
+    }
+    
+    // DOWNLOAD ALL FILES mode: check if "all" was specified
+    if (fname.equalsIgnoreCase("all")) {
+        p.client.println("Downloading all files from server...");
+        
+        // First, get the list to check file sizes
+        HTTPClient httpList;
+        httpList.begin("http://www.storyboardacs.com/download.php");
+        httpList.setConnectTimeout(10000);
+        httpList.setTimeout(15000);
+        
+        int httpCode = httpList.GET();
+        if (httpCode != 200) {
+            p.client.println("Error: Could not get file list (HTTP " + String(httpCode) + ")");
+            httpList.end();
+            return;
+        }
+        
+        String listResponse = httpList.getString();
+        httpList.end();
+        
+        // Parse list to find large files (> 100KB) that should be downloaded individually
+        std::vector<String> largeFiles;
+        int pos = 0;
+        while (true) {
+            int namePos = listResponse.indexOf("\"name\":", pos);
+            if (namePos == -1) break;
+            
+            int nameStartPos = listResponse.indexOf("\"", namePos + 7);
+            int nameEndPos = listResponse.indexOf("\"", nameStartPos + 1);
+            String filename = listResponse.substring(nameStartPos + 1, nameEndPos);
+            
+            int sizePos = listResponse.indexOf("\"size\":", nameEndPos);
+            int sizeStartPos = listResponse.indexOf(":", sizePos) + 1;
+            while (sizeStartPos < listResponse.length() && listResponse[sizeStartPos] == ' ') sizeStartPos++;
+            int sizeEndPos = sizeStartPos;
+            while (sizeEndPos < listResponse.length() && isdigit(listResponse[sizeEndPos])) sizeEndPos++;
+            int sizeBytes = listResponse.substring(sizeStartPos, sizeEndPos).toInt();
+            
+            // Files > 100KB will be downloaded individually (to avoid RAM overflow)
+            if (sizeBytes > 100 * 1024) {
+                largeFiles.push_back(filename);
+                p.client.println("Note: " + filename + " (" + String(sizeBytes/1024) + "KB) will be downloaded separately...");
+            }
+            
+            pos = sizeEndPos;
+        }
+        
+        // Download small files via batch mode (download.php?all=1)
+        HTTPClient http;
+        http.begin("http://www.storyboardacs.com/download.php?all=1");
+        http.setConnectTimeout(10000);
+        http.setTimeout(30000);
+        
+        httpCode = http.GET();
+        
+        Serial.println("[DOWNLOAD ALL] HTTP code: " + String(httpCode));
+        
+        if (httpCode != 200) {
+            p.client.println("Error: HTTP " + String(httpCode));
+            http.end();
+            return;
+        }
+        
+        String response = http.getString();
+        http.end();
+        
+        int fileCount = 0;
+        int filesDownloaded = 0;
+        unsigned long totalBytes = 0;
+        unsigned long startTime = millis();
+        
+        // Count small files in response (exclude large files)
+        int pos2 = 0;
+        while ((pos2 = response.indexOf("\"name\":", pos2)) != -1) {
+            int nameStartPos = response.indexOf("\"", pos2 + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String filename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            bool isLarge = false;
+            for (const String &lf : largeFiles) {
+                if (filename == lf) {
+                    isLarge = true;
+                    break;
+                }
+            }
+            
+            if (!isLarge) fileCount++;
+            pos2 += 7;
+        }
+        
+        if (fileCount == 0 && largeFiles.size() == 0) {
+            p.client.println("Error: No files in response or invalid JSON");
+            return;
+        }
+        
+        // Download small files from batch
+        pos2 = 0;
+        int currentFile = 1;
+        
+        while (true) {
+            int namePos = response.indexOf("\"name\":", pos2);
+            if (namePos == -1) break;
+            
+            int nameStartPos = response.indexOf("\"", namePos + 7);
+            int nameEndPos = response.indexOf("\"", nameStartPos + 1);
+            String remoteFilename = response.substring(nameStartPos + 1, nameEndPos);
+            
+            // Skip large files (download them individually later)
+            bool isLarge = false;
+            for (const String &lf : largeFiles) {
+                if (remoteFilename == lf) {
+                    isLarge = true;
+                    break;
+                }
+            }
+            
+            if (isLarge) {
+                pos2 = nameEndPos;
+                continue;
+            }
+            
+            // Find content field
+            int contentPos = response.indexOf("\"content\":", nameEndPos);
+            if (contentPos == -1) {
+                pos2 = nameEndPos;
+                continue;
+            }
+            
+            int contentStartPos = response.indexOf("\"", contentPos + 10);
+            int contentEndPos = response.indexOf("\"", contentStartPos + 1);
+            String base64Content = response.substring(contentStartPos + 1, contentEndPos);
+            
+            // Decode base64 content
+            p.client.print("[" + String(currentFile) + "/" + String(fileCount) + "] Downloading " + remoteFilename + "... ");
+            
+            int decodedSize = (base64Content.length() * 3) / 4;
+            uint8_t *decodedData = new uint8_t[decodedSize];
+            
+            int actualSize = base64_decode(decodedData, decodedSize, (const char*)base64Content.c_str());
+            
+            if (actualSize <= 0) {
+                p.client.println("(base64 decode error)");
+                delete[] decodedData;
+                pos2 = contentEndPos;
+                currentFile++;
+                continue;
+            }
+            
+            File file = LittleFS.open("/" + remoteFilename, "w");
+            if (!file) {
+                p.client.println("(file create error)");
+                delete[] decodedData;
+                pos2 = contentEndPos;
+                currentFile++;
+                continue;
+            }
+            
+            int written = file.write(decodedData, actualSize);
+            file.close();
+            
+            if (written == actualSize) {
+                p.client.println(String(actualSize) + " bytes");
+                filesDownloaded++;
+                totalBytes += actualSize;
+            } else {
+                p.client.println("(write error)");
+            }
+            
+            delete[] decodedData;
+            pos2 = contentEndPos;
+            currentFile++;
+        }
+        
+        // Download large files individually with streaming
+        for (const String &largeFile : largeFiles) {
+            p.client.println("Downloading " + largeFile + " (streaming)...");
+            
+            HTTPClient streamHttp;
+            String downloadUrl = "http://www.storyboardacs.com/download.php?file=" + largeFile;
+            
+            streamHttp.begin(downloadUrl);
+            streamHttp.setConnectTimeout(10000);
+            streamHttp.setTimeout(30000);
+            
+            int streamCode = streamHttp.GET();
+            
+            if (streamCode != 200) {
+                p.client.println("  Error: HTTP " + String(streamCode));
+                streamHttp.end();
+                continue;
+            }
+            
+            int fileSize = streamHttp.getSize();
+            if (fileSize <= 0) {
+                p.client.println("  Error: Could not determine file size");
+                streamHttp.end();
+                continue;
+            }
+            
+            File file = LittleFS.open("/" + largeFile, "w");
+            if (!file) {
+                p.client.println("  Error: Could not create file");
+                streamHttp.end();
+                continue;
+            }
+            
+            WiFiClient *stream = streamHttp.getStreamPtr();
+            int bytesWritten = 0;
+            uint8_t buffer[4096];
+            int bytesRead = 0;
+            unsigned long fileStartTime = millis();
+            const unsigned long TIMEOUT = 60000;  // 60 second timeout for large files
+            
+            while (streamHttp.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+                file.write(buffer, bytesRead);
+                bytesWritten += bytesRead;
+                
+                if (millis() - fileStartTime > TIMEOUT) {
+                    p.client.println("  Error: Download timeout");
+                    file.close();
+                    LittleFS.remove("/" + largeFile);
+                    streamHttp.end();
+                    break;
+                }
+            }
+            
+            file.close();
+            streamHttp.end();
+            
+            if (bytesWritten == fileSize) {
+                p.client.println("  Downloaded " + String(bytesWritten) + " bytes");
+                filesDownloaded++;
+                totalBytes += bytesWritten;
+            } else {
+                p.client.println("  Error: Incomplete download (" + String(bytesWritten) + "/" + String(fileSize) + " bytes)");
+            }
+        }
+        
+        unsigned long elapsed = millis() - startTime;
+        float speed = (totalBytes / 1024.0) / (elapsed / 1000.0);
+        
+        p.client.println("");
+        p.client.println("Download complete: " + String(filesDownloaded) + " files synced");
+        p.client.println("Total: " + String(totalBytes) + " bytes in " + String(elapsed) + "ms");
+        p.client.println("Speed: " + String(speed, 1) + " KB/s");
+        
+        // Force rebuild of room indexes after download all
+        p.client.println("");
+        p.client.println("Rebuilding room indexes...");
+        buildRoomIndexesIfNeeded(true);  // Force rebuild
+        p.client.println("Room indexes rebuilt.");
+        
+        return;
+    }
+
+    // DOWNLOAD SINGLE FILE mode: filename provided - prevent directory traversal
+    if (fname.indexOf("..") >= 0 || fname.indexOf("/") >= 0) {
+        p.client.println("Invalid filename.");
+        return;
+    }
+    
+    p.client.println("Downloading " + fname + "...");
+    
+    HTTPClient http;
+    String downloadUrl = "http://www.storyboardacs.com/download.php?file=" + fname;
+    
+    http.begin(downloadUrl);
+    http.setConnectTimeout(10000);
+    http.setTimeout(15000);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode != 200) {
+        p.client.println("Error: HTTP " + String(httpCode));
+        Serial.println("[DOWNLOAD] HTTP Error: " + String(httpCode));
+        http.end();
+        return;
+    }
+    
+    int fileSize = http.getSize();
+    if (fileSize <= 0) {
+        p.client.println("Error: Could not determine file size.");
+        http.end();
+        return;
+    }
+    
+    // Create/open file in LittleFS
+    File file = LittleFS.open("/" + fname, "w");
+    if (!file) {
+        p.client.println("Error: Could not create file on device.");
+        http.end();
+        return;
+    }
+    
+    // Stream data to file with larger buffer for better performance
+    WiFiClient *stream = http.getStreamPtr();
+    int bytesWritten = 0;
+    uint8_t buffer[4096];  // Increased from 256 to 4096 bytes for better throughput
+    int bytesRead = 0;
+    unsigned long startTime = millis();
+    const unsigned long TIMEOUT = 30000;
+    
+    while (http.connected() && (bytesRead = stream->readBytes(buffer, sizeof(buffer))) > 0) {
+        file.write(buffer, bytesRead);
+        bytesWritten += bytesRead;
+        
+        if (millis() - startTime > TIMEOUT) {
+            p.client.println("Error: Download timeout.");
+            file.close();
+            LittleFS.remove("/" + fname);
+            http.end();
+            return;
+        }
+    }
+    
+    file.close();
+    http.end();
+    
+    unsigned long elapsed = millis() - startTime;
+    float speed = (bytesWritten / 1024.0) / (elapsed / 1000.0);  // KB/s
+    
+    p.client.println("Downloaded " + String(bytesWritten) + " bytes in " + String(elapsed) + "ms");
+    p.client.println("Speed: " + String(speed, 1) + " KB/s to /" + fname);
+}

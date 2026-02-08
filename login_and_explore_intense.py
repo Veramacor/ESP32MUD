@@ -115,12 +115,18 @@ class MUDPlayer:
             self.sock.send(f"{self.password}\n".encode())
             response = self.receive_until_prompt(timeout=2)
             
-            if "successfully" in response.lower() or "welcome" in response.lower():
+            # Check for login success or rejection
+            if "SERVER STATUS" in response or "full at this time" in response.lower():
+                print(f"[{self.name}] ⚠ Server is full - continuing with other players")
+                self.sock.close()
+                return False
+            elif "successfully" in response.lower() or "welcome" in response.lower():
                 self.connected = True
                 print(f"[{self.name}] ✓ Logged in successfully!")
                 return True
             else:
                 print(f"[{self.name}] ✗ Login failed")
+                self.sock.close()
                 return False
                 
         except Exception as e:
@@ -292,8 +298,10 @@ def main():
     # Create player threads
     print(f"\nSpawning {len(PLAYERS)} players...")
     threads = []
+    players_created = []
     for suffix in PLAYERS:
         player = MUDPlayer(suffix)
+        players_created.append(player)
         thread = threading.Thread(target=run_player, args=(player,), daemon=False)
         thread.start()
         threads.append(thread)
@@ -304,8 +312,14 @@ def main():
     for thread in threads:
         thread.join()
     
+    # Count successful logins
+    successful_logins = sum(1 for p in players_created if p.connected)
+    total_commands = sum(p.command_count for p in players_created)
+    
     print("\n" + "="*60)
     print("✓ INTENSE Multi-player exploration complete!")
+    print(f"  Players logged in: {successful_logins}/{len(PLAYERS)}")
+    print(f"  Total commands executed: {total_commands}")
     print("="*60 + "\n")
 
 if __name__ == "__main__":
