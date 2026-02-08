@@ -21318,6 +21318,16 @@ for (auto &npc : npcInstances) {
                 // Get random joke from jokes.txt
                 String jokeText = getRandomJoke();
                 
+                // CRITICAL: Clean up any embedded newlines/extra spaces
+                jokeText.replace("\n", " ");
+                jokeText.replace("\r", " ");
+                jokeText.replace("\t", " ");
+                // Collapse multiple spaces to single space
+                while (jokeText.indexOf("  ") != -1) {
+                    jokeText.replace("  ", " ");
+                }
+                jokeText.trim();
+                
                 // Wrap joke text like room descriptions (80 chars max)
                 String wrappedJoke = wordWrap(jokeText, MAX_OUTPUT_WIDTH);
                 String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + "\"";
