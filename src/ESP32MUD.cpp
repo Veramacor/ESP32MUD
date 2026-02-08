@@ -21018,6 +21018,21 @@ void loop() {
     // Accept new players
     WiFiClient newClient = server->available();
     if (newClient && newClient.connected()) {
+        // ⭐ CRITICAL MEMORY CHECK: Reject connection immediately if heap is too low
+        // This prevents system crash from accepting connections we can't handle
+        uint32_t freeHeap = ESP.getFreeHeap();
+        const uint32_t MEMORY_REJECT_THRESHOLD = 30000;  // 30KB minimum to accept new player
+        
+        if (freeHeap <= MEMORY_REJECT_THRESHOLD) {
+            Serial.printf("[MEMORY] REJECTING NEW CONNECTION: Free heap %u bytes <= %u bytes\n", 
+                         freeHeap, MEMORY_REJECT_THRESHOLD);
+            newClient.println("The world is too unstable right now. Connection rejected.");
+            newClient.println("Please try connecting again in a moment.");
+            newClient.flush();
+            delay(100);
+            newClient.stop();
+            return;  // Exit loop iteration, don't process this connection
+        }
 
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (!players[i].active) {
