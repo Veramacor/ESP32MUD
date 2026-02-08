@@ -1197,7 +1197,7 @@ void bootstrapJokesFromServer() {
         String payload = http.getString();
         http.end();
         
-        // Parse JSON array and extract jokes
+        // Parse JSON array and extract jokes - ONE JOKE = ONE LINE in jokes.txt
         File jokesFile = LittleFS.open("/jokes.txt", "w");
         if (!jokesFile) {
             Serial.println("[JOKE BOOT] Failed to create jokes.txt");
@@ -1236,51 +1236,47 @@ void bootstrapJokesFromServer() {
             }
             
             if (jokeText.length() >= 10) {
-                // CRITICAL: Aggressive cleanup - ensure single line, no garbage
+                // CRITICAL: Convert to single line, no embedded newlines, sanitized
                 
                 // Step 1: Handle ALL escape sequences from JSON
                 jokeText.replace("\\\"", "\"");
-                jokeText.replace("\\n", " ");    // Escaped newlines
-                jokeText.replace("\\r", " ");    // Escaped carriage returns
-                jokeText.replace("\\t", " ");    // Escaped tabs
+                jokeText.replace("\\n", " ");    // Escaped newlines → spaces
+                jokeText.replace("\\r", " ");    // Escaped carriage returns → spaces
+                jokeText.replace("\\t", " ");    // Escaped tabs → spaces
                 jokeText.replace("\\\\", "\\");
                 
-                // Step 2: Remove actual control characters
+                // Step 2: Remove actual control characters (convert to spaces)
                 jokeText.replace("\n", " ");
                 jokeText.replace("\r", " ");
                 jokeText.replace("\t", " ");
                 jokeText.replace("\0", "");
                 
-                // Step 3: AGGRESSIVE filter - keep ONLY normal printable ASCII
+                // Step 3: AGGRESSIVE ASCII filter - keep ONLY printable ASCII (32-126)
                 String cleaned = "";
                 for (int i = 0; i < (int)jokeText.length(); i++) {
                     char ch = jokeText[i];
-                    // Keep normal printable ASCII (space=32 to ~=126)
                     if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
                         cleaned += ch;
                     }
                 }
                 jokeText = cleaned;
                 
-                // Step 4: Collapse multiple spaces to single space (with iteration limit to prevent infinite loop)
+                // Step 4: Collapse multiple spaces to single space
                 int collapseAttempts = 0;
                 while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
                     jokeText.replace("  ", " ");
                     collapseAttempts++;
                 }
-                if (collapseAttempts >= 50) {
-                    Serial.printf("[JOKE BOOT] WARNING: Space collapse hit iteration limit on joke\n");
-                }
                 jokeText.trim();
                 
-                // Step 5: Verify no newlines exist in the string
-                if (jokeText.indexOf("\n") == -1 && jokeText.indexOf("\r") == -1) {
-                    // Write joke as single line (println adds newline after)
+                // Step 5: Final validation - must be single line
+                if (jokeText.length() > 0 && jokeText.indexOf("\n") == -1 && jokeText.indexOf("\r") == -1) {
+                    // Write ONE JOKE AS ONE LINE (println adds \n at end)
                     jokesFile.println(jokeText);
                     jokeCount++;
-                    Serial.printf("[JOKE BOOT] Saved joke %d (%d chars): %.40s...\n", jokeCount, jokeText.length(), jokeText.c_str());
+                    Serial.printf("[JOKE BOOT] Saved joke %d (%d chars): %.50s...\n", jokeCount, jokeText.length(), jokeText.c_str());
                 } else {
-                    Serial.printf("[JOKE BOOT] REJECTED joke (embedded newline found): %.40s...\n", jokeText.c_str());
+                    Serial.printf("[JOKE BOOT] REJECTED joke (invalid): %.40s...\n", jokeText.c_str());
                 }
             }
         }
@@ -1296,154 +1292,117 @@ void bootstrapJokesFromServer() {
 }
 
 // =============================
-// Get random joke from file (read each time, track used line numbers)
+// Get random joke from file (ONE JOKE = ONE LINE)
 // =============================
 
 String getRandomJoke() {
     Serial.println("[JOKE_FUNC] ==== getRandomJoke() START ====");
     try {
-        // usedJokeIds now stores line numbers as String (e.g., "1", "5", "10")
-        // Check if all 10 jokes have been used
-        Serial.printf("[JOKE_FUNC] Used jokes: %d/10\n", innKeeperJokes.usedJokeIds.size());
-        if (innKeeperJokes.usedJokeIds.size() >= 10) {
-            Serial.println("[JOKE_FUNC] All jokes used, resetting list");
-            innKeeperJokes.usedJokeIds.clear();
-        }
-        
-        // Pick a random line (1-10) that hasn't been used yet
-        int lineToUse = -1;
-        int attempts = 0;
-        Serial.println("[JOKE_FUNC] Finding unused line...");
-        while (attempts < 20) {  // Prevent infinite loop
-            lineToUse = random(1, 11);  // Random 1-10
-            String lineStr = String(lineToUse);
-            
-            // Check if this line has already been used
-            bool alreadyUsed = false;
-            for (int i = 0; i < (int)innKeeperJokes.usedJokeIds.size(); i++) {
-                if (innKeeperJokes.usedJokeIds[i] == lineStr) {
-                    alreadyUsed = true;
-                    break;
-                }
-            }
-            
-            if (!alreadyUsed) {
-                // Found an unused line - add it to used list
-                innKeeperJokes.usedJokeIds.push_back(lineStr);
-                Serial.printf("[JOKE_FUNC] Selected line %d (attempt %d)\n", lineToUse, attempts+1);
-                break;
-            }
-            attempts++;
-        }
-        
-        if (lineToUse == -1) {
-            // Fallback if we couldn't find an unused line
-            Serial.println("[JOKE_FUNC] ERROR: Could not find unused line!");
-            return "The Inn Keeper thinks hard but can't remember any jokes!";
-        }
-        
-        // Read the specific line from jokes.txt
-        Serial.println("[JOKE_FUNC] Checking if jokes.txt exists...");
+        // Check if jokes.txt exists
         if (!LittleFS.exists("/jokes.txt")) {
             Serial.println("[JOKE_FUNC] ERROR: jokes.txt does not exist!");
             return "The Inn Keeper thinks hard but can't remember any jokes!";
         }
         
-        Serial.println("[JOKE_FUNC] Opening jokes.txt...");
+        // First pass: count total number of jokes (lines) in jokes.txt
         File jokesFile = LittleFS.open("/jokes.txt", "r");
         if (!jokesFile) {
             Serial.println("[JOKE_FUNC] ERROR: Failed to open jokes.txt!");
             return "The Inn Keeper thinks hard but can't remember any jokes!";
         }
         
-        String jokeText = "";
-        int currentJoke = 0;  // Count jokes (separated by blank lines)
-        int maxLines = 50;    // Safety limit: read up to 50 physical lines
-        int linesRead = 0;
-        
-        Serial.printf("[JOKE_FUNC] Reading file to find joke #%d...\n", lineToUse);
-        while (jokesFile.available() && linesRead < maxLines) {
-            String line = jokesFile.readStringUntil('\n');
-            linesRead++;
-            line.trim();
-            Serial.printf("[JOKE_FUNC] Physical line %d: %d chars\n", linesRead, line.length());
-            
-            // Empty line = end of current joke
-            if (line.length() == 0) {
-                if (jokeText.length() > 0) {
-                    // Just finished reading a joke
-                    currentJoke++;
-                    Serial.printf("[JOKE_FUNC] Found end of joke #%d\n", currentJoke);
-                    
-                    if (currentJoke == lineToUse) {
-                        // This is the joke we want!
-                        Serial.printf("[JOKE_FUNC] Target joke #%d complete! Length: %d\n", lineToUse, jokeText.length());
-                        break;
-                    }
-                    jokeText = "";  // Reset for next joke
-                }
-            } else {
-                // Add this line to the current joke with a space separator
-                if (jokeText.length() > 0) {
-                    jokeText += " ";
-                }
-                jokeText += line;
-            }
+        int totalJokes = 0;
+        while (jokesFile.available()) {
+            jokesFile.readStringUntil('\n');
+            totalJokes++;
         }
-        
-        // Handle case where file doesn't end with blank line
-        if (jokeText.length() > 0 && currentJoke < lineToUse) {
-            currentJoke++;
-            Serial.printf("[JOKE_FUNC] Reached EOF, final joke #%d\n", currentJoke);
-            if (currentJoke != lineToUse) {
-                jokeText = "";
-            }
-        }
-        
-        // AGGRESSIVE cleanup: Remove ANYTHING that's not normal ASCII or letters/numbers/punctuation
-        if (jokeText.length() > 0) {
-            Serial.println("[JOKE_FUNC] Starting aggressive cleanup...");
-            String cleaned = "";
-            for (int i = 0; i < (int)jokeText.length(); i++) {
-                char ch = jokeText[i];
-                // Keep only normal printable ASCII (space=32 to ~=126)
-                if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
-                    cleaned += ch;
-                }
-            }
-            jokeText = cleaned;
-            Serial.printf("[JOKE_FUNC] After aggressive cleanup: %d chars\n", jokeText.length());
-            jokeText.trim();
-            
-            // Final space collapse
-            Serial.println("[JOKE_FUNC] Starting final space collapse...");
-            int collapseAttempts = 0;
-            while (jokeText.indexOf("  ") != -1 && collapseAttempts < 50) {
-                jokeText.replace("  ", " ");
-                collapseAttempts++;
-            }
-            Serial.printf("[JOKE_FUNC] Space collapse complete (%d attempts)\n", collapseAttempts);
-            if (collapseAttempts >= 50) {
-                Serial.printf("[JOKE_FUNC] WARNING: Space collapse hit iteration limit on joke #%d\n", lineToUse);
-            }
-            jokeText.trim();
-        }
-        
         jokesFile.close();
-        Serial.println("[JOKE_FUNC] File closed");
         
-        if (jokeText.length() == 0) {
-            Serial.printf("[JOKE_FUNC] ERROR: No joke text found for line %d!\n", lineToUse);
+        Serial.printf("[JOKE_FUNC] Found %d total jokes in jokes.txt\n", totalJokes);
+        if (totalJokes == 0) {
+            Serial.println("[JOKE_FUNC] ERROR: No jokes found in jokes.txt!");
             return "The Inn Keeper thinks hard but can't remember any jokes!";
         }
         
-        Serial.printf("[JOKE_FUNC] ==== SUCCESS: Returning joke (%d chars) ====\n", jokeText.length());
+        // Check if all jokes have been used
+        if (innKeeperJokes.usedJokeIds.size() >= (size_t)totalJokes) {
+            Serial.printf("[JOKE_FUNC] All %d jokes used, resetting list\n", totalJokes);
+            innKeeperJokes.usedJokeIds.clear();
+        }
+        
+        // Pick a random line (1 to totalJokes) that hasn't been used yet
+        int lineToUse = -1;
+        int attempts = 0;
+        while (attempts < 20 && lineToUse == -1) {
+            int randomLine = random(1, totalJokes + 1);  // Random 1 to totalJokes
+            String lineStr = String(randomLine);
+            
+            // Check if this line has already been used
+            bool alreadyUsed = false;
+            for (const auto &used : innKeeperJokes.usedJokeIds) {
+                if (used == lineStr) {
+                    alreadyUsed = true;
+                    break;
+                }
+            }
+            
+            if (!alreadyUsed) {
+                lineToUse = randomLine;
+                innKeeperJokes.usedJokeIds.push_back(lineStr);
+                Serial.printf("[JOKE_FUNC] Selected line %d (attempt %d)\n", lineToUse, attempts + 1);
+                break;
+            }
+            attempts++;
+        }
+        
+        if (lineToUse == -1) {
+            Serial.println("[JOKE_FUNC] ERROR: Could not find unused joke!");
+            return "The Inn Keeper thinks hard but can't remember any jokes!";
+        }
+        
+        // Second pass: read the specific line from jokes.txt
+        jokesFile = LittleFS.open("/jokes.txt", "r");
+        if (!jokesFile) {
+            Serial.println("[JOKE_FUNC] ERROR: Failed to open jokes.txt!");
+            return "The Inn Keeper thinks hard but can't remember any jokes!";
+        }
+        
+        String jokeText = "";
+        int currentLine = 0;
+        
+        Serial.printf("[JOKE_FUNC] Reading file to find line #%d...\n", lineToUse);
+        while (jokesFile.available()) {
+            String line = jokesFile.readStringUntil('\n');
+            currentLine++;
+            
+            if (currentLine == lineToUse) {
+                // Found the target line!
+                jokeText = line;
+                Serial.printf("[JOKE_FUNC] Found joke at line %d (%d chars)\n", lineToUse, jokeText.length());
+                break;
+            }
+        }
+        jokesFile.close();
+        
+        if (jokeText.length() == 0) {
+            Serial.printf("[JOKE_FUNC] ERROR: No joke text found at line %d!\n", lineToUse);
+            return "The Inn Keeper thinks hard but can't remember any jokes!";
+        }
+        
+        // Extra safety: ensure absolutely no embedded newlines or control chars
+        jokeText.replace("\n", " ");
+        jokeText.replace("\r", " ");
+        jokeText.replace("\t", " ");
+        jokeText.trim();
+        
+        Serial.printf("[JOKE_FUNC] ==== SUCCESS: Returning joke line %d (%d chars) ====\n", lineToUse, jokeText.length());
         return jokeText;
+        
     } catch (const std::exception &e) {
         Serial.printf("[JOKE_FUNC] ERROR: Exception caught: %s\n", e.what());
         return "The Inn Keeper thinks hard but can't remember any jokes!";
     } catch (...) {
-        Serial.println("[JOKE_FUNC] ERROR: Unknown exception in getRandomJoke()!");
+        Serial.println("[JOKE_FUNC] ERROR: Unknown exception!");
         return "The Inn Keeper thinks hard but can't remember any jokes!";
     }
 }
