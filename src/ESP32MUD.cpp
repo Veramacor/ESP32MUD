@@ -1029,7 +1029,7 @@ bool sendEmailViaSMTP(const String &recipientEmail, const String &message, const
     
     // Create HTTP client for API call
     HTTPClient http;
-    String apiUrl = "https://www.storyboardacs.com/sendESP32mail.php";
+    String apiUrl = "http://www.storyboardacs.com/sendESP32mail.php";
     
     // Build JSON payload with proper escaping
     String escapedBody = escapeJsonString(g_emailBody);
