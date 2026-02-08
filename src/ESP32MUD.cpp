@@ -14225,16 +14225,16 @@ void recycleItem(Player &p, int worldIndex, bool showAppreciationMsg = true) {
     WorldItem &item = worldItems[worldIndex];
     String itemName = getItemDisplayName(item);
     
-    // Remove the item from the world
-    item.x = item.y = item.z = -1;
-    item.ownerName = "DELETED";
-    item.parentName = "DELETED";
-    
     // Send message to player
     if (showAppreciationMsg) {
         p.client.println("We appreciate you being eco-conscious!");
     }
     p.client.println("The attendant wisks the " + itemName + " away. Hope it didn't cost much!");
+    
+    // Mark as deleted (don't erase - that would corrupt inventory indices)
+    item.x = item.y = item.z = -1;
+    item.ownerName = "DELETED";
+    item.parentName = "DELETED";
 }
 
 void cmdQuestList(Player &p) {
@@ -16581,12 +16581,21 @@ void cmdDrop(Player &p, const String &input) {
     
     // Check if we're in a special room (RECYCLING CENTER)
     if (isRecyclingCenter(p.currentRoom)) {
+        // Get display name BEFORE removing from inventory
+        String itemName = getItemDisplayName(wi);
+        
         // Remove from inventory
         p.invIndices[invSlot] = p.invIndices[p.invCount - 1];
         p.invCount--;
         
-        // Recycle the item
-        recycleItem(p, worldIndex);
+        // Mark item as recycled (DELETED) without erasing from worldItems
+        // Erasing would be risky with dangling references
+        wi.x = wi.y = wi.z = -1;
+        wi.ownerName = "DELETED";
+        wi.parentName = "DELETED";
+        
+        p.client.println("We appreciate you being eco-conscious!");
+        p.client.println("The attendant wisks the " + itemName + " away. Hope it didn't cost much!");
         return;
     }
     
@@ -16651,8 +16660,13 @@ void cmdDropAll(Player &p) {
                 droppedAny = true;
             }
             
-            // Each item gets its own "wisks away" message (showAppreciationMsg=false)
-            recycleItem(p, wiIndex, false);
+            // Mark item as recycled (DELETED) but DON'T erase yet
+            // Erasing here would invalidate worldItems indices
+            String itemName = getItemDisplayName(item);
+            p.client.println("The attendant wisks the " + itemName + " away. Hope it didn't cost much!");
+            item.x = item.y = item.z = -1;
+            item.ownerName = "DELETED";
+            item.parentName = "DELETED";
             
             // Remove from inventory
             for (int j = i; j < p.invCount - 1; j++)
