@@ -1180,7 +1180,7 @@ void bootstrapJokesFromServer() {
         Serial.printf("[JOKE BOOT] Attempt %d/%d (have %d, need %d)...\n", attempt, MAX_RETRIES, totalJokes, TARGET_JOKES);
         
         HTTPClient http;
-        String jokeUrl = "http://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
+        String jokeUrl = "https://v2.jokeapi.dev/joke/Any?blacklistFlags=nsfw,racist&amount=10";
         
         try {
             http.setConnectTimeout(10000);
@@ -15060,17 +15060,40 @@ bool fetchMailFromServer(const String &playerName, std::vector<Letter> &letters)
                 }
             }
             
-            if (letter.body.length() > 0) {
+            // Validate all required fields are present before accepting email
+            // For external (unaddressed) emails: from, subject, and body are required
+            // The "to" field can be empty for unaddressed/external emails
+            bool hasRequiredFields = true;
+            if (letter.body.length() == 0) {
+                Serial.println("[MAIL] VALIDATION FAILED: Email has empty body");
+                hasRequiredFields = false;
+            }
+            if (letter.from.length() == 0) {
+                Serial.println("[MAIL] VALIDATION FAILED: Email has empty from field");
+                hasRequiredFields = false;
+            }
+            if (letter.subject.length() == 0) {
+                Serial.println("[MAIL] VALIDATION FAILED: Email has empty subject field");
+                hasRequiredFields = false;
+            }
+            // Note: "to" field is optional - allows unaddressed/external emails
+            // External emails can have empty "to" field and will be treated as unaddressed
+            
+            if (hasRequiredFields) {
                 letters.push_back(letter);
                 Serial.print("[MAIL] SUCCESS: Parsed email from: ");
                 Serial.println(letter.from);
-                Serial.print("[MAIL] Email to: ");
-                Serial.println(letter.to);
+                if (letter.to.length() > 0) {
+                    Serial.print("[MAIL] Email to: ");
+                    Serial.println(letter.to);
+                } else {
+                    Serial.println("[MAIL] Email to: (unaddressed/external)");
+                }
                 Serial.print("[MAIL] Email subject: ");
                 Serial.println(letter.subject);
                 emailCount++;
             } else {
-                Serial.println("[MAIL] WARNING: Email has empty body, skipping");
+                Serial.println("[MAIL] SKIPPING email due to missing required fields");
             }
             
             pos = objEnd + 1;
@@ -15144,11 +15167,14 @@ bool checkAndSpawnMailLetters(Player &p) {
         Serial.print(" of ");
         Serial.println(letters.size());
         
-        // Use player's name for the letter (not the sender)
-        String letterName = "Letter for " + String(capFirst(p.name));
+        // Check if the letter recipient (letter.to) matches the current player
+        // Convert both to lowercase for case-insensitive comparison
+        String recipientLower = String(letter.to.c_str());
+        recipientLower.toLowerCase();
+        String playerNameLower = String(p.name);
+        playerNameLower.toLowerCase();
         
-        Serial.print("[MAIL] Letter for player: ");
-        Serial.println(p.name);
+        bool isAddressedToPlayer = (recipientLower == playerNameLower);
         
         // Create world item for the letter
         WorldItem letter_item;
@@ -15169,14 +15195,38 @@ bool checkAndSpawnMailLetters(Player &p) {
         Serial.print(letter_item.z);
         Serial.println(")");
         
-        // Set attributes
-        letter_item.attributes["type"] = std::string("letter");
-        letter_item.attributes["name"] = std::string(letterName.c_str());
-        letter_item.attributes["desc"] = std::string(letter.body.c_str());
-        letter_item.attributes["subject"] = std::string(letter.subject.c_str());
-        letter_item.attributes["from"] = std::string(letter.from.c_str());
-        letter_item.attributes["weight"] = std::string("0");
-        letter_item.attributes["value"] = std::string("0");
+        if (isAddressedToPlayer) {
+            // Letter addressed to this player
+            String letterName = "Letter for " + String(capFirst(p.name));
+            
+            Serial.print("[MAIL] Letter for player: ");
+            Serial.println(p.name);
+            
+            letter_item.attributes["type"] = std::string("letter");
+            letter_item.attributes["name"] = std::string(letterName.c_str());
+            letter_item.attributes["desc"] = std::string(letter.body.c_str());
+            letter_item.attributes["subject"] = std::string(letter.subject.c_str());
+            letter_item.attributes["from"] = std::string(letter.from.c_str());
+            letter_item.attributes["weight"] = std::string("0");
+            letter_item.attributes["value"] = std::string("0");
+        } else {
+            // Letter not addressed to this player - it's an unaddressed letter (external email)
+            Serial.print("[MAIL] Unaddressed letter (from external sender): ");
+            Serial.println(letter.from.c_str());
+            
+            letter_item.attributes["type"] = std::string("letter");
+            letter_item.attributes["name"] = std::string("An unaddressed letter");
+            letter_item.attributes["desc"] = std::string(letter.body.c_str());
+            letter_item.attributes["subject"] = std::string(letter.subject.c_str());
+            letter_item.attributes["from"] = std::string(letter.from.c_str());
+            letter_item.attributes["weight"] = std::string("0");
+            letter_item.attributes["value"] = std::string("0");
+            letter_item.attributes["unaddressed"] = std::string("true");  // Mark as unaddressed
+            
+            // Announce the unaddressed letter to the post office room
+            String announcement = "The Post Office has an unaddressed letter delivered and drops it on the floor.";
+            announceToRoom(letter_item.x, letter_item.y, letter_item.z, announcement, -1);
+        }
         
         // Add to world
         worldItems.push_back(letter_item);
@@ -21386,7 +21436,29 @@ void setup() {
     initializePostOffices();        // initialize post offices
     initializeWeatherStations();    // initialize weather station
     loadHighLowPot();               // load high-low pot from persistent storage
-    bootstrapJokesFromServer();     // fetch 20 jokes and save to jokes.txt (or load if exists)
+    
+    // ⭐ MEMORY OPTIMIZATION: Reset world items before HTTPS joke bootstrap
+    // This frees memory (removes all spawned items from world) so HTTPS SSL handshake succeeds
+    {
+        // Clear all non-inventory world items to free heap for HTTPS SSL negotiation
+        for (int i = 0; i < (int)worldItems.size(); ) {
+            WorldItem &wi = worldItems[i];
+            if (wi.ownerName.length() > 0) {
+                i++;  // Keep player inventory items
+                continue;
+            }
+            worldItems.erase(worldItems.begin() + i);  // Remove world-spawned items
+        }
+        // Remove world items save file
+        if (LittleFS.exists("/world_items.vxi")) {
+            LittleFS.remove("/world_items.vxi");
+        }
+        // Reload default items
+        loadAllWorldItems();
+        Serial.println("[BOOT] Cleared world items to free heap for HTTPS joke bootstrap");
+    }
+    
+    bootstrapJokesFromServer();     // fetch 20 jokes with HTTPS and save to jokes.txt
 
     // Initialize 6-hour reboot timer
     nextGlobalRespawn = millis() + GLOBAL_RESPAWN_INTERVAL;
