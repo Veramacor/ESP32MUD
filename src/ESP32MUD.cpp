@@ -11836,19 +11836,8 @@ void cmdTownMap(Player &p) {
 
 
 void cmdUpload(Player &p, const String &args) {
-    if (!p.IsWizard) {
-        p.client.println("What?");
-        return;
-    }
-
     String filename = args;
     filename.trim();
-    
-    if (filename.length() == 0) {
-        p.client.println("Usage: upload <filename>");
-        p.client.println("Example: upload jokes.txt");
-        return;
-    }
 
     // Ensure filename doesn't start with /
     if (filename.startsWith("/")) {
@@ -20836,6 +20825,19 @@ if (cmd == "debug") {
     // UPLOAD command - Upload files to website
     // -----------------------------------------
     if (cmd == "upload") {
+        if (!p.IsWizard) {
+            p.client.println("What?");
+            return;
+        }
+        
+        String filename = args;
+        filename.trim();
+        
+        if (filename.length() == 0) {
+            p.client.println("Usage: upload <filename>");
+            return;
+        }
+        
         cmdUpload(p, args);
         return;
     }
