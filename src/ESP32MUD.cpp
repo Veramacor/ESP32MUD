@@ -17964,6 +17964,20 @@ void handleLogin(Player &p, int index, const String &rawLine) {
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
             
+            // ⭐ CRITICAL: Check heap immediately after login completes
+            // Players consume massive memory during login - disconnect if critical
+            uint32_t heapAfterLogin = ESP.getFreeHeap();
+            const uint32_t CRITICAL_HEAP_THRESHOLD = 35000;  // 35KB - same as soft warning
+            if (heapAfterLogin <= CRITICAL_HEAP_THRESHOLD) {
+                Serial.printf("[LOGIN DISCONNECT] Player %s disconnected: heap critical at %u bytes\n", p.name, heapAfterLogin);
+                p.client.println("ERROR: System memory critical. Connection rejected.");
+                p.client.stop();
+                removePlayerInventoryItems(String(p.name));
+                p.active = false;
+                p.loggedIn = false;
+                return;
+            }
+            
             // Check criminal status once at login and cache in flag (avoids file I/O on every movement)
             p.isCriminal = isPlayerCriminal(p.name);
             Serial.print("[LOGIN] Player ");
@@ -18204,6 +18218,20 @@ void handleLogin(Player &p, int index, const String &rawLine) {
 
             st.stage = LOGIN_DONE;
             p.loggedIn = true;
+            
+            // ⭐ CRITICAL: Check heap immediately after login completes
+            // Players consume massive memory during login - disconnect if critical
+            uint32_t heapAfterLogin = ESP.getFreeHeap();
+            const uint32_t CRITICAL_HEAP_THRESHOLD = 35000;  // 35KB - same as soft warning
+            if (heapAfterLogin <= CRITICAL_HEAP_THRESHOLD) {
+                Serial.printf("[LOGIN DISCONNECT] New player %s disconnected: heap critical at %u bytes\n", p.name, heapAfterLogin);
+                p.client.println("ERROR: System memory critical. Connection rejected.");
+                p.client.stop();
+                removePlayerInventoryItems(String(p.name));
+                p.active = false;
+                p.loggedIn = false;
+                return;
+            }
             
             // Broadcast player login to all players
             String capName = capFirst(p.name);
