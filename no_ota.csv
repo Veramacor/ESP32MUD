@@ -1,12 +1,12 @@
 # Name,   Type, SubType, Offset,  Size, Flags
-# ESP32-C3 Standard OTA Layout
+# ESP32-C3 Standard OTA Layout (4MB Flash)
 # Bootloader @ 0x0000-0x8000 (32KB) - fixed by hardware
 # NVS @ 0x9000-0xE000 (20KB)
 # PHY_INIT @ 0xE000-0xF000 (4KB)
-# APP0 @ 0x10000-0x110000 (1MB)
-# LITTLEFS @ 0x110000-0x3F0000 (2880KB)
+# APP0 @ 0x10000-0x180000 (1792KB) - increased from 1024KB to fit 1496KB firmware
+# LITTLEFS @ 0x180000-0x3F0000 (2304KB) - reduced from 2940KB
 
 nvs,        data, nvs,     0x9000,   0x5000
 phy_init,   data, phy,     0xe000,   0x1000
-app0,       app,  ota_0,   0x10000,  0x100000
-littlefs,   data, 0x10,    0x110000, 0x2e0000
+app0,       app,  ota_0,   0x10000,  0x170000
+littlefs,   data, 0x10,    0x180000, 0x270000

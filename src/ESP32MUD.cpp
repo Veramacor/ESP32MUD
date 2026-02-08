@@ -17751,9 +17751,9 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 p.client.println("ESP32MUD v" + String(ESP32MUD_VERSION));
                 p.client.println("Compiled: " + String(COMPILE_DATE) + " " + formatCompileTimeWithTimezone(COMPILE_TIME));
                 
-                // Program size (flash) - APP0 partition: 0x10000-0x110000 = 1,048,576 bytes (1024 KB)
+                // Program size (flash) - APP0 partition: 0x10000-0x180000 = 1,835,008 bytes (1792 KB)
                 uint32_t sketchSize = ESP.getSketchSize();
-                uint32_t appPartitionSize = 1048576;  // 0x100000 = 1,048,576 bytes from no_ota.csv
+                uint32_t appPartitionSize = 1835008;  // 0x170000 = 1,835,008 bytes from no_ota.csv (1792 KB)
                 int programPercent = (sketchSize * 100) / appPartitionSize;
                 
                 // Display program size with overflow warning
@@ -17763,9 +17763,9 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                     p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(appPartitionSize / 1024) + " KB) -> " + String(programPercent) + "%");
                 }
                 
-                // LittleFS space - LITTLEFS partition: 0x110000-0x3F0000 = 3,010,560 bytes (2940 KB)
+                // LittleFS space - LITTLEFS partition: 0x180000-0x3F0000 = 2,359,296 bytes (2304 KB)
                 size_t fsUsed = LittleFS.usedBytes();
-                uint32_t fsTotal = 3010560;  // 0x2e0000 = 3,010,560 bytes from no_ota.csv (2940 KB)
+                uint32_t fsTotal = 2359296;  // 0x270000 = 2,359,296 bytes from no_ota.csv (2304 KB)
                 int fsPercent = (fsUsed * 100) / fsTotal;
                 p.client.println("LittleFS Space: (" + String(fsUsed / 1024) + " KB of " + String(fsTotal / 1024) + " KB) -> " + String(fsPercent) + "%");
                 p.client.println();
