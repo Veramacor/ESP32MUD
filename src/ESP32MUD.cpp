@@ -17755,11 +17755,17 @@ void handleLogin(Player &p, int index, const String &rawLine) {
                 uint32_t sketchSize = ESP.getSketchSize();
                 uint32_t appPartitionSize = 1048576;  // 0x100000 = 1,048,576 bytes from no_ota.csv
                 int programPercent = (sketchSize * 100) / appPartitionSize;
-                p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(appPartitionSize / 1024) + " KB) -> " + String(programPercent) + "%");
+                
+                // Display program size with overflow warning
+                if (programPercent > 100) {
+                    p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(appPartitionSize / 1024) + " KB) -> **OVERFLOW** (" + String(programPercent) + "%)");
+                } else {
+                    p.client.println("Program Size: (" + String(sketchSize / 1024) + " KB of " + String(appPartitionSize / 1024) + " KB) -> " + String(programPercent) + "%");
+                }
                 
                 // LittleFS space - LITTLEFS partition: 0x110000-0x3F0000 = 3,010,560 bytes (2940 KB)
                 size_t fsUsed = LittleFS.usedBytes();
-                size_t fsTotal = LittleFS.totalBytes();
+                uint32_t fsTotal = 3010560;  // 0x2e0000 = 3,010,560 bytes from no_ota.csv (2940 KB)
                 int fsPercent = (fsUsed * 100) / fsTotal;
                 p.client.println("LittleFS Space: (" + String(fsUsed / 1024) + " KB of " + String(fsTotal / 1024) + " KB) -> " + String(fsPercent) + "%");
                 p.client.println();
