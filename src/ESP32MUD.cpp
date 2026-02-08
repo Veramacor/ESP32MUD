@@ -439,6 +439,7 @@ void showItemDescriptionNormal(Player &p, WorldItem &wi);
 void echoCommandToFollowingWizards(int playerIndex, const String &input);
 void mergeCoinPilesAt(int x, int y, int z);
 void spawnGoldAt(int x, int y, int z, int amount);
+bool checkHeapAndTriggerIfCritical();
 void removePlayerInventoryItems(const String &playerName);
 
 // Item resolution
@@ -7091,6 +7092,17 @@ void cmdBuy(Player &p, const String &arg) {
 
     if (worldItems.size() < 2000) {
         worldItems.push_back(newItem);
+        
+        // ⭐ CHECK HEAP IMMEDIATELY AFTER CREATION
+        if (!checkHeapAndTriggerIfCritical()) {
+            // Memory critical - remove the item we just added and reject the purchase
+            worldItems.pop_back();
+            // Restore coins since purchase failed
+            p.coins += shopItem->price;
+            p.client.println("[SYSTEM] Purchase failed! World is unstable. No more items allowed!");
+            broadcastToAll("[WORLD] Item purchase blocked - system overload!");
+            return;
+        }
     }
     int newIdx = worldItems.size() - 1;
 
