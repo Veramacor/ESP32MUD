@@ -526,7 +526,6 @@ String getCardName(const Card &card);
 void saveHighLowPot();
 void loadHighLowPot();
 void bootstrapJokesFromServer();
-void loadJokesFromFile();
 String getRandomJoke();
 
 // Chess game function declarations
@@ -1163,13 +1162,6 @@ void bootstrapJokesFromServer() {
         LittleFS.remove("/jokes.txt");
     }
     
-    // Check if jokes.txt exists (should not after delete above)
-    if (LittleFS.exists("/jokes.txt")) {
-        Serial.println("[JOKE BOOT] jokes.txt already exists, loading jokes");
-        loadJokesFromFile();
-        return;
-    }
-    
     Serial.println("[JOKE BOOT] Fetching 10 jokes from API...");
     
     HTTPClient http;
@@ -1267,11 +1259,6 @@ void bootstrapJokesFromServer() {
         
         Serial.printf("[JOKE BOOT] Successfully saved %d jokes to jokes.txt\n", jokeCount);
         
-        if (jokeCount > 0) {
-            innKeeperJokes.usedJokeIds.clear();  // Reset used jokes
-            loadJokesFromFile();  // Load the jokes into memory
-        }
-        
     } catch (...) {
         Serial.println("[JOKE BOOT] Exception during bootstrap!");
         http.end();
@@ -1279,50 +1266,78 @@ void bootstrapJokesFromServer() {
 }
 
 // =============================
-// Load jokes from jokes.txt into memory
+// Get random joke from file (read each time, track used line numbers)
 // =============================
 
-void loadJokesFromFile() {
-    Serial.println("[JOKE] Loading jokes from jokes.txt...");
+String getRandomJoke() {
+    // usedJokeIds now stores line numbers as String (e.g., "1", "5", "10")
+    // Check if all 10 jokes have been used
+    if (innKeeperJokes.usedJokeIds.size() >= 10) {
+        Serial.println("[JOKE] All jokes used, resetting list");
+        innKeeperJokes.usedJokeIds.clear();
+    }
     
+    // Pick a random line (1-10) that hasn't been used yet
+    int lineToUse = -1;
+    int attempts = 0;
+    while (attempts < 20) {  // Prevent infinite loop
+        lineToUse = random(1, 11);  // Random 1-10
+        String lineStr = String(lineToUse);
+        
+        // Check if this line has already been used
+        bool alreadyUsed = false;
+        for (int i = 0; i < (int)innKeeperJokes.usedJokeIds.size(); i++) {
+            if (innKeeperJokes.usedJokeIds[i] == lineStr) {
+                alreadyUsed = true;
+                break;
+            }
+        }
+        
+        if (!alreadyUsed) {
+            // Found an unused line - add it to used list
+            innKeeperJokes.usedJokeIds.push_back(lineStr);
+            break;
+        }
+        attempts++;
+    }
+    
+    if (lineToUse == -1) {
+        // Fallback if we couldn't find an unused line
+        return "The Inn Keeper thinks hard but can't remember any jokes!";
+    }
+    
+    // Read the specific line from jokes.txt
     if (!LittleFS.exists("/jokes.txt")) {
-        Serial.println("[JOKE] jokes.txt not found");
-        return;
+        return "The Inn Keeper thinks hard but can't remember any jokes!";
     }
     
     File jokesFile = LittleFS.open("/jokes.txt", "r");
     if (!jokesFile) {
-        Serial.println("[JOKE] Failed to open jokes.txt");
-        return;
+        return "The Inn Keeper thinks hard but can't remember any jokes!";
     }
     
-    innKeeperJokes.usedJokeIds.clear();
-    int jokeCount = 0;
+    String jokeText = "";
+    int currentLine = 0;
     
     while (jokesFile.available()) {
-        String joke = jokesFile.readStringUntil('\n');
-        joke.trim();
-        if (joke.length() > 0) {
-            innKeeperJokes.usedJokeIds.push_back(joke);  // Using usedJokeIds as the joke cache
-            jokeCount++;
+        String line = jokesFile.readStringUntil('\n');
+        currentLine++;
+        
+        if (currentLine == lineToUse) {
+            jokeText = line;
+            jokeText.trim();
+            break;
         }
     }
     
     jokesFile.close();
-    Serial.printf("[JOKE] Loaded %d jokes from jokes.txt\n", jokeCount);
-}
-
-// =============================
-// Get random joke from loaded jokes
-// =============================
-
-String getRandomJoke() {
-    if (innKeeperJokes.usedJokeIds.empty()) {
+    
+    if (jokeText.length() == 0) {
         return "The Inn Keeper thinks hard but can't remember any jokes!";
     }
     
-    int randomIndex = random(0, innKeeperJokes.usedJokeIds.size());
-    return innKeeperJokes.usedJokeIds[randomIndex];
+    Serial.printf("[JOKE] Serving joke from line %d (used %d/%d)\n", lineToUse, innKeeperJokes.usedJokeIds.size(), 10);
+    return jokeText;
 }
 
 // =============================
