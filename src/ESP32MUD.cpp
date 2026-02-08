@@ -431,6 +431,7 @@ void cmdLookAt(Player &p, const String &input);
 void cmdLookIn(Player &p, const String &input);
 void showItemDescription(Player &p, WorldItem &wi);
 void showItemDescriptionNormal(Player &p, WorldItem &wi);
+void echoCommandToFollowingWizards(int playerIndex, const String &input);
 void mergeCoinPilesAt(int x, int y, int z);
 void spawnGoldAt(int x, int y, int z, int amount);
 
@@ -806,6 +807,10 @@ struct Player {
     std::vector<String> deathDialogLines;   // Death messages to display
     int deathDialogStep = 0;                // Current line index
     unsigned long deathDialogNextTime = 0;  // When to show next line
+
+    // Follow mode (wizard following a player)
+    bool isFollowing = false;               // true if this wizard is following another player
+    int followingPlayerIndex = -1;          // index of the player being followed (-1 if not following)
 };
 
 // =============================
@@ -5485,6 +5490,34 @@ void movePlayer(Player &p, int index, const char *dir) {
             p.client.println("");
             announceToRoom(p.roomX, p.roomY, p.roomZ, 
                           "The Sheriff confiscates all weapons from " + capFirst(p.name) + "!", -1);
+        }
+    }
+
+    // =============================
+    // FOLLOW LOGIC - Auto-follow any wizards
+    // =============================
+    // Check if any wizards are following THIS player
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (players[i].active && players[i].loggedIn && players[i].IsWizard) {
+            if (players[i].isFollowing && players[i].followingPlayerIndex == index) {
+                // Wizard is following this player - move wizard to this player's room
+                players[i].roomX = p.roomX;
+                players[i].roomY = p.roomY;
+                players[i].roomZ = p.roomZ;
+                
+                if (loadRoomForPlayer(players[i], p.roomX, p.roomY, p.roomZ)) {
+                    // Send movement notification to wizard (silent, they see it happening)
+                    players[i].client.println(String("[FOLLOW] ") + capFirst(p.name) + String(" moves."));
+                    
+                    // Show the wizard what the player sees (room description and occupants)
+                    cmdLook(players[i]);
+                } else {
+                    // Room load failed, stop following
+                    players[i].isFollowing = false;
+                    players[i].followingPlayerIndex = -1;
+                    players[i].client.println("[FOLLOW] Lost track of player - follow cancelled.");
+                }
+            }
         }
     }
 }
@@ -11719,6 +11752,9 @@ void cmdWizHelp(Player &p) {
     p.client.println("blind <player>          - Toggle blindness on a player");
     p.client.println("                          Usage: blind playerName (toggles on/off)");
     p.client.println("                          Blinded players cannot use look, map, or townmap");
+    p.client.println("boot <player>           - Disconnect a player from the server");
+    p.client.println("                          Usage: boot playerName (boots player instantly)");
+    p.client.println("boot all                - Disconnect all players from the server");
     p.client.println("clone                   - Clone an item or NPC to your room");
     p.client.println("clonegold <amount>      - Spawn gold coins to your room");
     p.client.println("download [filename]     - Download files from server");
@@ -11726,6 +11762,9 @@ void cmdWizHelp(Player &p) {
     p.client.println("                                 download all (downloads all files)");
     p.client.println("                                 download filename (downloads single file)");
     p.client.println("                          Files are written to LittleFS in /");
+    p.client.println("follow <player>         - Follow a player and see everything they see");
+    p.client.println("                          Usage: follow playerName");
+    p.client.println("                          Wizard moves with player and sees all commands");
     p.client.println("goto <x,y,z|player>     - Teleport instantly");
     p.client.println("heal <player>           - Fully heal a player");
     p.client.println("hobble <player>         - Toggle hobbling on a player");
@@ -16585,6 +16624,24 @@ void broadcastToRoom(int x, int y, int z, const String &msg, Player *exclude) {
   }
 }
 
+// =============================
+// Send command echo to following wizards
+// =============================
+void echoCommandToFollowingWizards(int playerIndex, const String &input) {
+    // Check if any wizards are following this player
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (players[i].active && players[i].loggedIn && players[i].IsWizard) {
+            if (players[i].isFollowing && players[i].followingPlayerIndex == playerIndex) {
+                // Echo the command to the wizard
+                players[i].client.print(String("[CMD] "));
+                players[i].client.print(capFirst(players[playerIndex].name));
+                players[i].client.print(String(" -> "));
+                players[i].client.println(input);
+            }
+        }
+    }
+}
+
 void handlePlayerDeath(Player &p) {
 
     // Flavorful death messages - ALL will be displayed with non-blocking delays
@@ -19698,6 +19755,150 @@ void handleCommand(Player &p, int index, const String &rawLine) {
             String(amount) + " gold coin(s) appear in a flash of light!",
             -1
         );
+
+        return;
+    }
+
+    // =============================
+    // BOOT [PLAYER] - Disconnect a player from server
+    // =============================
+    if (cmd == "boot") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+
+        args.trim();
+        if (args.length() == 0) {
+            p.client.println("Usage: boot <player_name> OR boot all");
+            return;
+        }
+
+        // Check if "boot all"
+        if (args == "all") {
+            p.client.println("Booting all players...");
+            Serial.println("[BOOT] Wizard is booting ALL players!");
+
+            // Disconnect all players except the wizard
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                if (players[i].active && players[i].loggedIn) {
+                    if (i != index) {  // Don't boot the wizard
+                        players[i].client.println("You have been booted from the server by a wizard.");
+                        delay(50);
+                        if (players[i].client) {
+                            players[i].client.stop();
+                        }
+                        players[i].active = false;
+                        players[i].loggedIn = false;
+                        Serial.printf("[BOOT] Player %s disconnected\n", players[i].name);
+                    }
+                }
+            }
+
+            broadcastToAll(String("[ANNOUNCEMENT] ") + capFirst(p.name) + String(" has booted all players!"));
+            return;
+        }
+
+        // Boot single player
+        int targetIndex = -1;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].active && players[i].loggedIn) {
+                if (strcasecmp(players[i].name, args.c_str()) == 0) {
+                    targetIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (targetIndex == -1) {
+            p.client.println("Player not found.");
+            return;
+        }
+
+        if (targetIndex == index) {
+            p.client.println("You cannot boot yourself!");
+            return;
+        }
+
+        // Boot the target player
+        p.client.println(String("Booting ") + players[targetIndex].name + String("..."));
+        players[targetIndex].client.println("You have been booted from the server by a wizard.");
+        delay(50);
+        
+        if (players[targetIndex].client) {
+            players[targetIndex].client.stop();
+        }
+        
+        players[targetIndex].active = false;
+        players[targetIndex].loggedIn = false;
+        
+        Serial.printf("[BOOT] Player %s booted by wizard %s\n", players[targetIndex].name, p.name);
+        broadcastToAll(String("[ANNOUNCEMENT] ") + capFirst(players[targetIndex].name) + String(" has been booted by a wizard."));
+        
+        return;
+    }
+
+    // =============================
+    // FOLLOW [PLAYER] - Follow a player and see everything
+    // =============================
+    if (cmd == "follow") {
+        if (!p.IsWizard) { p.client.println("What?"); return; }
+
+        args.trim();
+        if (args.length() == 0) {
+            // Stop following if already following
+            if (p.isFollowing) {
+                p.isFollowing = false;
+                p.followingPlayerIndex = -1;
+                p.client.println("You stop following.");
+                return;
+            } else {
+                p.client.println("Usage: follow <player_name> OR just 'follow' to stop");
+                return;
+            }
+        }
+
+        // Find the target player
+        int targetIndex = -1;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].active && players[i].loggedIn) {
+                if (strcasecmp(players[i].name, args.c_str()) == 0) {
+                    targetIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (targetIndex == -1) {
+            p.client.println("Player not found.");
+            return;
+        }
+
+        if (targetIndex == index) {
+            p.client.println("You cannot follow yourself!");
+            return;
+        }
+
+        // Start following
+        p.isFollowing = true;
+        p.followingPlayerIndex = targetIndex;
+
+        // Teleport wizard to player's room
+        p.roomX = players[targetIndex].roomX;
+        p.roomY = players[targetIndex].roomY;
+        p.roomZ = players[targetIndex].roomZ;
+        
+        if (!loadRoomForPlayer(p, p.roomX, p.roomY, p.roomZ)) {
+            // Room load failed, stop following
+            p.isFollowing = false;
+            p.followingPlayerIndex = -1;
+            p.client.println("Failed to load target room.");
+            return;
+        }
+
+        p.client.println(String("Following ") + players[targetIndex].name + String(". Type 'follow' alone to stop."));
+        Serial.printf("[FOLLOW] Wizard %s is now following player %s at (%d,%d,%d)\n", 
+                     p.name, players[targetIndex].name, p.roomX, p.roomY, p.roomZ);
+
+        // Show the player's current room
+        cmdLook(p);
 
         return;
     }
