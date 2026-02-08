@@ -11835,6 +11835,130 @@ void cmdTownMap(Player &p) {
 }
 
 
+void cmdUpload(Player &p, const String &args) {
+    if (!p.IsWizard) {
+        p.client.println("What?");
+        return;
+    }
+
+    String filename = args;
+    filename.trim();
+    
+    if (filename.length() == 0) {
+        p.client.println("Usage: upload <filename>");
+        p.client.println("Example: upload jokes.txt");
+        return;
+    }
+
+    // Ensure filename doesn't start with /
+    if (filename.startsWith("/")) {
+        filename = filename.substring(1);
+    }
+
+    // Security: validate filename (alphanumeric, dots, underscores, hyphens only)
+    bool validName = true;
+    for (int i = 0; i < filename.length(); i++) {
+        char c = filename[i];
+        if (!isalnum(c) && c != '.' && c != '_' && c != '-') {
+            validName = false;
+            break;
+        }
+    }
+
+    if (!validName) {
+        p.client.println("Invalid filename. Use only alphanumeric characters, dots, underscores, and hyphens.");
+        return;
+    }
+
+    // Check if file exists
+    String filepath = "/" + filename;
+    if (!LittleFS.exists(filepath)) {
+        p.client.println("File not found: " + filename);
+        return;
+    }
+
+    // Open and read the file
+    File f = LittleFS.open(filepath, "r");
+    if (!f) {
+        p.client.println("Failed to open file: " + filename);
+        return;
+    }
+
+    // Get file size
+    size_t fileSize = f.size();
+    if (fileSize == 0) {
+        f.close();
+        p.client.println("File is empty: " + filename);
+        return;
+    }
+
+    if (fileSize > 100000) {  // Max 100KB to avoid memory issues
+        f.close();
+        p.client.println("File too large. Maximum 100KB allowed.");
+        return;
+    }
+
+    // Read entire file into buffer
+    uint8_t buffer[100001];
+    size_t bytesRead = f.readBytes((char*)buffer, fileSize);
+    f.close();
+
+    if (bytesRead != fileSize) {
+        p.client.println("Error reading file: " + filename);
+        return;
+    }
+
+    // Create HTTP connection to upload.php
+    WiFiClient client;
+    if (!client.connect("wjeinwebhosting.com", 80)) {  // Change to your actual server
+        p.client.println("ERROR: Could not connect to web server");
+        client.stop();
+        return;
+    }
+
+    // Build URL with filename parameter
+    String url = "/upload.php?file=" + filename;
+
+    // Send HTTP POST request
+    client.print("POST ");
+    client.print(url);
+    client.println(" HTTP/1.1");
+    client.println("Host: wjeinwebhosting.com");  // Change to your actual server
+    client.println("Content-Type: application/octet-stream");
+    client.print("Content-Length: ");
+    client.println(fileSize);
+    client.println("Connection: close");
+    client.println();
+
+    // Send raw file content
+    client.write(buffer, bytesRead);
+
+    // Read response
+    String response = "";
+    unsigned long timeout = millis() + 5000;  // 5 second timeout
+    while (client.connected() && millis() < timeout) {
+        if (client.available()) {
+            char c = client.read();
+            response += c;
+        }
+    }
+    client.stop();
+
+    // Parse response for success
+    // Server should return JSON: {"success": true, "file": "...", "size": ..., "timestamp": "..."}
+    if (response.indexOf("\"success\": true") > 0 || response.indexOf("\"success\":true") > 0) {
+        p.client.println("Upload successful: " + filename + " (" + String(fileSize) + " bytes)");
+        p.client.println("File available at: /mud_files/" + filename);
+    } else if (response.indexOf("\"success\": false") > 0 || response.indexOf("\"success\":false") > 0) {
+        p.client.println("Upload failed on server side");
+    } else {
+        p.client.println("Upload sent, but response unclear");
+        // Still consider it successful if no error
+        p.client.println("File may be available at: /mud_files/" + filename);
+    }
+}
+
+
 void cmdWizHelp(Player &p) {
     if (!p.IsWizard) {
         p.client.println("What?");
@@ -11887,6 +12011,7 @@ void cmdWizHelp(Player &p) {
     p.client.println("stats                   - Toggle wizard stats");
     p.client.println("summon <player>         - Bring a player to your location");
     p.client.println("type <filename>         - Display file contents");
+    p.client.println("upload <filename>       - Upload files to website for inspection");
 
     // ---------------------------------------------------------
     // WIZARD FLAVOR (alphabetical)
@@ -20704,6 +20829,14 @@ if (cmd == "debug") {
 
         p.client.println("");
         p.client.println("=== END " + filename + " ===");
+        return;
+    }
+
+    // -----------------------------------------
+    // UPLOAD command - Upload files to website
+    // -----------------------------------------
+    if (cmd == "upload") {
+        cmdUpload(p, args);
         return;
     }
 
