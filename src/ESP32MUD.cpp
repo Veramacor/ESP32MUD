@@ -11906,7 +11906,7 @@ void cmdUpload(Player &p, const String &args) {
 
     // Create HTTP connection to upload.php
     WiFiClient client;
-    if (!client.connect("wjeinwebhosting.com", 80)) {
+    if (!client.connect("www.storyboardacs.com", 80)) {
         free(buffer);
         p.client.println("ERROR: Could not connect to web server");
         client.stop();
@@ -11921,7 +11921,7 @@ void cmdUpload(Player &p, const String &args) {
         client.print("POST ");
         client.print(url);
         client.println(" HTTP/1.1");
-        client.println("Host: wjeinwebhosting.com");
+        client.println("Host: www.storyboardacs.com");
         client.println("Content-Type: application/octet-stream");
         client.print("Content-Length: ");
         client.println(fileSize);
