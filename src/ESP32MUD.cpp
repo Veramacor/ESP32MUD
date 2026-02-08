@@ -5472,12 +5472,8 @@ void movePlayer(Player &p, int index, const char *dir) {
 
     cmdLook(p);
 
-    // Check for mail when entering post office (disabled during reboot countdown to save memory)
-    unsigned long currentTime = millis();
-    unsigned long timeUntilReboot = (nextGlobalRespawn > currentTime) ? (nextGlobalRespawn - currentTime) : 0;
-    bool inRebootCountdown = (timeUntilReboot > 0);  // Any active countdown disables mail
-    
-    if (getPostOfficeForRoom(p) != nullptr && !inRebootCountdown) {
+    // Check for mail when entering post office (disabled only during memory emergency to save resources)
+    if (getPostOfficeForRoom(p) != nullptr && !memoryTriggeredReboot) {
         checkAndSpawnMailLetters(p);
     }
 
@@ -19034,12 +19030,8 @@ void handleCommand(Player &p, int index, const String &rawLine) {
     }
 
     if (cmd == "checkmail" || (cmd == "check" && args == "mail") || cmd == "mail") {
-        // Check for mail and spawn letters (disabled during reboot countdown to save memory)
-        unsigned long currentTime = millis();
-        unsigned long timeUntilReboot = (nextGlobalRespawn > currentTime) ? (nextGlobalRespawn - currentTime) : 0;
-        bool inRebootCountdown = (timeUntilReboot > 0);
-        
-        if (inRebootCountdown) {
+        // Check for mail and spawn letters (disabled only during memory emergency to save resources)
+        if (memoryTriggeredReboot) {
             p.client.println("The postal system is currently offline due to world instability.");
             return;
         }
