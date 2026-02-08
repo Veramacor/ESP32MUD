@@ -424,6 +424,7 @@ void resetWorldState();
 void loadItemDefinitions(String line);
 void loadNPCDefinitions(String line);
 void loadWorldItemsFromSave();
+void loadAllWorldItems();
 void loadNPCInstance(const String &line);
 void applyEquipmentBonuses(Player &p);
 
@@ -1429,6 +1430,15 @@ void checkGlobalRebootCountdown(unsigned long now) {
         delay(200);
         logSessionReboot();  // Log the reboot
         saveWorldItems();  // Save world state before reboot
+        
+        // Reset world items to default before reboot
+        Serial.println("[REBOOT] Resetting world items to default...");
+        worldItems.clear();
+        if (LittleFS.exists("/world_items.vxi")) {
+            LittleFS.remove("/world_items.vxi");
+        }
+        loadAllWorldItems();
+        
         safeReboot();   // ESP.restart() inside here
         return;
     }
@@ -1437,6 +1447,8 @@ void checkGlobalRebootCountdown(unsigned long now) {
     if (memoryTriggeredReboot && !warned2min) {
         warned2min = true;
         broadcastToAll("THE WORLD HAS BECOME UNSTABLE....");
+        delay(100);
+        broadcastToAll("2 minutes until world reformation!");
         return;  // Show this message on first call, then continue with countdown
     }
 
