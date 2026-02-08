@@ -3,10 +3,10 @@
 # Bootloader @ 0x0000-0x8000 (32KB) - fixed by hardware
 # NVS @ 0x9000-0xE000 (20KB)
 # PHY_INIT @ 0xE000-0xF000 (4KB)
-# APP0 @ 0x10000-0x180000 (1792KB) - increased from 1024KB to fit 1496KB firmware
-# LITTLEFS @ 0x180000-0x3F0000 (2304KB) - reduced from 2940KB
+# APP0 @ 0x10000-0x2D0000 (2816KB) - 1496KB firmware + 1.3MB buffer
+# LITTLEFS @ 0x2D0000-0x410000 (1280KB) - reduced for more program space
 
 nvs,        data, nvs,     0x9000,   0x5000
 phy_init,   data, phy,     0xe000,   0x1000
-app0,       app,  ota_0,   0x10000,  0x170000
-littlefs,   data, 0x10,    0x180000, 0x270000
+app0,       app,  ota_0,   0x10000,  0x2C0000
+littlefs,   data, 0x10,    0x2D0000, 0x140000
