@@ -1164,24 +1164,15 @@ String extractJsonString(const String &json, const String &fieldName) {
 void bootstrapJokesFromServer() {
     Serial.println("[JOKE BOOT] Starting joke bootstrap with retry logic...");
     
-    // Check if jokes.txt exists and count current jokes
-    int existingJokes = 0;
+    // ⭐ CRITICAL: Delete old jokes.txt to force FRESH download every boot
+    // This ensures jokes are ALWAYS refreshed, not reused from previous session
     if (LittleFS.exists("/jokes.txt")) {
-        File f = LittleFS.open("/jokes.txt", "r");
-        if (f) {
-            while (f.available()) {
-                String line = f.readStringUntil('\n');
-                if (line.length() > 0) {
-                    existingJokes++;
-                }
-            }
-            f.close();
-            Serial.printf("[JOKE BOOT] Found %d existing jokes in jokes.txt\n", existingJokes);
-        }
+        LittleFS.remove("/jokes.txt");
+        Serial.println("[JOKE BOOT] Deleted existing jokes.txt - forcing fresh download");
     }
     
     // Retry loop: up to 5 attempts to reach 20 total jokes
-    int totalJokes = existingJokes;
+    int totalJokes = 0;  // ⭐ START AT 0, not from existing jokes
     const int MAX_RETRIES = 5;
     const int TARGET_JOKES = 20;
     
@@ -1221,10 +1212,11 @@ void bootstrapJokesFromServer() {
                 continue;
             }
             
-            // Open jokes.txt in APPEND mode (or CREATE if doesn't exist)
+            // ⭐ WRITE MODE: Create fresh jokes.txt file on first successful fetch
+            // (Will overwrite any partial file from previous attempt)
             File jokesFile = LittleFS.open("/jokes.txt", "a");
             if (!jokesFile) {
-                Serial.println("[JOKE BOOT] Failed to open jokes.txt for append");
+                Serial.println("[JOKE BOOT] Failed to open jokes.txt for writing");
                 delay(1000);
                 continue;
             }
@@ -1327,7 +1319,7 @@ void bootstrapJokesFromServer() {
         }
     }
     
-    Serial.printf("[JOKE BOOT] Bootstrap complete: %d jokes available (target was %d)\n", totalJokes, TARGET_JOKES);
+    Serial.printf("[JOKE BOOT] Bootstrap complete: %d NEW jokes available (target was %d)\n", totalJokes, TARGET_JOKES);
 }
 
 // =============================
