@@ -1496,7 +1496,7 @@ void checkGlobalRebootCountdown(unsigned long now) {
 
     if (!warned5sec && remaining <= 5L * 1000L) {
         warned5sec = true;
-        broadcastToAll("The world collapses in blinding light!");
+        broadcastToAll("You have been disconnected from the MUD.");
     }
 }
 
@@ -10071,6 +10071,66 @@ bool isBlackPiece(unsigned char piece) {
     return piece > 6 && piece < 13;
 }
 
+// Generate FEN string from current chess board position
+String generateChessFEN(ChessSession &session) {
+    String fen = "";
+    
+    // Build FEN from our board
+    // ACTUAL board storage: r=0 is rank 1 (WHITE), r=7 is rank 8 (BLACK)
+    // FEN format: rank 8 first (BLACK), rank 1 last (WHITE)
+    // So iterate BACKWARDS: r=7 down to r=0 to get correct FEN order
+    for (int r = 7; r >= 0; r--) {
+        int emptyCount = 0;
+        for (int c = 0; c < 8; c++) {
+            unsigned char piece = session.board[r * 8 + c];
+            if (piece == 0) {
+                emptyCount++;
+            } else {
+                if (emptyCount > 0) {
+                    fen += String(emptyCount);
+                    emptyCount = 0;
+                }
+                
+                unsigned char pieceType = piece > 6 ? piece - 6 : piece;
+                bool isWhite = piece <= 6;
+                char fenPiece = ' ';
+                
+                if (isWhite) {
+                    switch(pieceType) {
+                        case 1: fenPiece = 'P'; break;
+                        case 2: fenPiece = 'N'; break;
+                        case 3: fenPiece = 'B'; break;
+                        case 4: fenPiece = 'R'; break;
+                        case 5: fenPiece = 'Q'; break;
+                        case 6: fenPiece = 'K'; break;
+                    }
+                } else {
+                    switch(pieceType) {
+                        case 1: fenPiece = 'p'; break;
+                        case 2: fenPiece = 'n'; break;
+                        case 3: fenPiece = 'b'; break;
+                        case 4: fenPiece = 'r'; break;
+                        case 5: fenPiece = 'q'; break;
+                        case 6: fenPiece = 'k'; break;
+                    }
+                }
+                fen += fenPiece;
+            }
+        }
+        if (emptyCount > 0) {
+            fen += String(emptyCount);
+        }
+        if (r > 0) fen += "/";
+    }
+    
+    // Side to move
+    fen += " ";
+    char sideToMove = session.isBlackToMove ? 'b' : 'w';
+    fen += sideToMove;
+    
+    return fen;
+}
+
 void renderChessBoard(Player &p, ChessSession &session) {
     p.client.println("\x1B[2J\x1B[H");  // Clear screen
     
@@ -10138,6 +10198,12 @@ void renderChessBoard(Player &p, ChessSession &session) {
         p.client.println("         h   g   f   e   d   c   b   a");
     }
     p.client.println("");
+    
+    // Send FEN string if sendVoxel is enabled
+    if (p.sendVoxel) {
+        String fen = generateChessFEN(session);
+        p.client.println("FEN:" + fen);
+    }
 }
 
 String formatTime(unsigned long ms) {
