@@ -10126,9 +10126,8 @@ String generateChessFEN(ChessSession &session) {
     }
     
     // ===== FIELD 2: ACTIVE COLOR =====
-    fen += " ";
-    char sideToMove = session.isBlackToMove ? 'b' : 'w';
-    fen += sideToMove;
+    // Engine always plays BLACK, so after engine move it's always WHITE TO MOVE
+    fen += " w";
     
     // ===== FIELD 3: CASTLING AVAILABILITY =====
     // For now, assume no castling rights (castling not implemented in game)
