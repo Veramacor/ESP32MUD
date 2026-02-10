@@ -228,6 +228,14 @@ struct ChessSession {
     String lastPlayerMove;       // last move made by player
     bool gameEnded;              // true if game has ended
     String endReason;            // why game ended (checkmate, stalemate, resignation)
+    
+    // Castling rights tracking (for FEN generation)
+    bool whiteKingMoved = false;       // white king has moved from starting position
+    bool whiteKingsideRookMoved = false;  // white h1 rook has moved
+    bool whiteQueensideRookMoved = false; // white a1 rook has moved
+    bool blackKingMoved = false;       // black king has moved from starting position
+    bool blackKingsideRookMoved = false;  // black h8 rook has moved
+    bool blackQueensideRookMoved = false; // black a8 rook has moved
 };
 
 // Letter system for mail retrieval
@@ -10130,8 +10138,25 @@ String generateChessFEN(ChessSession &session) {
     fen += " w";
     
     // ===== FIELD 3: CASTLING AVAILABILITY =====
-    // For now, assume no castling rights (castling not implemented in game)
-    fen += " -";
+    // Track based on whether kings and rooks have moved from their starting squares
+    String castling = "";
+    
+    // White castling rights (uppercase)
+    if (!session.whiteKingMoved) {
+        if (!session.whiteKingsideRookMoved) castling += "K";
+        if (!session.whiteQueensideRookMoved) castling += "Q";
+    }
+    
+    // Black castling rights (lowercase)
+    if (!session.blackKingMoved) {
+        if (!session.blackKingsideRookMoved) castling += "k";
+        if (!session.blackQueensideRookMoved) castling += "q";
+    }
+    
+    // If no castling rights available, use dash
+    if (castling.length() == 0) castling = "-";
+    
+    fen += " " + castling;
     
     // ===== FIELD 4: EN PASSANT TARGET SQUARE =====
     // No en passant tracking in current implementation
@@ -10894,6 +10919,20 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     
     // Move is valid - apply it
     applyMove(session.board, fromRow, fromCol, toRow, toCol);
+    
+    // Track castling rights for player (white)
+    unsigned char pieceType = movedPiece <= 6 ? movedPiece : movedPiece - 6;
+    if (pieceType == 6) {  // King moved
+        session.whiteKingMoved = true;
+    } else if (pieceType == 4) {  // Rook moved
+        // Check if it was a rook from the starting corner squares
+        if (fromRow == 7 && fromCol == 0) {  // a1 queenside rook
+            session.whiteQueensideRookMoved = true;
+        } else if (fromRow == 7 && fromCol == 7) {  // h1 kingside rook
+            session.whiteKingsideRookMoved = true;
+        }
+    }
+    
     session.lastPlayerMove = moveStr;
     session.isBlackToMove = !session.isBlackToMove;
     session.moveCount++;
@@ -11015,7 +11054,20 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         fen += " ";
         char sideToMove = isPlayerWhite ? 'b' : 'w';  // Engine's side to move
         fen += sideToMove;
-        fen += " KQkq - 0 1";
+        
+        // Add castling rights based on king/rook movement history
+        String castlingRights = "";
+        if (!session.whiteKingMoved) {
+            if (!session.whiteKingsideRookMoved) castlingRights += "K";
+            if (!session.whiteQueensideRookMoved) castlingRights += "Q";
+        }
+        if (!session.blackKingMoved) {
+            if (!session.blackKingsideRookMoved) castlingRights += "k";
+            if (!session.blackQueensideRookMoved) castlingRights += "q";
+        }
+        if (castlingRights.length() == 0) castlingRights = "-";
+        
+        fen += " " + castlingRights + " - 0 1";
         
         // Load position into mcu-max
         mcumax_set_fen_position(fen.c_str());
@@ -11140,6 +11192,19 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         }
         
         applyMove(session.board, bestFromR, bestFromC, bestToR, bestToC);
+        
+        // Track castling rights for engine (black)
+        unsigned char blackPieceType = enginePiece > 6 ? enginePiece - 6 : enginePiece;
+        if (blackPieceType == 6) {  // King moved
+            session.blackKingMoved = true;
+        } else if (blackPieceType == 4) {  // Rook moved
+            // Check if it was a rook from the starting corner squares
+            if (bestFromR == 0 && bestFromC == 0) {  // a8 queenside rook
+                session.blackQueensideRookMoved = true;
+            } else if (bestFromR == 0 && bestFromC == 7) {  // h8 kingside rook
+                session.blackKingsideRookMoved = true;
+            }
+        }
         
         char fromColChar = 'a' + bestFromC;
         char fromRowChar = '1' + bestFromR;
