@@ -10071,10 +10071,12 @@ bool isBlackPiece(unsigned char piece) {
     return piece > 6 && piece < 13;
 }
 
-// Generate FEN string from current chess board position
+// Generate standard FEN string from current chess board position
+// FEN format: [Piece Placement] [Active Color] [Castling] [En Passant] [Halfmove] [Fullmove]
 String generateChessFEN(ChessSession &session) {
     String fen = "";
     
+    // ===== FIELD 1: PIECE PLACEMENT =====
     // Build FEN from our board
     // ACTUAL board storage: r=0 is rank 1 (WHITE), r=7 is rank 8 (BLACK)
     // FEN format: rank 8 first (BLACK), rank 1 last (WHITE)
@@ -10123,10 +10125,28 @@ String generateChessFEN(ChessSession &session) {
         if (r > 0) fen += "/";
     }
     
-    // Side to move
+    // ===== FIELD 2: ACTIVE COLOR =====
     fen += " ";
     char sideToMove = session.isBlackToMove ? 'b' : 'w';
     fen += sideToMove;
+    
+    // ===== FIELD 3: CASTLING AVAILABILITY =====
+    // For now, assume no castling rights (castling not implemented in game)
+    fen += " -";
+    
+    // ===== FIELD 4: EN PASSANT TARGET SQUARE =====
+    // No en passant tracking in current implementation
+    fen += " -";
+    
+    // ===== FIELD 5: HALFMOVE CLOCK =====
+    // Halfmove clock (moves since last capture or pawn move) - default to 0
+    fen += " 0";
+    
+    // ===== FIELD 6: FULLMOVE NUMBER =====
+    // Fullmove number starts at 1, increment every 2 half-moves (after black moves)
+    // moveCount tracks number of full moves made
+    fen += " ";
+    fen += String(session.moveCount + 1);  // +1 because we count from move 1, not 0
     
     return fen;
 }
