@@ -10914,6 +10914,8 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
     
     if (playerIsCheckmate) {
         p.client.println("Your move: " + moveNotation + " CHECKMATE! You Win!");
+        session.gameEnded = true;
+        session.endReason = "Black is checkmated!";
     } else if (engineInCheck) {
         p.client.println("Your move: " + moveNotation + " CHECK!");
     } else {
@@ -11165,7 +11167,8 @@ void processChessMove(Player &p, int playerIndex, ChessSession &session, String 
         if (isCheckmate) {
             p.client.println("The local parlor player: " + engineMoveNotation + ". CHECKMATE! You are defeated!");
             session.gameEnded = true;
-            session.endReason = "Checkmate! Local player wins!";
+            session.endReason = "White is checkmated!";
+            return;
         } else if (isCheck) {
             p.client.println("The local parlor player: " + engineMoveNotation + ". CHECK!");
         } else {
