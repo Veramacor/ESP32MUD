@@ -5505,6 +5505,16 @@ void cmdPortal(Player &p, int index) {
 
     // Show room to traveler
     cmdLook(p);
+    
+    // Send voxel address if enabled
+    if (p.sendVoxel) {
+        p.client.print("VOXEL: ");
+        p.client.print(p.roomX);
+        p.client.print(",");
+        p.client.print(p.roomY);
+        p.client.print(",");
+        p.client.println(p.roomZ);
+    }
 }
 
 void restockAllShops() {
@@ -10524,6 +10534,17 @@ void applyMove(unsigned char board[64], int fromRow, int fromCol, int toRow, int
             unsigned char rook = board[fromRow * 8 + 0];  // Rook at a-file
             board[fromRow * 8 + 3] = rook;  // Move to d-file
             board[fromRow * 8 + 0] = 0;    // Clear a-file
+        }
+    }
+    
+    // Handle pawn promotion: pawn reaches opposite end of board
+    if (baseType == 1) {  // Pawn
+        // White pawn reaches rank 8 (row 0) or Black pawn reaches rank 1 (row 7)
+        if ((piece <= 6 && toRow == 0) || (piece > 6 && toRow == 7)) {
+            // Promote pawn to queen (default promotion)
+            // piece <= 6 means white, so promote to white queen (5)
+            // piece > 6 means black, so promote to black queen (11)
+            board[toRow * 8 + toCol] = (piece <= 6) ? 5 : 11;
         }
     }
 }
