@@ -5503,18 +5503,19 @@ void cmdPortal(Player &p, int index) {
         index
     );
 
-    // Show room to traveler
-    cmdLook(p);
-    
-    // Send voxel address if enabled
+    // Echo voxel coords for VB.NET mapper (if enabled)
     if (p.sendVoxel) {
-        p.client.print("VOXEL: ");
+        p.client.print("(");
         p.client.print(p.roomX);
         p.client.print(",");
         p.client.print(p.roomY);
         p.client.print(",");
-        p.client.println(p.roomZ);
+        p.client.print(p.roomZ);
+        p.client.println(")");
     }
+
+    // Show room to traveler
+    cmdLook(p);
 }
 
 void restockAllShops() {
@@ -11480,11 +11481,12 @@ void cmdLevels(Player &p) {
 
 
 void cmdHelp(Player &p) {
-    p.client.println("===== Help: Main Commands =====");
+    p.client.println("======================= Help: Main Commands =======================");
+
 
     // --- Core navigation & interaction ---
-    p.client.println("(l)ook                 - Examine your current room");
-    p.client.println("(i)nventory            - Show what you are carrying");
+    p.client.println("(l)ook                  - Examine your current room");
+    p.client.println("(i)nventory             - Show what you are carrying");
     p.client.println("get <item>             - Pick up an item");
     p.client.println("drop <item>            - Drop an item");
     p.client.println("drop all               - Drop everything");
@@ -11500,7 +11502,7 @@ void cmdHelp(Player &p) {
     p.client.println("wimp                   - Toggle auto-flee when weak");
 
     // --- Character info & progression ---
-    p.client.println("(sc)ore                - Show your stats");
+    p.client.println("(sc)ore                 - Show your stats");
     p.client.println("levels                 - Show level titles and XP ranges");
     p.client.println("advance                - Advance to the next level (if eligible)");
     p.client.println("questlist              - Show available quests and completion status");
@@ -11525,7 +11527,7 @@ void cmdHelp(Player &p) {
         p.client.println("wizhelp                - Wizard commands");
     }
 
-    p.client.println("===============================");
+    p.client.println("=====================================================================");
 }
 
 /**
@@ -22411,7 +22413,7 @@ for (auto &npc : npcInstances) {
                     String wrappedJoke = wordWrap(jokeText, 150);
                     Serial.printf("[JOKE] wordWrap complete (%d chars)\n", wrappedJoke.length());
                     
-                    String jokeMsg = "The Inn Keeper Says: \"" + wrappedJoke + "\"";
+                    String jokeMsg = "The Inn Keeper Says:\n\"" + wrappedJoke + "\"";
                     Serial.printf("[JOKE] Final message (%d chars): %.50s...\n", jokeMsg.length(), jokeMsg.c_str());
                     
                     // Send wrapped joke to all players in room
